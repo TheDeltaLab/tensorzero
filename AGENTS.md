@@ -70,6 +70,22 @@ We use `ts-rs` and `n-api` for TypeScript-Rust interoperability.
 
 - Most GitHub Actions workflows run on Unix only, but some also run on Windows and macOS. For workflows that run on multiple operating systems, ensure any bash scripts are compatible with all three platforms. You can check which OS a workflow uses by looking at the `runs-on` field. Setting `shell: bash` in the job definition is often sufficient.
 
+# Modification Notice (Delta-AI fork)
+
+**Every modified file MUST carry a modification notice.** This is enforced by the CI workflow `modification-notice-check`.
+
+- **Source code files** (`.rs`, `.ts`, `.tsx`, `.py`, `.js`, `.jsx`, `.css`, `.scss`, `.sql`, `.sh`):
+  Add a header comment in the first 20 lines of the file:
+  ```
+  Rust/TS/JS/CSS:   // Modified by Delta-AI under Apache 2.0
+  Python/Shell:     # Modified by Delta-AI under Apache 2.0
+  SQL:             -- Modified by Delta-AI under Apache 2.0
+  ```
+- **Non-source-code files** (`.md`, `.yaml`, `.toml`, `Dockerfile`, etc.):
+  Add the file path and description to the table in `MODIFICATIONS.md` at the repo root.
+- **Excluded**: `NOTICE`, `MODIFICATIONS.md`, and the workflow file itself are exempt from this check.
+- See `NOTICE` for the overall attribution statement.
+
 # Misc
 
 - `CONTRIBUTING.md` has additional context on working on this codebase.
