@@ -15,14 +15,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Required for checkout
+      pull-requests: read # Required to read PR base/head SHA
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # Required to compute git diff between base and head commits
 
       - name: Check modification notices on changed files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
 
@@ -92,8 +95,8 @@ jobs:
           NOTICE_TEXT="Modified by Delta-AI"
 
           # Get list of changed files in PR (excluding deleted)
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          BASE_SHA="${BASE_SHA}"
+          HEAD_SHA="${HEAD_SHA}"
 
           echo "Checking files changed between $BASE_SHA and $HEAD_SHA"
           echo ""
