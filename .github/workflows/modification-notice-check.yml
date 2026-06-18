@@ -1,0 +1,176 @@
+name: Modification Notice Check
+permissions: {}
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  check-modification-notices:
+    name: Check modification notices
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read # Required for checkout
+      pull-requests: read # Required to read PR base/head SHA
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0 # Required to compute git diff between base and head commits
+          persist-credentials: false # Not needed — only local git diff operations
+
+      - name: Check modification notices on changed files
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Source-code file extensions (require per-file header notice)
+          # Format: "ext|comment_prefix"
+          SOURCE_EXTS_PATTERNS=(
+            "rs|//"
+            "ts|//"
+            "tsx|//"
+            "py|#"
+            "js|//"
+            "jsx|//"
+            "css|/*"
+            "scss|//"
+            "sql|--"
+            "sh|#"
+          )
+
+          # Files excluded from all checks
+          EXCLUDED_FILES=(
+            "NOTICE"
+            "MODIFICATIONS.md"
+            ".github/workflows/modification-notice-check.yml"
+          )
+
+          # Build exclusion patterns
+          exclude_pattern() {
+            local file="$1"
+            for excluded in "${EXCLUDED_FILES[@]}"; do
+              if [[ "$file" == "$excluded" ]] || [[ "$file" == "$excluded"* ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          get_ext() {
+            local file="$1"
+            echo "${file##*.}"
+          }
+
+          is_source_file() {
+            local ext="$1"
+            for entry in "${SOURCE_EXTS_PATTERNS[@]}"; do
+              IFS='|' read -r src_ext _ <<< "$entry"
+              if [[ "$ext" == "$src_ext" ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          get_comment_prefix() {
+            local ext="$1"
+            for entry in "${SOURCE_EXTS_PATTERNS[@]}"; do
+              IFS='|' read -r src_ext prefix <<< "$entry"
+              if [[ "$ext" == "$src_ext" ]]; then
+                echo "$prefix"
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          # Build notice patterns for each comment style
+          # We check multiple patterns to be flexible
+          NOTICE_TEXT="Modified by Delta-AI"
+
+          # Get list of changed files in PR (excluding deleted)
+          BASE_SHA="${BASE_SHA}"
+          HEAD_SHA="${HEAD_SHA}"
+
+          echo "Checking files changed between $BASE_SHA and $HEAD_SHA"
+          echo ""
+
+          CHANGED_FILES=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA")
+          if [[ -z "$CHANGED_FILES" ]]; then
+            echo "No changed files found."
+            exit 0
+          fi
+
+          FAILURES=0
+          SOURCE_FAILURES=()
+          NON_SOURCE_FAILURES=()
+
+          while IFS= read -r file; do
+            if exclude_pattern "$file"; then
+              echo "  [SKIP] $file (excluded)"
+              continue
+            fi
+
+            ext=$(get_ext "$file")
+
+            if is_source_file "$ext"; then
+              # Source code file — check for header notice in first 20 lines
+              HEADER=$(head -n 20 "$file" 2>/dev/null || true)
+              if echo "$HEADER" | grep -qF "$NOTICE_TEXT"; then
+                echo "  [PASS] $file (header notice found)"
+              else
+                echo "  [FAIL] $file — missing 'Modified by Delta-AI' in file header (first 20 lines)"
+                SOURCE_FAILURES+=("$file")
+                FAILURES=$((FAILURES + 1))
+              fi
+            else
+              # Non-source-code file — check MODIFICATIONS.md
+              if grep -qF "$file" MODIFICATIONS.md 2>/dev/null; then
+                echo "  [PASS] $file (listed in MODIFICATIONS.md)"
+              else
+                echo "  [FAIL] $file — not listed in MODIFICATIONS.md"
+                NON_SOURCE_FAILURES+=("$file")
+                FAILURES=$((FAILURES + 1))
+              fi
+            fi
+          done <<< "$CHANGED_FILES"
+
+          echo ""
+          echo "============================================"
+          echo "Summary: $FAILURES failure(s)"
+
+          if [[ ${#SOURCE_FAILURES[@]} -gt 0 ]]; then
+            echo ""
+            echo "Source files missing header notice ('$NOTICE_TEXT'):"
+            for f in "${SOURCE_FAILURES[@]}"; do
+              echo "  - $f"
+            done
+            echo ""
+            echo "Add one of the following to the top of each file:"
+            echo "  Rust/TS/JS/CSS:   // Modified by Delta-AI under Apache 2.0"
+            echo "  Python/Shell:     # Modified by Delta-AI under Apache 2.0"
+            echo "  SQL:             -- Modified by Delta-AI under Apache 2.0"
+          fi
+
+          if [[ ${#NON_SOURCE_FAILURES[@]} -gt 0 ]]; then
+            echo ""
+            echo "Non-source files missing from MODIFICATIONS.md:"
+            for f in "${NON_SOURCE_FAILURES[@]}"; do
+              echo "  - $f"
+            done
+            echo ""
+            echo "Add each file to the table in MODIFICATIONS.md."
+          fi
+
+          if [[ $FAILURES -gt 0 ]]; then
+            exit 1
+          fi
+
+          echo "All checks passed."
