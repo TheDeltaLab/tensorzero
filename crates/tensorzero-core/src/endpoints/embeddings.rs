@@ -17,6 +17,7 @@ use crate::{
     embeddings::{Embedding, EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest},
     endpoints::inference::InferenceClients,
     error::{Error, ErrorDetails},
+    model_alias::ModelAliasTable,
     http::TensorzeroHttpClient,
     inference::types::{
         Usage,
@@ -213,7 +214,9 @@ mod tests {
                     embedding_models,
                     Arc::new(ProviderTypeDefaultCredentials::new(&provider_types)),
                     DEFAULT_HTTP_CLIENT_TIMEOUT,
-                )
+                ,
+                Arc::new(ModelAliasTable::default())
+)
                 .unwrap(),
             ),
             ..Default::default()

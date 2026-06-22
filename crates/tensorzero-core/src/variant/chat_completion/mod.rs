@@ -13,6 +13,7 @@ use crate::embeddings::EmbeddingModelTable;
 use crate::endpoints::inference::{InferenceClients, InferenceModels, InferenceParams};
 use crate::error::{Error, ErrorDetails};
 use crate::function::FunctionConfig;
+use crate::model_alias::ModelAliasTable;
 use crate::inference::types::extra_body::{ExtraBodyConfig, FullExtraBodyConfig};
 use crate::inference::types::extra_headers::{ExtraHeadersConfig, FullExtraHeadersConfig};
 use crate::inference::types::resolved_input::{
@@ -1517,7 +1518,9 @@ mod tests {
             HashMap::from([("invalid_model".into(), text_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .unwrap();
         let inference_models = InferenceModels {
             models: Arc::new(models),
@@ -1587,7 +1590,9 @@ mod tests {
             models,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .unwrap();
         let inference_models = InferenceModels {
             models: Arc::new(models),
@@ -1596,7 +1601,9 @@ mod tests {
                     HashMap::new(),
                     ProviderTypeDefaultCredentials::new(&provider_types).into(),
                     crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-                )
+                ,
+                Arc::new(ModelAliasTable::default())
+)
                 .unwrap(),
             ),
         };
@@ -1699,7 +1706,9 @@ mod tests {
             HashMap::from([("good".into(), text_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .unwrap();
         let inference_models = InferenceModels {
             models: Arc::new(models),
@@ -1785,7 +1794,9 @@ mod tests {
             HashMap::from([("tool".into(), tool_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .unwrap();
         let inference_models = InferenceModels {
             models: Arc::new(models),
@@ -1970,7 +1981,9 @@ mod tests {
             HashMap::from([("json".into(), json_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .unwrap();
         let inference_models = InferenceModels {
             models: Arc::new(models),
@@ -2490,7 +2503,9 @@ mod tests {
                 HashMap::from([("error".into(), error_model_config)]),
                 ProviderTypeDefaultCredentials::new(provider_types).into(),
                 chrono::Duration::seconds(120),
-            )
+            ,
+            Arc::new(ModelAliasTable::default())
+)
             .unwrap(),
         );
         let embedding_models = Arc::new(
@@ -2498,7 +2513,9 @@ mod tests {
                 HashMap::new(),
                 ProviderTypeDefaultCredentials::new(provider_types).into(),
                 chrono::Duration::seconds(120),
-            )
+            ,
+            Arc::new(ModelAliasTable::default())
+)
             .unwrap(),
         );
         let inference_models = InferenceModels {
@@ -2580,7 +2597,9 @@ mod tests {
                 HashMap::from([("good".into(), text_model_config)]),
                 ProviderTypeDefaultCredentials::new(provider_types).into(),
                 chrono::Duration::seconds(120),
-            )
+            ,
+            Arc::new(ModelAliasTable::default())
+)
             .unwrap(),
         );
         let inference_models = InferenceModels {

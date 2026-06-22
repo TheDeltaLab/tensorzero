@@ -141,6 +141,7 @@ mod tests {
     use crate::inference::types::extra_body::UnfilteredInferenceExtraBody;
     use crate::inference::types::extra_headers::UnfilteredInferenceExtraHeaders;
     use crate::model::ModelTable;
+    use crate::model_alias::ModelAliasTable;
     use crate::variant::VariantInfo;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -232,7 +233,9 @@ mod tests {
             map,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .expect("Failed to create model table")
     }
 

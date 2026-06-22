@@ -15,6 +15,7 @@ use crate::{
     model::{
         Credential, CredentialLocation, CredentialLocationWithFallback, UninitializedProviderConfig,
     },
+    model_alias::ModelAliasTable,
     providers::{
         anthropic::AnthropicCredentials,
         azure::AzureCredentials,
@@ -100,12 +101,15 @@ pub struct BaseModelTable<T> {
     #[ts(skip)]
     pub default_credentials: Arc<ProviderTypeDefaultCredentials>,
     global_outbound_http_timeout: chrono::Duration,
+    pub model_aliases: Arc<ModelAliasTable>,
 }
 
 pub trait ShorthandModelConfig: Sized {
     const SHORTHAND_MODEL_PREFIXES: &[&str];
     /// Used in error messages (e.g. 'Model' or 'Embedding model')
     const MODEL_TYPE: &str;
+    /// Task type for alias resolution: "chat", "embedding", or "rerank"
+    const TASK_TYPE: &str;
     async fn from_shorthand(
         provider_type: &str,
         model_name: &str,
@@ -145,6 +149,7 @@ impl<T: ShorthandModelConfig> Default for BaseModelTable<T> {
             table: HashMap::new(),
             default_credentials: Arc::new(ProviderTypeDefaultCredentials::default()),
             global_outbound_http_timeout: chrono::Duration::seconds(120),
+            model_aliases: Arc::new(ModelAliasTable::default()),
         }
     }
 }
@@ -154,6 +159,7 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
         models: HashMap<Arc<str>, T>,
         provider_type_default_credentials: Arc<ProviderTypeDefaultCredentials>,
         global_outbound_http_timeout: chrono::Duration,
+        model_aliases: Arc<ModelAliasTable>,
     ) -> Result<Self, String> {
         for key in models.keys() {
             if RESERVED_MODEL_PREFIXES
@@ -172,6 +178,7 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
             table: models,
             default_credentials: provider_type_default_credentials,
             global_outbound_http_timeout,
+            model_aliases,
         })
     }
 
@@ -182,6 +189,32 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
     ) -> Result<Option<CowNoClone<'_, T>>, Error> {
         if let Some(model_config) = self.table.get(key) {
             return Ok(Some(CowNoClone::Borrowed(model_config)));
+        }
+        // Alias lookup — task-filtered, resolve to first available target
+        if let Some(alias) = self.model_aliases.resolve(key, Some(T::TASK_TYPE)) {
+            for target in &alias.targets {
+                let shorthand_key = format!("{}::{}", target.provider_type, target.model_name);
+                if let Some(model_config) = self.table.get(shorthand_key.as_str()) {
+                    return Ok(Some(CowNoClone::Borrowed(model_config)));
+                }
+                if let Some(sh) = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, &shorthand_key) {
+                    let model = if relay.is_some() {
+                        let creds = self.default_credentials.clone();
+                        with_skip_credential_validation(async move {
+                            T::from_shorthand(sh.provider_type, sh.model_name, &creds).await
+                        })
+                        .await?
+                    } else {
+                        T::from_shorthand(
+                            sh.provider_type,
+                            sh.model_name,
+                            &self.default_credentials,
+                        )
+                        .await?
+                    };
+                    return Ok(Some(CowNoClone::Owned(model)));
+                }
+            }
         }
         if let Some(shorthand) = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key) {
             let model = if relay.is_some() {

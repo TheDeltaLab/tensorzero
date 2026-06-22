@@ -3513,6 +3513,7 @@ impl ModelTable {
 impl ShorthandModelConfig for ModelConfig {
     const SHORTHAND_MODEL_PREFIXES: &[&str] = SHORTHAND_MODEL_PREFIXES;
     const MODEL_TYPE: &str = "Model";
+    const TASK_TYPE: &str = "chat";
     async fn from_shorthand(
         provider_type: &str,
         model_name: &str,
@@ -3725,6 +3726,7 @@ mod tests {
 
     use crate::cache::{CacheEnabledMode, CacheManager};
     use crate::config::with_skip_credential_validation;
+    use crate::model_alias::ModelAliasTable;
     use crate::rate_limiting::ScopeInfo;
 
     use crate::{
@@ -4781,6 +4783,7 @@ mod tests {
             HashMap::from([("claude".into(), anthropic_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
+            Arc::new(ModelAliasTable::default()),
         )
         .unwrap();
 

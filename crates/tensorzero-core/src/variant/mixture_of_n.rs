@@ -13,6 +13,7 @@ use serde_json::json;
 
 use crate::config::{ErrorContext, PathWithContents, SchemaData};
 use crate::embeddings::EmbeddingModelTable;
+use crate::model_alias::ModelAliasTable;
 use crate::endpoints::inference::{InferenceClients, InferenceModels};
 use crate::error::IMPOSSIBLE_ERROR_MESSAGE;
 use crate::inference::types::extra_body::FullExtraBodyConfig;
@@ -1572,7 +1573,9 @@ mod tests {
             )]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
-        )
+        ,
+        Arc::new(ModelAliasTable::default())
+)
         .expect("Failed to create model table");
         let client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
@@ -1708,7 +1711,9 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
-            )
+            ,
+            Arc::new(ModelAliasTable::default())
+)
             .expect("Failed to create model table")
         };
         let input = LazyResolvedInput {
@@ -1794,7 +1799,9 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
-            )
+            ,
+            Arc::new(ModelAliasTable::default())
+)
             .expect("Failed to create model table")
         };
         let input = LazyResolvedInput {

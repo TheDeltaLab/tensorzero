@@ -56,6 +56,7 @@ pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 impl ShorthandModelConfig for EmbeddingModelConfig {
     const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "openrouter::"];
     const MODEL_TYPE: &str = "Embedding model";
+    const TASK_TYPE: &str = "embedding";
     async fn from_shorthand(
         provider_type: &str,
         model_name: &str,
