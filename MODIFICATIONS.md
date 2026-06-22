@@ -13,6 +13,9 @@ See `NOTICE` for the overall attribution statement.
 - `AGENTS.md` — Added Modification Notice (Delta-AI fork) section.
 - `CLA.md` — Changed Company from TensorZero, Inc. to Delta-AI; removed legacy hello@tensorzero.com contact.
 - `SECURITY.md` — Changed security contact to security@thebrainly.ai.
+- `crates/tensorzero-stored-config/src/postgres/migrations/20260622000001_model_aliases.sql` — New model_aliases DB migration table (Delta-AI fork).
+- `docs/synapse-migration-plan.md` — Synapse → TensorZero migration plan (Delta-AI fork).
+- `docs/superpowers/plans/2026-06-22-model-alias.md` — Model alias implementation plan (Delta-AI fork).
 
 ---
 
