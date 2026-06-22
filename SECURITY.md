@@ -7,4 +7,4 @@ Please update to the most recent version to apply the latest patches.
 
 ## Report a vulnerability
 
-Please email security@tensorzero.com to disclose a security vulnerability.
+Please email security@thebrainly.ai to disclose a security vulnerability.
