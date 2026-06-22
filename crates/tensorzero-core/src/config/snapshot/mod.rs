@@ -102,6 +102,7 @@ impl From<UninitializedConfig> for StoredConfig {
             provider_types,
             optimizers,
             embedding_models,
+                model_aliases: _,
             autopilot,
         } = config;
 
@@ -171,6 +172,7 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
             postgres: Some(postgres),
             object_storage,
             models: Some(models),
+            model_aliases: None,
             functions: Some(functions),
             metrics: Some(metrics),
             tools: Some(tools),

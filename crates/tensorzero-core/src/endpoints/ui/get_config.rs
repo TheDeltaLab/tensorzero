@@ -88,6 +88,7 @@ impl UiConfig {
         let UninitializedConfig {
             models,
             embedding_models: _,
+            model_aliases: _,
             functions,
             metrics,
             tools,

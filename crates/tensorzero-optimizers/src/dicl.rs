@@ -609,8 +609,7 @@ mod tests {
                         HashMap::from([(Arc::from(model_name), embedding_model_config)]),
                         ProviderTypeDefaultCredentials::new(&provider_types).into(),
                         chrono::Duration::seconds(120),
-                    ,
-                    Arc::new(ModelAliasTable::default())
+                        Arc::new(ModelAliasTable::default())
 )
                     .unwrap(),
                 ),

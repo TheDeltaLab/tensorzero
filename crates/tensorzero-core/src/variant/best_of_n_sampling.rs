@@ -1462,8 +1462,7 @@ mod tests {
             )]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
-        ,
-        Arc::new(ModelAliasTable::default())
+            Arc::new(ModelAliasTable::default())
 )
         .expect("Failed to create model table");
         let client = TensorzeroHttpClient::new_testing().unwrap();
@@ -1594,8 +1593,7 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
-            ,
-            Arc::new(ModelAliasTable::default())
+                Arc::new(ModelAliasTable::default())
 )
             .expect("Failed to create model table")
         };
@@ -1675,8 +1673,7 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-            ,
-            Arc::new(ModelAliasTable::default())
+                Arc::new(ModelAliasTable::default())
 )
             .expect("Failed to create model table")
         };
@@ -1776,8 +1773,7 @@ mod tests {
             big_models,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-        ,
-        Arc::new(ModelAliasTable::default())
+            Arc::new(ModelAliasTable::default())
 )
         .expect("Failed to create model table");
 

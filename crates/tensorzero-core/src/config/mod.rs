@@ -1239,6 +1239,7 @@ async fn process_config_input(
                 object_storage: _, // replaced by overlay (via object_store_info)
                 models,
                 embedding_models,
+                model_aliases,
                 functions,
                 metrics,
                 tools,
@@ -1279,6 +1280,7 @@ async fn process_config_input(
                     .map(|info| info.kind.clone()),
                 models: Some(models.clone()),
                 embedding_models: Some(embedding_models.clone()),
+                model_aliases: Some(model_aliases.clone()),
                 functions: Some(functions.clone()),
                 metrics: Some(metrics.clone()),
                 tools: Some(tools.clone()),
@@ -2455,6 +2457,8 @@ struct TomlUninitializedConfig {
     #[serde(default)]
     embedding_models: HashMap<Arc<str>, UninitializedEmbeddingModelConfig>,
     #[serde(default)]
+    model_aliases: HashMap<String, UninitializedModelAlias>,
+    #[serde(default)]
     functions: HashMap<String, UninitializedFunctionConfig>,
     #[serde(default)]
     metrics: HashMap<String, MetricConfig>,
@@ -2486,6 +2490,7 @@ impl TryFrom<TomlUninitializedConfig> for UninitializedConfig {
             object_storage: toml_config.object_storage,
             models: Some(toml_config.models),
             embedding_models: Some(toml_config.embedding_models),
+            model_aliases: Some(toml_config.model_aliases),
             functions: Some(toml_config.functions),
             metrics: Some(toml_config.metrics),
             tools: Some(toml_config.tools),

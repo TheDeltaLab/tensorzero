@@ -1,8 +1,10 @@
 // Modified by Delta-AI under Apache 2.0
+use serde::Serialize;
 use std::sync::Arc;
 
 /// A single target within an alias: which provider + model to try.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ModelAliasTarget {
     pub provider_type: Arc<str>,
     pub model_name: Arc<str>,
@@ -13,7 +15,8 @@ pub struct ModelAliasTarget {
 /// `task`: If `Some`, this alias only matches lookups with the same task type
 ///   (e.g. "chat", "embedding", "rerank"). If `None`, it matches any task.
 /// `targets`: Ordered list of (provider, model) pairs to try.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ModelAlias {
     pub name: Arc<str>,
     pub task: Option<Arc<str>>,
@@ -21,7 +24,8 @@ pub struct ModelAlias {
 }
 
 /// Lookup table for model aliases, shared across chat/embedding/rerank tables.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ModelAliasTable {
     pub aliases: Vec<ModelAlias>,
 }
