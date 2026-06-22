@@ -2,7 +2,7 @@
 
 > _This agreement is based on the [Apache Foundation's Individual Contributor License Agreement V2.2](https://www.apache.org/licenses/icla.pdf)._
 
-Thank you for your interest in the open source project(s) managed by TensorZero, Inc. ("Company").
+Thank you for your interest in the open source project(s) managed by Delta-AI ("Company").
 To clarify the intellectual property license granted with Contributions from any person or entity, the Company must have on file a signed Contributor License Agreement ("CLA") from each Contributor, indicating agreement with the license terms below.
 This agreement is for your protection as a Contributor as well as the protection of the Company and its users.
 It does not change your rights to use your own Contributions for any other purpose.
@@ -39,4 +39,3 @@ Except for the license granted herein to Company and recipients of software dist
 
 8. You agree to notify the Company of any facts or circumstances of which you become aware that would make these representations inaccurate in any respect.
 
-For any copyright notices or other communications, please contact us at hello@tensorzero.com.

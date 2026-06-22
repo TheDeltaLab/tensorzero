@@ -11,6 +11,8 @@ See `NOTICE` for the overall attribution statement.
 ## Modified non-source-code files
 
 - `AGENTS.md` — Added Modification Notice (Delta-AI fork) section.
+- `CLA.md` — Changed Company from TensorZero, Inc. to Delta-AI; removed legacy hello@tensorzero.com contact.
+- `SECURITY.md` — Changed security contact to security@thebrainly.ai.
 
 ---
 
