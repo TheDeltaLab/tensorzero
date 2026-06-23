@@ -16,9 +16,10 @@ pub struct ModelAliasTarget {
 ///   (e.g. "chat", "embedding", "rerank"). If `None`, it matches any task.
 /// `targets`: Ordered list of (provider, model) pairs to try.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ts_rs::TS)]
-#[ts(export)]
+#[ts(export, optional_fields)]
 pub struct ModelAlias {
     pub name: Arc<str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<Arc<str>>,
     pub targets: Vec<ModelAliasTarget>,
 }

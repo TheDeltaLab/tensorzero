@@ -5,18 +5,20 @@ use tensorzero_stored_config::{
     STORED_AUTOPILOT_CONFIG_SCHEMA_REVISION, STORED_CLICKHOUSE_CONFIG_SCHEMA_REVISION,
     STORED_EMBEDDING_MODEL_CONFIG_SCHEMA_REVISION, STORED_EVALUATION_CONFIG_SCHEMA_REVISION,
     STORED_GATEWAY_CONFIG_SCHEMA_REVISION, STORED_METRIC_CONFIG_SCHEMA_REVISION,
-    STORED_MODEL_CONFIG_SCHEMA_REVISION, STORED_OPTIMIZER_CONFIG_SCHEMA_REVISION,
-    STORED_POSTGRES_CONFIG_SCHEMA_REVISION, STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION,
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, STORED_MODEL_CONFIG_SCHEMA_REVISION,
+    STORED_OPTIMIZER_CONFIG_SCHEMA_REVISION, STORED_POSTGRES_CONFIG_SCHEMA_REVISION,
+    STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION,
     STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION, STORED_STORAGE_KIND_SCHEMA_REVISION,
     STORED_TOOL_CONFIG_SCHEMA_REVISION, StoredAutopilotConfig, StoredClickHouseConfig,
-    StoredEmbeddingModelConfig, StoredGatewayConfig, StoredMetricConfig, StoredModelConfig,
-    StoredOptimizerConfig, StoredPostgresConfig, StoredProviderTypesConfig,
-    StoredRateLimitingConfig, StoredStorageKind,
+    StoredEmbeddingModelConfig, StoredGatewayConfig, StoredMetricConfig, StoredModelAlias,
+    StoredModelAliasTarget, StoredModelConfig, StoredOptimizerConfig, StoredPostgresConfig,
+    StoredProviderTypesConfig, StoredRateLimitingConfig, StoredStorageKind,
 };
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::config::UninitializedConfig;
+use crate::config::{UninitializedModelAlias, UninitializedModelAliasTarget};
 use crate::config::path::ResolvedTomlPathData;
 use crate::config::unwritten::UnwrittenConfig;
 use crate::error::{Error, ErrorDetails};
@@ -24,6 +26,22 @@ use crate::error::{Error, ErrorDetails};
 use super::PostgresConnectionInfo;
 use super::file_writes::{CollectedFile, add_file, write_collected_files};
 use super::function_config_writes::write_function_config_in_tx_skipping_cas;
+
+impl From<&UninitializedModelAlias> for StoredModelAlias {
+    fn from(a: &UninitializedModelAlias) -> Self {
+        Self {
+            task: a.task.clone(),
+            targets: a
+                .targets
+                .iter()
+                .map(|t| StoredModelAliasTarget {
+                    provider: t.provider.clone(),
+                    model: t.model.clone(),
+                })
+                .collect(),
+        }
+    }
+}
 
 #[derive(Debug)]
 pub struct WriteStoredConfigParams<'a> {
@@ -120,7 +138,7 @@ pub(crate) async fn write_stored_config_in_tx(
         object_storage,
         models,
         embedding_models,
-        model_aliases: _,
+        model_aliases,
         functions,
         metrics,
         tools,
@@ -262,6 +280,16 @@ pub(crate) async fn write_stored_config_in_tx(
     )
     .await?;
     tombstone_removed_names(tx, "optimizers_configs", &optimizers_new_names).await?;
+
+    let model_aliases_new_names = write_named_section(
+        tx,
+        "model_aliases_configs",
+        STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION,
+        model_aliases.as_ref().into_iter().flat_map(|m| m.iter()),
+        |alias_config| serialize_stored(&StoredModelAlias::from(alias_config)),
+    )
+    .await?;
+    tombstone_removed_names(tx, "model_aliases_configs", &model_aliases_new_names).await?;
 
     // 3. Tools (with stored files)
     let mut tools_new_names: HashSet<String> = HashSet::new();

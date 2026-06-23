@@ -194,9 +194,6 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
         if let Some(alias) = self.model_aliases.resolve(key, Some(T::TASK_TYPE)) {
             for target in &alias.targets {
                 let shorthand_key = format!("{}::{}", target.provider_type, target.model_name);
-                if let Some(model_config) = self.table.get(shorthand_key.as_str()) {
-                    return Ok(Some(CowNoClone::Borrowed(model_config)));
-                }
                 if let Some(sh) = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, &shorthand_key) {
                     let model = if relay.is_some() {
                         let creds = self.default_credentials.clone();
@@ -251,6 +248,11 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
         }
 
         if check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key).is_some() {
+            return Ok(());
+        }
+
+        // Check aliases — only verifies existence, doesn't resolve to targets
+        if self.model_aliases.resolve(key, Some(T::TASK_TYPE)).is_some() {
             return Ok(());
         }
 
