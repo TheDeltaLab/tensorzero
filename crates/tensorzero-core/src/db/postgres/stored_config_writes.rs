@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::config::UninitializedConfig;
-use crate::config::{UninitializedModelAlias, UninitializedModelAliasTarget};
+use crate::config::UninitializedModelAlias;
 use crate::config::path::ResolvedTomlPathData;
 use crate::config::unwritten::UnwrittenConfig;
 use crate::error::{Error, ErrorDetails};

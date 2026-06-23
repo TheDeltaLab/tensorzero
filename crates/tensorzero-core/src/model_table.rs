@@ -238,21 +238,33 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
         Ok(None)
     }
     /// Check that a model name is valid
-    /// This is either true because it's in the table, or because it's a valid shorthand name
+    /// This is either true because it's in the table, because it resolves via alias,
+    /// or because it's a valid shorthand name.
     pub fn validate(&self, key: &str) -> Result<(), Error> {
-        // Try direct lookup (if it's blacklisted, it's not in the table)
-        // If it's shorthand and already in the table, it's valid
         if let Some(model_config) = self.table.get(key) {
             model_config.validate(key, &self.global_outbound_http_timeout)?;
             return Ok(());
         }
 
-        if check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key).is_some() {
-            return Ok(());
+        // Aliases checked before shorthands, matching `get()` order
+        if let Some(alias) = self.model_aliases.resolve(key, Some(T::TASK_TYPE)) {
+            // Verify at least one target matches a supported shorthand prefix
+            let any_valid = alias.targets.iter().any(|target| {
+                let shorthand_key = format!("{}::{}", target.provider_type, target.model_name);
+                check_shorthand(T::SHORTHAND_MODEL_PREFIXES, &shorthand_key).is_some()
+            });
+            if any_valid {
+                return Ok(());
+            }
+            return Err(ErrorDetails::Config {
+                message: format!(
+                    "Model alias '{key}' has no targets matching a supported shorthand prefix"
+                ),
+            }
+            .into());
         }
 
-        // Check aliases — only verifies existence, doesn't resolve to targets
-        if self.model_aliases.resolve(key, Some(T::TASK_TYPE)).is_some() {
+        if check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key).is_some() {
             return Ok(());
         }
 

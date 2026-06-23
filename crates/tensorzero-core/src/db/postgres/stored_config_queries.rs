@@ -11,8 +11,9 @@ use tensorzero_stored_config::schema_dispatch::{
     deserialize_variant_config,
 };
 use tensorzero_stored_config::{
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION,
     StoredEvaluationConfig, StoredEvaluatorConfig, StoredFile, StoredFileRef, StoredFunctionConfig,
-    StoredLLMJudgeConfig, StoredLLMJudgeVariantConfig, StoredModelAlias, StoredModelAliasTarget,
+    StoredLLMJudgeConfig, StoredLLMJudgeVariantConfig, StoredModelAlias,
     StoredToolConfig, StoredVariantConfig, StoredVariantVersionConfig,
 };
 use uuid::Uuid;
@@ -712,7 +713,15 @@ async fn rehydrate_loaded_config_rows(
     let (model_aliases_map, model_alias_errors) = rehydrate_named_collection(
         model_alias_rows,
         "model_alias",
-        |_sr, config| {
+        |sr, config| {
+            if sr > STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION {
+                return Err(Error::new(ErrorDetails::Config {
+                    message: format!(
+                        "Unsupported model_alias schema revision {sr} (max supported: {})",
+                        STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION
+                    ),
+                }));
+            }
             serde_json::from_value::<StoredModelAlias>(config)
                 .map_err(|e| Error::new(ErrorDetails::Serialization { message: e.to_string() }))
         },
