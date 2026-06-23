@@ -62,7 +62,7 @@ use crate::minijinja_util::TemplateConfig;
 use crate::model::{
     CredentialLocationWithFallback, ModelConfig, ModelTable, UninitializedModelConfig,
 };
-use crate::model_table::{CowNoClone, ProviderTypeDefaultCredentials, ShorthandModelConfig};
+use crate::model_table::{CowNoClone, ProviderTypeDefaultCredentials, RESERVED_MODEL_PREFIXES, ShorthandModelConfig};
 use crate::model_alias::{ModelAlias, ModelAliasTable, ModelAliasTarget};
 use crate::optimization::{
     OptimizerInfo, UninitializedOptimizerConfig, UninitializedOptimizerInfo,
@@ -1753,6 +1753,35 @@ impl Config {
         let model_aliases = Arc::new({
             let mut table = ModelAliasTable::default();
             for (name, uninit_alias) in toml_model_aliases {
+                // Validate alias name doesn't shadow reserved prefixes
+                if RESERVED_MODEL_PREFIXES
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix.as_str()))
+                {
+                    return Err(Error::new(ErrorDetails::Config {
+                        message: format!(
+                            "Model alias name '{name}' starts with a reserved provider prefix"
+                        ),
+                    }));
+                }
+                // Validate task is a known value
+                if let Some(ref task) = uninit_alias.task {
+                    if !matches!(task.as_str(), "chat" | "embedding" | "rerank") {
+                        return Err(Error::new(ErrorDetails::Config {
+                            message: format!(
+                                "Model alias '{name}' has unknown task '{task}'; expected 'chat', 'embedding', or 'rerank'"
+                            ),
+                        }));
+                    }
+                }
+                // Validate targets is non-empty
+                if uninit_alias.targets.is_empty() {
+                    return Err(Error::new(ErrorDetails::Config {
+                        message: format!(
+                            "Model alias '{name}' has no targets; at least one target is required"
+                        ),
+                    }));
+                }
                 table.aliases.push(ModelAlias {
                     name: Arc::from(name.as_str()),
                     task: uninit_alias.task.map(|t| Arc::from(t.as_str())),
