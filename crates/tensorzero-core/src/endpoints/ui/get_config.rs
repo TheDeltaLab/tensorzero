@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Endpoint for returning the gateway config to the UI.
 //!
 //! This endpoint returns a UI-safe subset of the Config for use by the TensorZero UI.

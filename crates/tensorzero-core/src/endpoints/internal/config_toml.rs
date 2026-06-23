@@ -344,6 +344,7 @@ mod tests {
             object_storage: None,
             models: Some(HashMap::new()),
             embedding_models: Some(HashMap::new()),
+            model_aliases: None,
             functions: Some(HashMap::new()),
             metrics: Some(HashMap::new()),
             tools: Some(HashMap::from([(
@@ -403,6 +404,7 @@ mod tests {
             object_storage: None,
             models: Some(HashMap::new()),
             embedding_models: Some(HashMap::new()),
+            model_aliases: None,
             functions: Some(HashMap::new()),
             metrics: Some(HashMap::new()),
             tools: Some(HashMap::from([(

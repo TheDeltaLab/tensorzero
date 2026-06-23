@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
@@ -13,6 +14,7 @@ use serde_json::json;
 
 use crate::config::{ErrorContext, PathWithContents, SchemaData};
 use crate::embeddings::EmbeddingModelTable;
+#[allow(unused_imports)]
 use crate::model_alias::ModelAliasTable;
 use crate::endpoints::inference::{InferenceClients, InferenceModels};
 use crate::error::IMPOSSIBLE_ERROR_MESSAGE;

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 // This is an internal crate, so we're the only consumers of
 // traits with async fns for now.
 #![expect(async_fn_in_trait)]

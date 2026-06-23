@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::providers::openai::ContentBlockType;
 use futures::StreamExt;
 use futures::future::try_join_all;

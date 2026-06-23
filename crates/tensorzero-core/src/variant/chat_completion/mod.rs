@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::Duration;
 use futures::future::try_join_all;
 use schemars::JsonSchema;
@@ -13,6 +14,7 @@ use crate::embeddings::EmbeddingModelTable;
 use crate::endpoints::inference::{InferenceClients, InferenceModels, InferenceParams};
 use crate::error::{Error, ErrorDetails};
 use crate::function::FunctionConfig;
+#[allow(unused_imports)]
 use crate::model_alias::ModelAliasTable;
 use crate::inference::types::extra_body::{ExtraBodyConfig, FullExtraBodyConfig};
 use crate::inference::types::extra_headers::{ExtraHeadersConfig, FullExtraHeadersConfig};

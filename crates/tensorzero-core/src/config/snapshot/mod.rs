@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Stored config types for backward-compatible deserialization of historical snapshots.
 //!
 //! When deprecating a config field:
