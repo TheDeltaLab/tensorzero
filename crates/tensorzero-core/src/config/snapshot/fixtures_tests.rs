@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Round-trip correctness tests for `ConfigSnapshot` against a corpus of
 //! representative TOML fixtures.
 //!

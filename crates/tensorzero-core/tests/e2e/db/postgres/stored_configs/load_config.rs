@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for `load_config_from_db` (config-in-db read path).
 
 use std::collections::{BTreeMap, HashMap};
