@@ -12,15 +12,18 @@ use tensorzero_stored_config::schema_dispatch::{
     deserialize_variant_config,
 };
 use tensorzero_stored_config::{
-    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION,
-    StoredEvaluationConfig, StoredEvaluatorConfig, StoredFile, StoredFileRef, StoredFunctionConfig,
-    StoredLLMJudgeConfig, StoredLLMJudgeVariantConfig, StoredModelAlias,
-    StoredToolConfig, StoredVariantConfig, StoredVariantVersionConfig,
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, StoredEvaluationConfig, StoredEvaluatorConfig,
+    StoredFile, StoredFileRef, StoredFunctionConfig, StoredLLMJudgeConfig,
+    StoredLLMJudgeVariantConfig, StoredModelAlias, StoredToolConfig, StoredVariantConfig,
+    StoredVariantVersionConfig,
 };
 use uuid::Uuid;
 
 use crate::config::rehydrate::{FileMap, rehydrate_evaluation, rehydrate_function, rehydrate_tool};
-use crate::config::{ConfigLoadingError, UninitializedConfig, UninitializedModelAlias, UninitializedModelAliasTarget, validate_user_config_names};
+use crate::config::{
+    ConfigLoadingError, UninitializedConfig, UninitializedModelAlias,
+    UninitializedModelAliasTarget, validate_user_config_names,
+};
 use crate::error::{Error, ErrorDetails};
 
 #[derive(Clone, Debug, FromRow)]
@@ -718,13 +721,15 @@ async fn rehydrate_loaded_config_rows(
             if sr > STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION {
                 return Err(Error::new(ErrorDetails::Config {
                     message: format!(
-                        "Unsupported model_alias schema revision {sr} (max supported: {})",
-                        STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION
+                        "Unsupported model_alias schema revision {sr} (max supported: {STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION})",
                     ),
                 }));
             }
-            serde_json::from_value::<StoredModelAlias>(config)
-                .map_err(|e| Error::new(ErrorDetails::Serialization { message: e.to_string() }))
+            serde_json::from_value::<StoredModelAlias>(config).map_err(|e| {
+                Error::new(ErrorDetails::Serialization {
+                    message: e.to_string(),
+                })
+            })
         },
         |stored: StoredModelAlias| {
             Ok::<_, Error>(UninitializedModelAlias {

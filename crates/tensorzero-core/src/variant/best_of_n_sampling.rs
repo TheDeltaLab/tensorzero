@@ -14,8 +14,6 @@ use serde_json::{Value, json};
 
 use crate::config::{ErrorContext, PathWithContents, SchemaData};
 use crate::embeddings::EmbeddingModelTable;
-#[allow(unused_imports)]
-use crate::model_alias::ModelAliasTable;
 use crate::endpoints::inference::{InferenceClients, InferenceModels};
 use crate::error::ErrorDetails;
 use crate::inference::types::ContentBlockOutput;
@@ -29,6 +27,8 @@ use crate::inference::types::{
 };
 use crate::jsonschema_util::JSONSchema;
 use crate::model::ModelTable;
+#[allow(unused_imports)]
+use crate::model_alias::ModelAliasTable;
 use crate::tool::create_json_mode_tool_call_config_with_allowed_tools;
 use tensorzero_inference_types::ProviderToolCallConfig;
 
@@ -1464,8 +1464,8 @@ mod tests {
             )]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
-            Arc::new(ModelAliasTable::default())
-)
+            Arc::new(ModelAliasTable::default()),
+        )
         .expect("Failed to create model table");
         let client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
@@ -1595,8 +1595,8 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
-                Arc::new(ModelAliasTable::default())
-)
+                Arc::new(ModelAliasTable::default()),
+            )
             .expect("Failed to create model table")
         };
         let input = LazyResolvedInput {
@@ -1675,8 +1675,8 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-                Arc::new(ModelAliasTable::default())
-)
+                Arc::new(ModelAliasTable::default()),
+            )
             .expect("Failed to create model table")
         };
         let input = LazyResolvedInput {
@@ -1775,8 +1775,8 @@ mod tests {
             big_models,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
-            Arc::new(ModelAliasTable::default())
-)
+            Arc::new(ModelAliasTable::default()),
+        )
         .expect("Failed to create model table");
 
         let result_big = best_of_n_big_variant

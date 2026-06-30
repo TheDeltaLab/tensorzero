@@ -8,12 +8,11 @@ use tensorzero_stored_config::{
     STORED_GATEWAY_CONFIG_SCHEMA_REVISION, STORED_METRIC_CONFIG_SCHEMA_REVISION,
     STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, STORED_MODEL_CONFIG_SCHEMA_REVISION,
     STORED_OPTIMIZER_CONFIG_SCHEMA_REVISION, STORED_POSTGRES_CONFIG_SCHEMA_REVISION,
-    STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION,
-    STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION, STORED_STORAGE_KIND_SCHEMA_REVISION,
-    STORED_TOOL_CONFIG_SCHEMA_REVISION, StoredAutopilotConfig, StoredClickHouseConfig,
-    StoredEmbeddingModelConfig, StoredGatewayConfig, StoredMetricConfig, StoredModelAlias,
-    StoredModelAliasTarget, StoredModelConfig, StoredOptimizerConfig, StoredPostgresConfig,
-    StoredProviderTypesConfig, StoredRateLimitingConfig, StoredStorageKind,
+    STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION, STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION,
+    STORED_STORAGE_KIND_SCHEMA_REVISION, STORED_TOOL_CONFIG_SCHEMA_REVISION, StoredAutopilotConfig,
+    StoredClickHouseConfig, StoredEmbeddingModelConfig, StoredGatewayConfig, StoredMetricConfig,
+    StoredModelAlias, StoredModelAliasTarget, StoredModelConfig, StoredOptimizerConfig,
+    StoredPostgresConfig, StoredProviderTypesConfig, StoredRateLimitingConfig, StoredStorageKind,
 };
 use uuid::Uuid;
 

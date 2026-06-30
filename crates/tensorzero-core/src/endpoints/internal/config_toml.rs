@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Editable TOML config endpoints.
 //!
 //! These endpoints expose the DB-authoritative stored config as an editable

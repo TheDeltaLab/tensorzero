@@ -551,7 +551,6 @@ mod tests {
             EmbeddingModelConfig, EmbeddingModelTable, EmbeddingProviderConfig,
             EmbeddingProviderInfo,
         },
-        model_alias::ModelAliasTable,
         endpoints::inference::InferenceCredentials,
         experimentation::ExperimentationConfigWithNamespaces,
         function::{FunctionConfig, FunctionConfigChat, FunctionConfigJson},
@@ -562,6 +561,7 @@ mod tests {
             StoredInputMessageContent, System, Text,
         },
         jsonschema_util::JSONSchema,
+        model_alias::ModelAliasTable,
         model_table::ProviderTypeDefaultCredentials,
         providers::dummy::DummyProvider,
         stored_inference::{RenderedSample, StoredOutput},
@@ -610,8 +610,8 @@ mod tests {
                         HashMap::from([(Arc::from(model_name), embedding_model_config)]),
                         ProviderTypeDefaultCredentials::new(&provider_types).into(),
                         chrono::Duration::seconds(120),
-                        Arc::new(ModelAliasTable::default())
-)
+                        Arc::new(ModelAliasTable::default()),
+                    )
                     .unwrap(),
                 ),
                 ..Default::default()

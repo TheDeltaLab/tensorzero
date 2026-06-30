@@ -143,7 +143,7 @@ mod tests {
     use crate::inference::types::extra_headers::UnfilteredInferenceExtraHeaders;
     use crate::model::ModelTable;
     #[allow(unused_imports)]
-use crate::model_alias::ModelAliasTable;
+    use crate::model_alias::ModelAliasTable;
     use crate::variant::VariantInfo;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -235,8 +235,8 @@ use crate::model_alias::ModelAliasTable;
             map,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
-            Arc::new(ModelAliasTable::default())
-)
+            Arc::new(ModelAliasTable::default()),
+        )
         .expect("Failed to create model table")
     }
 

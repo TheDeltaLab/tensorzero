@@ -63,8 +63,10 @@ use crate::minijinja_util::TemplateConfig;
 use crate::model::{
     CredentialLocationWithFallback, ModelConfig, ModelTable, UninitializedModelConfig,
 };
-use crate::model_table::{CowNoClone, ProviderTypeDefaultCredentials, RESERVED_MODEL_PREFIXES, ShorthandModelConfig};
 use crate::model_alias::{ModelAlias, ModelAliasTable, ModelAliasTarget};
+use crate::model_table::{
+    CowNoClone, ProviderTypeDefaultCredentials, RESERVED_MODEL_PREFIXES, ShorthandModelConfig,
+};
 use crate::optimization::{
     OptimizerInfo, UninitializedOptimizerConfig, UninitializedOptimizerInfo,
 };
@@ -1766,14 +1768,14 @@ impl Config {
                     }));
                 }
                 // Validate task is a known value
-                if let Some(ref task) = uninit_alias.task {
-                    if !matches!(task.as_str(), "chat" | "embedding" | "rerank") {
-                        return Err(Error::new(ErrorDetails::Config {
-                            message: format!(
-                                "Model alias '{name}' has unknown task '{task}'; expected 'chat', 'embedding', or 'rerank'"
-                            ),
-                        }));
-                    }
+                if let Some(ref task) = uninit_alias.task
+                    && !matches!(task.as_str(), "chat" | "embedding" | "rerank")
+                {
+                    return Err(Error::new(ErrorDetails::Config {
+                        message: format!(
+                            "Model alias '{name}' has unknown task '{task}'; expected 'chat', 'embedding', or 'rerank'"
+                        ),
+                    }));
                 }
                 // Validate targets is non-empty
                 if uninit_alias.targets.is_empty() {
@@ -1786,12 +1788,14 @@ impl Config {
                 table.aliases.push(ModelAlias {
                     name: Arc::from(name.as_str()),
                     task: uninit_alias.task.map(|t| Arc::from(t.as_str())),
-                    targets: uninit_alias.targets.into_iter().map(|t| {
-                        ModelAliasTarget {
+                    targets: uninit_alias
+                        .targets
+                        .into_iter()
+                        .map(|t| ModelAliasTarget {
                             provider_type: Arc::from(t.provider.as_str()),
                             model_name: Arc::from(t.model.as_str()),
-                        }
-                    }).collect(),
+                        })
+                        .collect(),
                 });
             }
             table

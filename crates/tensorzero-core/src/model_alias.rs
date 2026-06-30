@@ -86,7 +86,10 @@ mod tests {
                 vec![("openai", "gpt-4o-mini")],
             )],
         };
-        expect_that!(table.resolve("fast-model", Some("chat")).is_some(), eq(true));
+        expect_that!(
+            table.resolve("fast-model", Some("chat")).is_some(),
+            eq(true)
+        );
         expect_that!(
             table.resolve("fast-model", Some("embedding")).is_some(),
             eq(true)
@@ -103,7 +106,10 @@ mod tests {
                 vec![("openai", "gpt-4o-mini")],
             )],
         };
-        expect_that!(table.resolve("fast-model", Some("embedding")).is_none(), eq(true));
+        expect_that!(
+            table.resolve("fast-model", Some("embedding")).is_none(),
+            eq(true)
+        );
     }
 
     #[gtest]
