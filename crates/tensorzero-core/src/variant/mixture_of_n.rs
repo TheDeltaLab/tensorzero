@@ -29,9 +29,10 @@ use crate::inference::types::{
     batch::StartBatchModelInferenceWithMetadata,
 };
 use crate::model::ModelTable;
-#[allow(unused_imports)]
-use crate::model_alias::ModelAliasTable;
 use crate::tool::ToolCallChunk;
+
+#[cfg(test)]
+use crate::model_alias::ModelAliasTable;
 use crate::utils::unbounded_recursion_wrapper;
 use crate::{
     endpoints::inference::InferenceParams,

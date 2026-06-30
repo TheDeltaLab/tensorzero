@@ -19,7 +19,7 @@ use crate::inference::types::extra_headers::{ExtraHeadersConfig, FullExtraHeader
 use crate::inference::types::resolved_input::{
     LazyResolvedInput, LazyResolvedInputMessage, LazyResolvedInputMessageContent,
 };
-#[allow(unused_imports)]
+#[cfg(test)]
 use crate::model_alias::ModelAliasTable;
 use crate::relay::TensorzeroRelay;
 use crate::utils::retries::RetryConfig;

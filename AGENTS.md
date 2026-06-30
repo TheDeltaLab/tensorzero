@@ -9,6 +9,11 @@
   - Run `cargo fmt`.
   - Run `cargo clippy --all-targets --all-features -- -D warnings` to catch warnings and errors.
   - Run unit tests with `cargo test-unit-fast` which uses `nextest` under the hood.
+- **Before pushing a PR, you MUST run all three locally and confirm zero failures:**
+  - `cargo fmt --check` (no diffs)
+  - `cargo clippy --all-targets --all-features -- -D warnings` (no errors, no warnings)
+  - `cargo test-unit-fast` (all pass)
+  - If any of these fail, fix the issues before pushing. Do not rely on CI to catch them.
 - Use `#[expect(clippy::...)]` instead of `#[allow(clippy::...)]`.
 - Prefer early returns over nested `match`/`if` blocks. For example, use `let ... else { return Err(...) };` or `if !condition { return Err(...) }` to reduce nesting.
 - For internally-tagged enums (`#[serde(tag = "...")]`) without lifetimes, use `TensorZeroDeserialize` instead of `Deserialize` for better error messages via `serde_path_to_error`.

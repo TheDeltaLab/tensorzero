@@ -53,7 +53,7 @@ mod tests {
     fn make_alias(name: &str, task: Option<&str>, targets: Vec<(&str, &str)>) -> ModelAlias {
         ModelAlias {
             name: Arc::from(name),
-            task: task.map(|t| Arc::from(t)),
+            task: task.map(Arc::from),
             targets: targets
                 .into_iter()
                 .map(|(p, m)| ModelAliasTarget {

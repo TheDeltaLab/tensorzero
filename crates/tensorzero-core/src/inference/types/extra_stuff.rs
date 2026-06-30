@@ -142,7 +142,6 @@ mod tests {
     use crate::inference::types::extra_body::UnfilteredInferenceExtraBody;
     use crate::inference::types::extra_headers::UnfilteredInferenceExtraHeaders;
     use crate::model::ModelTable;
-    #[allow(unused_imports)]
     use crate::model_alias::ModelAliasTable;
     use crate::variant::VariantInfo;
     use serde_json::json;
