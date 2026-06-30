@@ -420,13 +420,7 @@ jobs:
       # Permission for rust-cache
       actions: read # Required to read workflow run, cache, or artifact metadata.
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    strategy:
-      matrix:
-        # Keep 'total_partitions' in sync with the number of entries in the 'partition' array
-        partition: [1, 2, 3, 4]
-        include:
-          - total_partitions: 4
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -447,18 +441,10 @@ jobs:
           save-if: ${{ github.event_name == 'merge_group' }}
           workspaces: "crates -> target"
 
-      - name: Install cargo-hack
-        uses: taiki-e/install-action@60581cd7025e0e855cebd745379013e286d9c787 # v2.64.2
-        with:
-          tool: cargo-hack
-
       - name: Lint (Rust)
         working-directory: crates
-        env:
-          PARTITION: ${{ matrix.partition }}
-          TOTAL_PARTITIONS: ${{ matrix.total_partitions }}
         run: |
-          cargo hack --partition "${PARTITION}/${TOTAL_PARTITIONS}" clippy --all-targets --each-feature -- -D warnings
+          cargo clippy --all-targets --all-features -- -D warnings
 
   validate-python:
     name: validate-python
