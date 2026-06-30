@@ -9,10 +9,12 @@
   - Run `cargo fmt`.
   - Run `cargo clippy --all-targets --all-features -- -D warnings` to catch warnings and errors.
   - Run unit tests with `cargo test-unit-fast` which uses `nextest` under the hood.
-- **Before pushing a PR, you MUST run all three locally and confirm zero failures:**
+- **Before pushing a PR, you MUST run all checks locally and confirm zero failures:**
+  - `pnpm run format` (no diffs)
   - `cargo fmt --check` (no diffs)
   - `cargo clippy --all-targets --all-features -- -D warnings` (no errors, no warnings)
   - `cargo test-unit-fast` (all pass)
+  - Verify every modified source file has `// Modified by Delta-AI under Apache 2.0` in the first 20 lines (or listed in `MODIFICATIONS.md` for non-source files).
   - If any of these fail, fix the issues before pushing. Do not rely on CI to catch them.
 - Use `#[expect(clippy::...)]` instead of `#[allow(clippy::...)]`.
 - Prefer early returns over nested `match`/`if` blocks. For example, use `let ... else { return Err(...) };` or `if !condition { return Err(...) }` to reduce nesting.
