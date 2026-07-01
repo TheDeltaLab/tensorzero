@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::Utc;
 use futures::future::try_join_all;
 use std::{collections::HashMap, sync::Arc};
@@ -560,6 +561,7 @@ mod tests {
             StoredInputMessageContent, System, Text,
         },
         jsonschema_util::JSONSchema,
+        model_alias::ModelAliasTable,
         model_table::ProviderTypeDefaultCredentials,
         providers::dummy::DummyProvider,
         stored_inference::{RenderedSample, StoredOutput},
@@ -608,6 +610,7 @@ mod tests {
                         HashMap::from([(Arc::from(model_name), embedding_model_config)]),
                         ProviderTypeDefaultCredentials::new(&provider_types).into(),
                         chrono::Duration::seconds(120),
+                        Arc::new(ModelAliasTable::default()),
                     )
                     .unwrap(),
                 ),

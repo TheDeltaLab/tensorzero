@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for `load_config_from_db` (config-in-db read path).
 
 use std::collections::{BTreeMap, HashMap};
@@ -54,6 +55,7 @@ fn empty_config() -> UninitializedConfig {
         metrics: Some(HashMap::new()),
         tools: Some(HashMap::new()),
         evaluations: Some(HashMap::new()),
+        model_aliases: Some(HashMap::new()),
         provider_types: Some(Default::default()),
         optimizers: Some(HashMap::new()),
         autopilot: Some(Default::default()),
@@ -231,6 +233,7 @@ async fn load_config_from_db_returns_defaults_on_empty_database(pool: PgPool) {
             metrics: some(is_empty()),
             tools: some(is_empty()),
             evaluations: some(is_empty()),
+            model_aliases: some(is_empty()),
             provider_types: some(anything()),
             optimizers: some(is_empty()),
             autopilot: some(anything()),

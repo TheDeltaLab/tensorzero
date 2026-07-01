@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::{
     collections::HashMap,
     sync::{Arc, atomic::Ordering},
@@ -28,7 +29,7 @@ use crate::{
 use tensorzero_auth::middleware::RequestApiKeyExtension;
 
 #[cfg(test)]
-use crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT;
+use crate::{http::DEFAULT_HTTP_CLIENT_TIMEOUT, model_alias::ModelAliasTable};
 
 use super::inference::InferenceCredentials;
 
@@ -213,6 +214,7 @@ mod tests {
                     embedding_models,
                     Arc::new(ProviderTypeDefaultCredentials::new(&provider_types)),
                     DEFAULT_HTTP_CLIENT_TIMEOUT,
+                    Arc::new(ModelAliasTable::default()),
                 )
                 .unwrap(),
             ),

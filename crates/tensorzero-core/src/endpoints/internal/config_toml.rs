@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Editable TOML config endpoints.
 //!
 //! These endpoints expose the DB-authoritative stored config as an editable
@@ -344,6 +345,7 @@ mod tests {
             object_storage: None,
             models: Some(HashMap::new()),
             embedding_models: Some(HashMap::new()),
+            model_aliases: None,
             functions: Some(HashMap::new()),
             metrics: Some(HashMap::new()),
             tools: Some(HashMap::from([(
@@ -403,6 +405,7 @@ mod tests {
             object_storage: None,
             models: Some(HashMap::new()),
             embedding_models: Some(HashMap::new()),
+            model_aliases: None,
             functions: Some(HashMap::new()),
             metrics: Some(HashMap::new()),
             tools: Some(HashMap::from([(

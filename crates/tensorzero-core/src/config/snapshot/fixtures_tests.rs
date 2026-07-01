@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Round-trip correctness tests for `ConfigSnapshot` against a corpus of
 //! representative TOML fixtures.
 //!
@@ -191,7 +192,7 @@ fn fixture_empty() {
     expect_that!(json_path(&json, "models"), eq(&serde_json::json!({})));
     assert_canonical_hash_matches(
         &snapshot,
-        "2870dc8a95ce11c43018a68a94d459e15fa691639e9a10432f4e2604b234a3b1",
+        "29bc01770cca8f4b80d313d0c052c46fdcaae837af279b8b8a2220d5049fe610",
     );
 }
 
@@ -208,7 +209,7 @@ fn fixture_chat_function_unversioned() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "162755c32d81d4fdc75610a02f6d3825912a14cf018e7492dd0c29b545d3f575",
+        "4fe2de718ce1be2c0b5e7be8a7bef79aff00dd1d5449e4e8dd7f0f350684b5b1",
     );
 }
 
@@ -232,7 +233,7 @@ fn fixture_multi_variant_types() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "976718dc8056ec6a822ea460e9dcb5c85ad8f1013d3b633492537760720a24ce",
+        "bf5987fd14a9079107ea3af37b034626055de9eaf6777f404717d1dae3de4f9d",
     );
 }
 
@@ -253,7 +254,7 @@ fn fixture_models_multi_provider() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "48b73f39ea675f23e007f1867b456f2c09fb0852b726f44d568719ea4dadd601",
+        "40a1d723a6259c93d75bba4734e25e76ea1321d914dc1adcd5d8a0f1540068b9",
     );
 }
 
@@ -273,7 +274,7 @@ fn fixture_tools_and_metrics() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "7ac9d83b347614b2736fba7247dbd60be33b1f7bb4fda5ee0d960427db1563e8",
+        "2a7f61f9c80dbca62e5a2a1acf6287fe53ef823478222fbaebd9da19fbc2b7da",
     );
 }
 
@@ -296,7 +297,7 @@ fn fixture_kitchen_sink() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "7a228c4a9297f7cdf5786c27a6f0cf2d1759b818834963be443dc48d7e1259f0",
+        "82a0341daf13843fdc74b0715fcb7c08199dc7348657b92ea86272178b07a624",
     );
 }
 

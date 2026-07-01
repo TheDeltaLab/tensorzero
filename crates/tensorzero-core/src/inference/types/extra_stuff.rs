@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Helper functions for dealing with extra_body.rs and extra_headers.rs
 use crate::error::{Error, ErrorDetails};
 use crate::function::FunctionConfig;
@@ -141,6 +142,7 @@ mod tests {
     use crate::inference::types::extra_body::UnfilteredInferenceExtraBody;
     use crate::inference::types::extra_headers::UnfilteredInferenceExtraHeaders;
     use crate::model::ModelTable;
+    use crate::model_alias::ModelAliasTable;
     use crate::variant::VariantInfo;
     use serde_json::json;
     use std::collections::{HashMap, HashSet};
@@ -232,6 +234,7 @@ mod tests {
             map,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
+            Arc::new(ModelAliasTable::default()),
         )
         .expect("Failed to create model table")
     }

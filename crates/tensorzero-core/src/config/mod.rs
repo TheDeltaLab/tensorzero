@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::experimentation::{
     ExperimentationConfig, ExperimentationConfigWithNamespaces,
     UninitializedExperimentationConfigWithNamespaces,
@@ -62,7 +63,10 @@ use crate::minijinja_util::TemplateConfig;
 use crate::model::{
     CredentialLocationWithFallback, ModelConfig, ModelTable, UninitializedModelConfig,
 };
-use crate::model_table::{CowNoClone, ProviderTypeDefaultCredentials, ShorthandModelConfig};
+use crate::model_alias::{ModelAlias, ModelAliasTable, ModelAliasTarget};
+use crate::model_table::{
+    CowNoClone, ProviderTypeDefaultCredentials, RESERVED_MODEL_PREFIXES, ShorthandModelConfig,
+};
 use crate::optimization::{
     OptimizerInfo, UninitializedOptimizerConfig, UninitializedOptimizerInfo,
 };
@@ -1155,6 +1159,7 @@ struct ProcessedConfigInput {
     tools: HashMap<String, UninitializedToolConfig>,
     models: HashMap<Arc<str>, UninitializedModelConfig>,
     embedding_models: HashMap<Arc<str>, UninitializedEmbeddingModelConfig>,
+    model_aliases: HashMap<String, UninitializedModelAlias>,
     metrics: HashMap<String, MetricConfig>,
     evaluations: HashMap<String, UninitializedEvaluationConfig>,
     provider_types: ProviderTypesConfig,
@@ -1237,6 +1242,7 @@ async fn process_config_input(
                 object_storage: _, // replaced by overlay (via object_store_info)
                 models,
                 embedding_models,
+                model_aliases,
                 functions,
                 metrics,
                 tools,
@@ -1257,6 +1263,7 @@ async fn process_config_input(
             // Resolve Options with defaults
             let models = models.unwrap_or_default();
             let embedding_models = embedding_models.unwrap_or_default();
+            let model_aliases = model_aliases.unwrap_or_default();
             let functions = functions.unwrap_or_default();
             let metrics = metrics.unwrap_or_default();
             let tools = tools.unwrap_or_default();
@@ -1276,6 +1283,7 @@ async fn process_config_input(
                     .map(|info| info.kind.clone()),
                 models: Some(models.clone()),
                 embedding_models: Some(embedding_models.clone()),
+                model_aliases: Some(model_aliases.clone()),
                 functions: Some(functions.clone()),
                 metrics: Some(metrics.clone()),
                 tools: Some(tools.clone()),
@@ -1313,6 +1321,7 @@ async fn process_config_input(
                 tools,
                 models,
                 embedding_models,
+                model_aliases,
                 metrics,
                 evaluations,
                 provider_types,
@@ -1363,6 +1372,7 @@ async fn process_uninitialized_config(
         object_storage,
         models,
         embedding_models,
+        model_aliases,
         functions,
         metrics,
         tools,
@@ -1379,6 +1389,7 @@ async fn process_uninitialized_config(
     let rate_limiting = rate_limiting.unwrap_or_default();
     let models = models.unwrap_or_default();
     let embedding_models = embedding_models.unwrap_or_default();
+    let model_aliases = model_aliases.unwrap_or_default();
     let functions = functions.unwrap_or_default();
     let metrics = metrics.unwrap_or_default();
     let tools = tools.unwrap_or_default();
@@ -1428,6 +1439,7 @@ async fn process_uninitialized_config(
         tools,
         models,
         embedding_models,
+        model_aliases,
         metrics,
         evaluations,
         provider_types,
@@ -1659,6 +1671,7 @@ impl Config {
             tools,
             models,
             embedding_models,
+            model_aliases: toml_model_aliases,
             metrics,
             evaluations: uninitialized_evaluations,
             provider_types,
@@ -1740,10 +1753,58 @@ impl Config {
             .into_iter()
             .map(|(name, config)| (name, config.load()))
             .collect::<HashMap<_, _>>();
+        let model_aliases = Arc::new({
+            let mut table = ModelAliasTable::default();
+            for (name, uninit_alias) in toml_model_aliases {
+                // Validate alias name doesn't shadow reserved prefixes
+                if RESERVED_MODEL_PREFIXES
+                    .iter()
+                    .any(|prefix| name.starts_with(prefix.as_str()))
+                {
+                    return Err(Error::new(ErrorDetails::Config {
+                        message: format!(
+                            "Model alias name '{name}' starts with a reserved provider prefix"
+                        ),
+                    }));
+                }
+                // Validate task is a known value
+                if let Some(ref task) = uninit_alias.task
+                    && !matches!(task.as_str(), "chat" | "embedding" | "rerank")
+                {
+                    return Err(Error::new(ErrorDetails::Config {
+                        message: format!(
+                            "Model alias '{name}' has unknown task '{task}'; expected 'chat', 'embedding', or 'rerank'"
+                        ),
+                    }));
+                }
+                // Validate targets is non-empty
+                if uninit_alias.targets.is_empty() {
+                    return Err(Error::new(ErrorDetails::Config {
+                        message: format!(
+                            "Model alias '{name}' has no targets; at least one target is required"
+                        ),
+                    }));
+                }
+                table.aliases.push(ModelAlias {
+                    name: Arc::from(name.as_str()),
+                    task: uninit_alias.task.map(|t| Arc::from(t.as_str())),
+                    targets: uninit_alias
+                        .targets
+                        .into_iter()
+                        .map(|t| ModelAliasTarget {
+                            provider_type: Arc::from(t.provider.as_str()),
+                            model_name: Arc::from(t.model.as_str()),
+                        })
+                        .collect(),
+                });
+            }
+            table
+        });
         let models = ModelTable::new(
             loaded_models,
             provider_type_default_credentials.clone(),
             gateway_config.global_outbound_http_timeout,
+            model_aliases.clone(),
         )
         .map_err(|e| {
             Error::new(ErrorDetails::Config {
@@ -1754,6 +1815,7 @@ impl Config {
             loaded_embedding_models,
             provider_type_default_credentials,
             gateway_config.global_outbound_http_timeout,
+            model_aliases,
         )
         .map_err(|e| {
             Error::new(ErrorDetails::Config {
@@ -2224,6 +2286,24 @@ pub trait LoadableConfig<T> {
 #[serde_with::skip_serializing_none]
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct UninitializedModelAliasTarget {
+    pub provider: String,
+    pub model: String,
+}
+
+/// TOML representation: `[model_aliases.<name>]`
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UninitializedModelAlias {
+    /// If omitted, alias matches any task type (wildcard).
+    pub task: Option<String>,
+    pub targets: Vec<UninitializedModelAliasTarget>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct UninitializedConfig {
     pub gateway: Option<UninitializedGatewayConfig>,
     pub clickhouse: Option<ClickHouseConfig>,
@@ -2232,6 +2312,7 @@ pub struct UninitializedConfig {
     pub object_storage: Option<StorageKind>,
     pub models: Option<HashMap<Arc<str>, UninitializedModelConfig>>, // model name => model config
     pub embedding_models: Option<HashMap<Arc<str>, UninitializedEmbeddingModelConfig>>, // embedding model name => embedding model config
+    pub model_aliases: Option<HashMap<String, UninitializedModelAlias>>, // alias name => alias config
     pub functions: Option<HashMap<String, UninitializedFunctionConfig>>, // function name => function config
     pub metrics: Option<HashMap<String, MetricConfig>>, // metric name => metric config
     pub tools: Option<HashMap<String, UninitializedToolConfig>>, // tool name => tool config
@@ -2410,6 +2491,8 @@ struct TomlUninitializedConfig {
     #[serde(default)]
     embedding_models: HashMap<Arc<str>, UninitializedEmbeddingModelConfig>,
     #[serde(default)]
+    model_aliases: HashMap<String, UninitializedModelAlias>,
+    #[serde(default)]
     functions: HashMap<String, UninitializedFunctionConfig>,
     #[serde(default)]
     metrics: HashMap<String, MetricConfig>,
@@ -2441,6 +2524,7 @@ impl TryFrom<TomlUninitializedConfig> for UninitializedConfig {
             object_storage: toml_config.object_storage,
             models: Some(toml_config.models),
             embedding_models: Some(toml_config.embedding_models),
+            model_aliases: Some(toml_config.model_aliases),
             functions: Some(toml_config.functions),
             metrics: Some(toml_config.metrics),
             tools: Some(toml_config.tools),

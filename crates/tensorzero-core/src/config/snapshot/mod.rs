@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Stored config types for backward-compatible deserialization of historical snapshots.
 //!
 //! When deprecating a config field:
@@ -35,7 +36,7 @@ use crate::config::gateway::UninitializedGatewayConfig;
 use crate::config::provider_types::ProviderTypesConfig;
 use crate::config::{
     AutopilotConfig, ClickHouseConfig, MetricConfig, PostgresConfig, UninitializedConfig,
-    UninitializedFunctionConfig, UninitializedToolConfig,
+    UninitializedFunctionConfig, UninitializedModelAlias, UninitializedToolConfig,
 };
 use crate::evaluations::UninitializedEvaluationConfig;
 use crate::inference::types::storage::StorageKind;
@@ -81,6 +82,8 @@ pub struct StoredConfig {
     pub embedding_models: HashMap<Arc<str>, StoredEmbeddingModelConfig>,
     #[serde(default)]
     pub autopilot: AutopilotConfig,
+    #[serde(default)]
+    pub model_aliases: HashMap<String, UninitializedModelAlias>,
     // The following names should **not** be reused:
     // - evaluators
 }
@@ -102,6 +105,7 @@ impl From<UninitializedConfig> for StoredConfig {
             provider_types,
             optimizers,
             embedding_models,
+            model_aliases,
             autopilot,
         } = config;
 
@@ -127,6 +131,7 @@ impl From<UninitializedConfig> for StoredConfig {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
+            model_aliases: model_aliases.unwrap_or_default(),
             autopilot: autopilot.unwrap_or_default(),
         }
     }
@@ -151,6 +156,7 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
             provider_types,
             optimizers,
             embedding_models,
+            model_aliases,
             autopilot,
         } = stored;
 
@@ -171,6 +177,7 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
             postgres: Some(postgres),
             object_storage,
             models: Some(models),
+            model_aliases: Some(model_aliases),
             functions: Some(functions),
             metrics: Some(metrics),
             tools: Some(tools),

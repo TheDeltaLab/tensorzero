@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::future::Future;
@@ -28,6 +29,9 @@ use crate::jsonschema_util::JSONSchema;
 use crate::model::ModelTable;
 use crate::tool::create_json_mode_tool_call_config_with_allowed_tools;
 use tensorzero_inference_types::ProviderToolCallConfig;
+
+#[cfg(test)]
+use crate::model_alias::ModelAliasTable;
 
 use crate::tool::{AllowedTools, AllowedToolsChoice, ToolCallConfig};
 use crate::utils::unbounded_recursion_wrapper;
@@ -1461,6 +1465,7 @@ mod tests {
             )]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
+            Arc::new(ModelAliasTable::default()),
         )
         .expect("Failed to create model table");
         let client = TensorzeroHttpClient::new_testing().unwrap();
@@ -1591,6 +1596,7 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
+                Arc::new(ModelAliasTable::default()),
             )
             .expect("Failed to create model table")
         };
@@ -1670,6 +1676,7 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+                Arc::new(ModelAliasTable::default()),
             )
             .expect("Failed to create model table")
         };
@@ -1769,6 +1776,7 @@ mod tests {
             big_models,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+            Arc::new(ModelAliasTable::default()),
         )
         .expect("Failed to create model table");
 

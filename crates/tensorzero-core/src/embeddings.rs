@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,6 +57,7 @@ pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 impl ShorthandModelConfig for EmbeddingModelConfig {
     const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "openrouter::"];
     const MODEL_TYPE: &str = "Embedding model";
+    const TASK_TYPE: &str = "embedding";
     async fn from_shorthand(
         provider_type: &str,
         model_name: &str,

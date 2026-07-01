@@ -16,6 +16,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/tensorzero-stored-config/src/postgres/migrations/20260622000001_model_aliases.sql` — New model_aliases DB migration table (Delta-AI fork).
 - `docs/synapse-migration-plan.md` — Synapse → TensorZero migration plan (Delta-AI fork).
 - `docs/superpowers/plans/2026-06-22-model-alias.md` — Model alias implementation plan (Delta-AI fork).
+- `.github/workflows/general.yml` — Changed lint-rust from 4-partition `cargo hack --each-feature` to single `cargo clippy --all-features` (Delta-AI fork).
 
 ---
 

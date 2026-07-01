@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -11,14 +12,18 @@ use tensorzero_stored_config::schema_dispatch::{
     deserialize_variant_config,
 };
 use tensorzero_stored_config::{
-    StoredEvaluationConfig, StoredEvaluatorConfig, StoredFile, StoredFileRef, StoredFunctionConfig,
-    StoredLLMJudgeConfig, StoredLLMJudgeVariantConfig, StoredToolConfig, StoredVariantConfig,
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, StoredEvaluationConfig, StoredEvaluatorConfig,
+    StoredFile, StoredFileRef, StoredFunctionConfig, StoredLLMJudgeConfig,
+    StoredLLMJudgeVariantConfig, StoredModelAlias, StoredToolConfig, StoredVariantConfig,
     StoredVariantVersionConfig,
 };
 use uuid::Uuid;
 
 use crate::config::rehydrate::{FileMap, rehydrate_evaluation, rehydrate_function, rehydrate_tool};
-use crate::config::{ConfigLoadingError, UninitializedConfig, validate_user_config_names};
+use crate::config::{
+    ConfigLoadingError, UninitializedConfig, UninitializedModelAlias,
+    UninitializedModelAliasTarget, validate_user_config_names,
+};
 use crate::error::{Error, ErrorDetails};
 
 #[derive(Clone, Debug, FromRow)]
@@ -557,6 +562,7 @@ struct LoadedStoredConfigRows {
     object_storage_row: Option<VersionedConfigRow>,
     model_rows: Vec<NamedVersionedConfigRow>,
     embedding_model_rows: Vec<NamedVersionedConfigRow>,
+    model_alias_rows: Vec<NamedVersionedConfigRow>,
     metric_rows: Vec<NamedVersionedConfigRow>,
     tool_rows: Vec<NamedVersionedConfigRow>,
     evaluation_rows: Vec<NamedVersionedConfigRow>,
@@ -586,6 +592,7 @@ async fn rehydrate_loaded_config_rows(
         object_storage_row,
         model_rows,
         embedding_model_rows,
+        model_alias_rows,
         metric_rows,
         tool_rows,
         evaluation_rows,
@@ -706,6 +713,40 @@ async fn rehydrate_loaded_config_rows(
         TryInto::try_into,
     );
     loading_errors.extend(optimizer_errors);
+
+    let (model_aliases_map, model_alias_errors) = rehydrate_named_collection(
+        model_alias_rows,
+        "model_alias",
+        |sr, config| {
+            if sr > STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION {
+                return Err(Error::new(ErrorDetails::Config {
+                    message: format!(
+                        "Unsupported model_alias schema revision {sr} (max supported: {STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION})",
+                    ),
+                }));
+            }
+            serde_json::from_value::<StoredModelAlias>(config).map_err(|e| {
+                Error::new(ErrorDetails::Serialization {
+                    message: e.to_string(),
+                })
+            })
+        },
+        |stored: StoredModelAlias| {
+            Ok::<_, Error>(UninitializedModelAlias {
+                task: stored.task,
+                targets: stored
+                    .targets
+                    .into_iter()
+                    .map(|t| UninitializedModelAliasTarget {
+                        provider: t.provider,
+                        model: t.model,
+                    })
+                    .collect(),
+            })
+        },
+    );
+    let model_aliases = Some(model_aliases_map);
+    loading_errors.extend(model_alias_errors);
 
     let (stored_tools, tool_errors) =
         rehydrate_named_collection(tool_rows, "tool", deserialize_tool_config, |tool| {
@@ -907,6 +948,7 @@ async fn rehydrate_loaded_config_rows(
         object_storage,
         models: Some(models),
         embedding_models: Some(embedding_models),
+        model_aliases,
         functions: Some(functions),
         metrics: Some(metrics),
         tools: Some(tools),
@@ -1022,6 +1064,7 @@ pub async fn load_config_from_db(pool: &PgPool) -> Result<LoadedConfig, Vec<Erro
         object_storage_row,
         model_rows,
         embedding_model_rows,
+        model_alias_rows,
         metric_rows,
         tool_rows,
         evaluation_rows,
@@ -1060,6 +1103,11 @@ pub async fn load_config_from_db(pool: &PgPool) -> Result<LoadedConfig, Vec<Erro
             pool,
             snapshot_id,
             "embedding_models_configs"
+        )),
+        Box::pin(load_collection_in_snapshot(
+            pool,
+            snapshot_id,
+            "model_aliases_configs"
         )),
         Box::pin(load_collection_in_snapshot(
             pool,
@@ -1107,6 +1155,7 @@ pub async fn load_config_from_db(pool: &PgPool) -> Result<LoadedConfig, Vec<Erro
         object_storage_row,
         model_rows,
         embedding_model_rows,
+        model_alias_rows,
         metric_rows,
         tool_rows,
         evaluation_rows,

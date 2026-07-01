@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 pub mod schema_dispatch;
 mod stored_autopilot_config;
 mod stored_clickhouse_config;
@@ -11,6 +12,7 @@ mod stored_file;
 mod stored_function_config;
 mod stored_gateway_config;
 mod stored_metric_config;
+pub mod stored_model_alias;
 pub mod stored_model_config;
 mod stored_optimizer_info;
 mod stored_postgres_config;
@@ -72,6 +74,9 @@ pub use stored_gateway_config::{
 pub use stored_metric_config::{
     STORED_METRIC_CONFIG_SCHEMA_REVISION, StoredMetricConfig, StoredMetricLevel,
     StoredMetricOptimize, StoredMetricType,
+};
+pub use stored_model_alias::{
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, StoredModelAlias, StoredModelAliasTarget,
 };
 pub use stored_model_config::{
     STORED_MODEL_CONFIG_SCHEMA_REVISION, StoredContentBlockType, StoredHostedProviderKind,

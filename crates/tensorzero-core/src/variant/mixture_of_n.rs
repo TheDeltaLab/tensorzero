@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
@@ -29,6 +30,9 @@ use crate::inference::types::{
 };
 use crate::model::ModelTable;
 use crate::tool::ToolCallChunk;
+
+#[cfg(test)]
+use crate::model_alias::ModelAliasTable;
 use crate::utils::unbounded_recursion_wrapper;
 use crate::{
     endpoints::inference::InferenceParams,
@@ -1572,6 +1576,7 @@ mod tests {
             )]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             chrono::Duration::seconds(120),
+            Arc::new(ModelAliasTable::default()),
         )
         .expect("Failed to create model table");
         let client = TensorzeroHttpClient::new_testing().unwrap();
@@ -1708,6 +1713,7 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
+                Arc::new(ModelAliasTable::default()),
             )
             .expect("Failed to create model table")
         };
@@ -1794,6 +1800,7 @@ mod tests {
                 map,
                 ProviderTypeDefaultCredentials::new(&provider_types).into(),
                 chrono::Duration::seconds(120),
+                Arc::new(ModelAliasTable::default()),
             )
             .expect("Failed to create model table")
         };

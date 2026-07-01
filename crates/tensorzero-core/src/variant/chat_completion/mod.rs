@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::Duration;
 use futures::future::try_join_all;
 use schemars::JsonSchema;
@@ -18,6 +19,8 @@ use crate::inference::types::extra_headers::{ExtraHeadersConfig, FullExtraHeader
 use crate::inference::types::resolved_input::{
     LazyResolvedInput, LazyResolvedInputMessage, LazyResolvedInputMessageContent,
 };
+#[cfg(test)]
+use crate::model_alias::ModelAliasTable;
 use crate::relay::TensorzeroRelay;
 use crate::utils::retries::RetryConfig;
 
@@ -1517,6 +1520,7 @@ mod tests {
             HashMap::from([("invalid_model".into(), text_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+            Arc::new(ModelAliasTable::default()),
         )
         .unwrap();
         let inference_models = InferenceModels {
@@ -1587,6 +1591,7 @@ mod tests {
             models,
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+            Arc::new(ModelAliasTable::default()),
         )
         .unwrap();
         let inference_models = InferenceModels {
@@ -1596,6 +1601,7 @@ mod tests {
                     HashMap::new(),
                     ProviderTypeDefaultCredentials::new(&provider_types).into(),
                     crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+                    Arc::new(ModelAliasTable::default()),
                 )
                 .unwrap(),
             ),
@@ -1699,6 +1705,7 @@ mod tests {
             HashMap::from([("good".into(), text_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+            Arc::new(ModelAliasTable::default()),
         )
         .unwrap();
         let inference_models = InferenceModels {
@@ -1785,6 +1792,7 @@ mod tests {
             HashMap::from([("tool".into(), tool_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+            Arc::new(ModelAliasTable::default()),
         )
         .unwrap();
         let inference_models = InferenceModels {
@@ -1970,6 +1978,7 @@ mod tests {
             HashMap::from([("json".into(), json_model_config)]),
             ProviderTypeDefaultCredentials::new(&provider_types).into(),
             crate::http::DEFAULT_HTTP_CLIENT_TIMEOUT,
+            Arc::new(ModelAliasTable::default()),
         )
         .unwrap();
         let inference_models = InferenceModels {
@@ -2490,6 +2499,7 @@ mod tests {
                 HashMap::from([("error".into(), error_model_config)]),
                 ProviderTypeDefaultCredentials::new(provider_types).into(),
                 chrono::Duration::seconds(120),
+                Arc::new(ModelAliasTable::default()),
             )
             .unwrap(),
         );
@@ -2498,6 +2508,7 @@ mod tests {
                 HashMap::new(),
                 ProviderTypeDefaultCredentials::new(provider_types).into(),
                 chrono::Duration::seconds(120),
+                Arc::new(ModelAliasTable::default()),
             )
             .unwrap(),
         );
@@ -2580,6 +2591,7 @@ mod tests {
                 HashMap::from([("good".into(), text_model_config)]),
                 ProviderTypeDefaultCredentials::new(provider_types).into(),
                 chrono::Duration::seconds(120),
+                Arc::new(ModelAliasTable::default()),
             )
             .unwrap(),
         );
