@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Input file types and conversion logic for OpenAI-compatible API.
 //!
 //! This module handles various input file formats including images, audio files, and PDFs.
@@ -41,16 +42,11 @@ pub struct OpenAICompatibleFile {
 
 /// OpenAI-compatible input audio content block.
 ///
-/// Represents audio data in base64 format with a format specifier.
-/// The MIME type is detected from the audio data using magic bytes,
-/// and a warning is logged if it doesn't match the format field.
+/// `data` is either unprefixed base64 or (Synapse-compatible clients) an HTTP(S) URL.
+/// When `data` is a URL we keep it as `File::Url` so Volcengine Ark can fetch it.
 #[derive(Deserialize, Debug)]
 pub struct OpenAICompatibleInputAudio {
-    // The `data` field contains *unprefixed* base64-encoded audio data.
     pub data: String,
-    // The `format` field contains the audio format (e.g. `"mp3"`).
-    // Under the hood, we detect the MIME type using magic bytes in the audio data. If the inferred MIME type is not
-    // consistent with the `format` field, the gateway warns and the inferred MIME type takes priority.
     pub format: String,
 }
 
@@ -126,6 +122,28 @@ pub fn convert_file_to_base64(file: OpenAICompatibleFile) -> Result<File, Error>
 /// 4. Logs a warning if the detected type doesn't match the format field
 /// 5. Creates a Base64File with the inferred MIME type
 pub fn convert_input_audio_to_file(input_audio: OpenAICompatibleInputAudio) -> Result<File, Error> {
+    if looks_like_http_url(&input_audio.data) {
+        let url = Url::parse(&input_audio.data).map_err(|e| {
+            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                message: format!("Invalid audio URL in input_audio.data: {e}"),
+            })
+        })?;
+        let mime_type = mime_from_audio_format(&input_audio.format).ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                message: format!(
+                    "Unknown audio format `{}` for input_audio URL",
+                    input_audio.format
+                ),
+            })
+        })?;
+        return Ok(File::Url(UrlFile {
+            url,
+            mime_type: Some(mime_type),
+            detail: None,
+            filename: None,
+        }));
+    }
+
     // Decode base64 to bytes for MIME type detection
     let bytes = base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
@@ -191,6 +209,23 @@ pub fn convert_input_audio_to_file(input_audio: OpenAICompatibleInputAudio) -> R
     // Create Base64File with the inferred MIME type and original base64 data
     let base64_file = Base64File::new(None, Some(mime_type), input_audio.data, None, None)?;
     Ok(File::Base64(base64_file))
+}
+
+fn looks_like_http_url(value: &str) -> bool {
+    let value = value.trim();
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn mime_from_audio_format(format: &str) -> Option<MediaType> {
+    match format.to_ascii_lowercase().as_str() {
+        "wav" => "audio/wav".parse().ok(),
+        "mp3" | "mpeg" => "audio/mpeg".parse().ok(),
+        "ogg" => "audio/ogg".parse().ok(),
+        "m4a" | "mp4" => "audio/mp4".parse().ok(),
+        "webm" => "audio/webm".parse().ok(),
+        "flac" => "audio/flac".parse().ok(),
+        other => format!("audio/{other}").parse().ok(),
+    }
 }
 
 #[cfg(test)]
@@ -404,6 +439,32 @@ mod tests {
             !logs_contain("Inferred audio MIME type"),
             "Should not warn when MP3 format matches detected type"
         );
+    }
+
+    #[test]
+    fn test_input_audio_http_url_stays_url_file() {
+        let content = json!([{
+            "type": "input_audio",
+            "input_audio": {
+                "data": "https://audio.test/a.wav",
+                "format": "wav"
+            }
+        }]);
+        let result = convert_openai_message_content("user".to_string(), content).unwrap();
+        match &result[0] {
+            InputMessageContent::File(File::Url(url_file)) => {
+                assert_eq!(url_file.url.as_str(), "https://audio.test/a.wav");
+                assert_eq!(
+                    url_file
+                        .mime_type
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .as_deref(),
+                    Some("audio/wav")
+                );
+            }
+            other => panic!("Expected File::Url, got {other:?}"),
+        }
     }
 
     #[test]

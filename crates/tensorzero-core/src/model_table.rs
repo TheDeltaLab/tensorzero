@@ -16,7 +16,7 @@ use crate::{
     model::{
         Credential, CredentialLocation, CredentialLocationWithFallback, UninitializedProviderConfig,
     },
-    model_alias::ModelAliasTable,
+    model_alias::{ModelAlias, ModelAliasTable, ModelAliasTarget},
     providers::{
         anthropic::AnthropicCredentials,
         azure::AzureCredentials,
@@ -53,6 +53,13 @@ lazy_static! {
             .map(|&v| format!("{v}::"))
             .collect();
         prefixes.push("tensorzero::".to_string());
+        // OpenAI-compatible Chinese providers are shorthand-only (they reuse
+        // OpenAIProvider) so they are not UninitializedProviderConfig variants.
+        for extra in ["alibaba::", "siliconflow::", "volcengine::"] {
+            if !prefixes.iter().any(|prefix| prefix == extra) {
+                prefixes.push(extra.to_string());
+            }
+        }
         prefixes
     };
 }
@@ -116,6 +123,10 @@ pub trait ShorthandModelConfig: Sized {
         model_name: &str,
         default_credentials: &ProviderTypeDefaultCredentials,
     ) -> Result<Self, Error>;
+    /// Combine one-provider shorthand configs into a multi-target routing chain.
+    /// `parts` is `(routing_key, config)` in try-order. Each config must have
+    /// exactly one routing entry.
+    fn merge_shorthand_targets(parts: Vec<(Arc<str>, Self)>) -> Result<Self, Error>;
     fn validate(
         &self,
         key: &str,
@@ -142,6 +153,24 @@ fn check_shorthand<'a>(prefixes: &[&'a str], key: &'a str) -> Option<Shorthand<'
         }
     }
     None
+}
+
+fn rotated_alias_targets<'a>(
+    alias: &'a ModelAlias,
+    requested: Option<&Shorthand<'_>>,
+) -> Vec<&'a ModelAliasTarget> {
+    let mut targets: Vec<&ModelAliasTarget> = alias.targets.iter().collect();
+    if let Some(shorthand) = requested
+        && let Some(idx) = targets.iter().position(|target| {
+            target.provider_type.as_ref() == shorthand.provider_type
+                && target.model_name.as_ref() == shorthand.model_name
+        })
+        && idx != 0
+    {
+        let head = targets.remove(idx);
+        targets.insert(0, head);
+    }
+    targets
 }
 
 impl<T: ShorthandModelConfig> Default for BaseModelTable<T> {
@@ -191,52 +220,69 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
         if let Some(model_config) = self.table.get(key) {
             return Ok(Some(CowNoClone::Borrowed(model_config)));
         }
-        // Alias lookup — task-filtered, resolve to first available target
-        if let Some(alias) = self.model_aliases.resolve(key, Some(T::TASK_TYPE)) {
-            for target in &alias.targets {
-                let shorthand_key = format!("{}::{}", target.provider_type, target.model_name);
-                if let Some(sh) = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, &shorthand_key) {
-                    let model = if relay.is_some() {
-                        let creds = self.default_credentials.clone();
-                        with_skip_credential_validation(async move {
-                            T::from_shorthand(sh.provider_type, sh.model_name, &creds).await
-                        })
-                        .await?
-                    } else {
-                        T::from_shorthand(
-                            sh.provider_type,
-                            sh.model_name,
-                            &self.default_credentials,
-                        )
-                        .await?
-                    };
-                    return Ok(Some(CowNoClone::Owned(model)));
-                }
-            }
-        }
-        if let Some(shorthand) = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key) {
-            let model = if relay.is_some() {
-                let default_credentials = self.default_credentials.clone();
-                with_skip_credential_validation(async move {
-                    T::from_shorthand(
+
+        let requested_shorthand = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, key);
+        let alias = self
+            .model_aliases
+            .resolve(key, Some(T::TASK_TYPE))
+            .or_else(|| {
+                requested_shorthand.as_ref().and_then(|shorthand| {
+                    self.model_aliases.find_containing(
                         shorthand.provider_type,
                         shorthand.model_name,
-                        &default_credentials,
+                        Some(T::TASK_TYPE),
                     )
-                    .await
                 })
-                .await?
-            } else {
-                T::from_shorthand(
-                    shorthand.provider_type,
-                    shorthand.model_name,
-                    &self.default_credentials,
-                )
-                .await?
-            };
+            });
+
+        if let Some(alias) = alias {
+            if let Some(session) = crate::routing::RoutingSession::current() {
+                session.set_min_tokens_per_sec(alias.min_tokens_per_sec);
+            }
+            let targets = rotated_alias_targets(alias, requested_shorthand.as_ref());
+            let mut parts = Vec::new();
+            for target in targets {
+                let shorthand_key = format!("{}::{}", target.provider_type, target.model_name);
+                let Some(sh) = check_shorthand(T::SHORTHAND_MODEL_PREFIXES, &shorthand_key) else {
+                    continue;
+                };
+                let model = self
+                    .load_shorthand(sh.provider_type, sh.model_name, relay)
+                    .await?;
+                parts.push((Arc::<str>::from(shorthand_key), model));
+            }
+            if parts.is_empty() {
+                return Ok(None);
+            }
+            return Ok(Some(CowNoClone::Owned(T::merge_shorthand_targets(parts)?)));
+        }
+
+        if let Some(shorthand) = requested_shorthand {
+            let model = self
+                .load_shorthand(shorthand.provider_type, shorthand.model_name, relay)
+                .await?;
             return Ok(Some(CowNoClone::Owned(model)));
         }
         Ok(None)
+    }
+
+    async fn load_shorthand(
+        &self,
+        provider_type: &str,
+        model_name: &str,
+        relay: Option<&TensorzeroRelay>,
+    ) -> Result<T, Error> {
+        if relay.is_some() {
+            let creds = self.default_credentials.clone();
+            let provider_type = provider_type.to_string();
+            let model_name = model_name.to_string();
+            with_skip_credential_validation(async move {
+                T::from_shorthand(&provider_type, &model_name, &creds).await
+            })
+            .await
+        } else {
+            T::from_shorthand(provider_type, model_name, &self.default_credentials).await
+        }
     }
     /// Check that a model name is valid
     /// This is either true because it's in the table, because it resolves via alias,
@@ -1072,5 +1118,81 @@ impl ProviderKind for XAIKind {
         default_credentials: &ProviderTypeDefaultCredentials,
     ) -> Result<Self::Credential, Error> {
         default_credentials.xai.get_cloned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::ModelConfig;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    #[tokio::test]
+    async fn alias_get_merges_all_shorthand_targets() {
+        let aliases = ModelAliasTable {
+            aliases: vec![ModelAlias {
+                name: Arc::from("flash"),
+                task: Some(Arc::from("chat")),
+                targets: vec![
+                    ModelAliasTarget {
+                        provider_type: Arc::from("dummy"),
+                        model_name: Arc::from("error"),
+                    },
+                    ModelAliasTarget {
+                        provider_type: Arc::from("dummy"),
+                        model_name: Arc::from("good"),
+                    },
+                ],
+                min_tokens_per_sec: Some(10.0),
+            }],
+        };
+        let table = BaseModelTable::<ModelConfig>::new(
+            HashMap::new(),
+            Arc::new(ProviderTypeDefaultCredentials::default()),
+            chrono::Duration::seconds(120),
+            Arc::new(aliases),
+        )
+        .unwrap();
+        let model = table.get("flash", None).await.unwrap().unwrap();
+        assert_eq!(
+            model
+                .routing
+                .iter()
+                .map(std::convert::AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            vec!["dummy::error", "dummy::good"]
+        );
+    }
+
+    #[tokio::test]
+    async fn find_containing_rotates_requested_shorthand_to_head() {
+        let aliases = ModelAliasTable {
+            aliases: vec![ModelAlias {
+                name: Arc::from("flash"),
+                task: Some(Arc::from("chat")),
+                targets: vec![
+                    ModelAliasTarget {
+                        provider_type: Arc::from("dummy"),
+                        model_name: Arc::from("error"),
+                    },
+                    ModelAliasTarget {
+                        provider_type: Arc::from("dummy"),
+                        model_name: Arc::from("good"),
+                    },
+                ],
+                min_tokens_per_sec: None,
+            }],
+        };
+        let table = BaseModelTable::<ModelConfig>::new(
+            HashMap::new(),
+            Arc::new(ProviderTypeDefaultCredentials::default()),
+            chrono::Duration::seconds(120),
+            Arc::new(aliases),
+        )
+        .unwrap();
+        let model = table.get("dummy::good", None).await.unwrap().unwrap();
+        assert_eq!(model.routing[0].as_ref(), "dummy::good");
+        assert_eq!(model.routing[1].as_ref(), "dummy::error");
     }
 }

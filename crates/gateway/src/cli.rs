@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! CLI argument definitions for the TensorZero Gateway.
 //!
 //! This file should remain minimal, containing only CLI argument struct definitions.
@@ -53,6 +54,10 @@ pub struct EarlyExitCommands {
     /// Create an API key then exit.
     #[arg(long)]
     pub create_api_key: bool,
+
+    /// Import a Synapse bcrypt hash (or plaintext `sk-syn-v1-...` key) then exit.
+    #[arg(long, value_name = "HASH_OR_KEY")]
+    pub import_synapse_api_key: Option<String>,
 
     /// Disable an API key using its public ID then exit.
     #[arg(long, value_name = "PUBLIC_ID")]

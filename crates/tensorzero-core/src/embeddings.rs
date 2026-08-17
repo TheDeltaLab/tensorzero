@@ -16,6 +16,10 @@ use crate::inference::types::extra_body::ExtraBodyConfig;
 use crate::inference::types::extra_headers::ExtraHeadersConfig;
 use crate::inference::types::{ContentBlock, Text};
 use crate::model::UninitializedProviderConfig;
+use crate::model::{
+    ALIBABA_DEFAULT_API_ROOT, SILICONFLOW_DEFAULT_API_ROOT, VOLCENGINE_DEFAULT_API_ROOT,
+    openai_compatible_shorthand_provider,
+};
 use crate::model_table::{BaseModelTable, ProviderKind, ProviderTypeDefaultCredentials};
 use crate::model_table::{OpenAIKind, OpenRouterKind, ShorthandModelConfig};
 use crate::providers::azure::AzureProvider;
@@ -55,7 +59,13 @@ use crate::providers::dummy::DummyProvider;
 pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
 
 impl ShorthandModelConfig for EmbeddingModelConfig {
-    const SHORTHAND_MODEL_PREFIXES: &[&str] = &["openai::", "openrouter::"];
+    const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
+        "openai::",
+        "openrouter::",
+        "alibaba::",
+        "siliconflow::",
+        "volcengine::",
+    ];
     const MODEL_TYPE: &str = "Embedding model";
     const TASK_TYPE: &str = "embedding";
     async fn from_shorthand(
@@ -83,6 +93,39 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
                     .get_defaulted_credential(None, default_credentials)
                     .await?,
             )),
+            "alibaba" => EmbeddingProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "ALIBABA_BASE_URL",
+                    ALIBABA_DEFAULT_API_ROOT,
+                    true,
+                    "ALIBABA_API_KEY",
+                    default_credentials,
+                )
+                .await?,
+            ),
+            "siliconflow" => EmbeddingProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "SILICONFLOW_BASE_URL",
+                    SILICONFLOW_DEFAULT_API_ROOT,
+                    true,
+                    "SILICONFLOW_API_KEY",
+                    default_credentials,
+                )
+                .await?,
+            ),
+            "volcengine" => EmbeddingProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "VOLCENGINE_BASE_URL",
+                    VOLCENGINE_DEFAULT_API_ROOT,
+                    false,
+                    "VOLCENGINE_API_KEY",
+                    default_credentials,
+                )
+                .await?,
+            ),
             #[cfg(any(test, feature = "e2e_tests"))]
             "dummy" => EmbeddingProviderConfig::Dummy(DummyProvider::new(model_name, None)?),
             _ => {
@@ -102,6 +145,36 @@ impl ShorthandModelConfig for EmbeddingModelConfig {
         Ok(EmbeddingModelConfig {
             routing: vec![provider_type.to_string().into()],
             providers: HashMap::from([(provider_type.to_string().into(), provider_info)]),
+            timeout_ms: None,
+        })
+    }
+
+    fn merge_shorthand_targets(parts: Vec<(Arc<str>, Self)>) -> Result<Self, Error> {
+        if parts.is_empty() {
+            return Err(Error::new(ErrorDetails::Config {
+                message: "Embedding model alias has no shorthand targets".to_string(),
+            }));
+        }
+        let mut routing = Vec::with_capacity(parts.len());
+        let mut providers = HashMap::new();
+        for (key, mut config) in parts {
+            let inner_key = config.routing.first().cloned().ok_or_else(|| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Shorthand target `{key}` has empty routing"),
+                })
+            })?;
+            let mut provider = config.providers.remove(&inner_key).ok_or_else(|| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Shorthand target `{key}` is missing its provider"),
+                })
+            })?;
+            provider.provider_name = key.clone();
+            routing.push(key.clone());
+            providers.insert(key, provider);
+        }
+        Ok(EmbeddingModelConfig {
+            routing,
+            providers,
             timeout_ms: None,
         })
     }
@@ -261,7 +334,7 @@ impl EmbeddingModelConfig {
     ) -> Result<EmbeddingModelResponse, Error> {
         let mut provider_errors: IndexMap<String, Error> = IndexMap::new();
         let run_all_embedding_models = async {
-            for provider_name in &self.routing {
+            for provider_name in &crate::routing::effective_routing(&self.routing) {
                 let provider_config = self.providers.get(provider_name).ok_or_else(|| {
                     Error::new(ErrorDetails::ProviderNotFound {
                         provider_name: provider_name.to_string(),
@@ -295,6 +368,9 @@ impl EmbeddingModelConfig {
                                     cache_lookup.failed_raw_response.extend(entries);
                                 }
                             }
+                        }
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
                         }
                         return Ok(cache_lookup);
                     }
@@ -350,9 +426,18 @@ impl EmbeddingModelConfig {
                                 }
                             }
                         }
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
+                        }
                         return Ok(embedding_response);
                     }
                     Err(error) => {
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
+                        }
+                        if !crate::routing::should_failover(&error) {
+                            return Err(error);
+                        }
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }

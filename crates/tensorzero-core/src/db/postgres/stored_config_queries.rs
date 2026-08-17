@@ -734,6 +734,7 @@ async fn rehydrate_loaded_config_rows(
         |stored: StoredModelAlias| {
             Ok::<_, Error>(UninitializedModelAlias {
                 task: stored.task,
+                min_tokens_per_sec: stored.min_tokens_per_sec,
                 targets: stored
                     .targets
                     .into_iter()

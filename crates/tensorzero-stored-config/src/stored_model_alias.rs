@@ -16,6 +16,7 @@ pub struct StoredModelAliasTarget {
 pub struct StoredModelAlias {
     pub task: Option<String>,
     pub targets: Vec<StoredModelAliasTarget>,
+    pub min_tokens_per_sec: Option<f64>,
 }
 
 #[cfg(test)]
@@ -31,6 +32,7 @@ mod tests {
                 provider: "openai".into(),
                 model: "gpt-4o-mini".into(),
             }],
+            min_tokens_per_sec: None,
         };
         let json = serde_json::to_string(&alias).expect("serialize");
         let back: StoredModelAlias = serde_json::from_str(&json).expect("deserialize");
@@ -42,6 +44,7 @@ mod tests {
         let alias = StoredModelAlias {
             task: None,
             targets: vec![],
+            min_tokens_per_sec: None,
         };
         let json = serde_json::to_string(&alias).expect("serialize");
         let back: StoredModelAlias = serde_json::from_str(&json).expect("deserialize");

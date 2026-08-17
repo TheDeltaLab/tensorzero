@@ -1,0 +1,6 @@
+[model_aliases.alias_failover]
+task = "chat"
+targets = [
+    { provider = "dummy", model = "error" },
+    { provider = "dummy", model = "good" },
+]

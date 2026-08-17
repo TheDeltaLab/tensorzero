@@ -31,6 +31,7 @@ impl From<&UninitializedModelAlias> for StoredModelAlias {
     fn from(a: &UninitializedModelAlias) -> Self {
         Self {
             task: a.task.clone(),
+            min_tokens_per_sec: a.min_tokens_per_sec,
             targets: a
                 .targets
                 .iter()

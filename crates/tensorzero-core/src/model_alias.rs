@@ -15,13 +15,16 @@ pub struct ModelAliasTarget {
 /// `task`: If `Some`, this alias only matches lookups with the same task type
 ///   (e.g. "chat", "embedding", "rerank"). If `None`, it matches any task.
 /// `targets`: Ordered list of (provider, model) pairs to try.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, ts_rs::TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, ts_rs::TS)]
 #[ts(export, optional_fields)]
 pub struct ModelAlias {
     pub name: Arc<str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task: Option<Arc<str>>,
     pub targets: Vec<ModelAliasTarget>,
+    /// Skip a candidate when recent output tok/s is strictly below this value.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_tokens_per_sec: Option<f64>,
 }
 
 /// Lookup table for model aliases, shared across chat/embedding/rerank tables.
@@ -40,6 +43,24 @@ impl ModelAliasTable {
         self.aliases.iter().find(|a| {
             a.name.as_ref() == name
                 && (a.task.is_none() || task.is_none_or(|t| a.task.as_deref() == Some(t)))
+        })
+    }
+
+    /// Find an alias that lists `(provider, model)` as a target (same-model catch-all).
+    pub fn find_containing(
+        &self,
+        provider_type: &str,
+        model_name: &str,
+        task: Option<&str>,
+    ) -> Option<&ModelAlias> {
+        self.aliases.iter().find(|alias| {
+            let task_ok =
+                alias.task.is_none() || task.is_none_or(|t| alias.task.as_deref() == Some(t));
+            task_ok
+                && alias.targets.iter().any(|target| {
+                    target.provider_type.as_ref() == provider_type
+                        && target.model_name.as_ref() == model_name
+                })
         })
     }
 }
@@ -61,6 +82,7 @@ mod tests {
                     model_name: Arc::from(m),
                 })
                 .collect(),
+            min_tokens_per_sec: None,
         }
     }
 
@@ -125,5 +147,27 @@ mod tests {
     fn default_table_is_empty() {
         let table = ModelAliasTable::default();
         expect_that!(table.aliases.is_empty(), eq(true));
+    }
+
+    #[gtest]
+    fn find_containing_rotates_same_model_catch_all() {
+        let table = ModelAliasTable {
+            aliases: vec![make_alias(
+                "deepseek-v4-pro",
+                Some("chat"),
+                vec![
+                    ("deepseek", "deepseek-v4-pro"),
+                    ("alibaba", "deepseek-v4-pro"),
+                ],
+            )],
+        };
+        let found = table.find_containing("alibaba", "deepseek-v4-pro", Some("chat"));
+        expect_that!(found.unwrap().name.as_ref(), eq("deepseek-v4-pro"));
+        expect_that!(
+            table
+                .find_containing("openai", "gpt-4o", Some("chat"))
+                .is_none(),
+            eq(true)
+        );
     }
 }

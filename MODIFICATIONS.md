@@ -15,8 +15,24 @@ See `NOTICE` for the overall attribution statement.
 - `SECURITY.md` — Changed security contact to security@thebrainly.ai.
 - `crates/tensorzero-stored-config/src/postgres/migrations/20260622000001_model_aliases.sql` — New model_aliases DB migration table (Delta-AI fork).
 - `docs/synapse-migration-plan.md` — Synapse → TensorZero migration plan (Delta-AI fork).
-- `docs/superpowers/plans/2026-06-22-model-alias.md` — Model alias implementation plan (Delta-AI fork).
-- `.github/workflows/general.yml` — Changed lint-rust from 4-partition `cargo hack --each-feature` to single `cargo clippy --all-features` (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.model_aliases.toml` — E2E alias failover fixtures (Delta-AI fork).
+- `examples/guides/synapse-compat/config/tensorzero.toml` — Synapse-compatible `[model_aliases]` for public providers (Delta-AI fork).
+- `crates/Cargo.lock` — Workspace lockfile for Synapse-compat auth (bcrypt) and HTTP timeout deps (Delta-AI fork).
+- `crates/tensorzero-http/Cargo.toml` — Added tokio for per-request timeout override (Delta-AI fork).
+- `crates/tensorzero-auth/Cargo.toml` — Added bcrypt for imported Synapse API keys (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/tensorzero.toml` — Dummy-backed Synapse-compat load-test gateway config, Postgres observability (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/tensorzero.no-obs.toml` — Same load-test config with observability off (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/tensorzero.postgres.batch.toml` — Postgres batch-write variant of the Synapse-compat load-test config (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/docker-compose.yml` — Dedicated Postgres 16 on host port 5433 for Synapse-compat load tests (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/README.md` — How to run Synapse-compat vegeta concurrency sweeps (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/chat.json` — Load-test body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/chat-stream.json` — Load-test body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/chat-long-stream.json` — 40k-thinking + 10k-text streaming chat body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/messages.json` — Load-test body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/embeddings.json` — Load-test body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/rerank.json` — Load-test body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/completions.json` — Load-test body (Delta-AI fork).
+- `crates/tensorzero-core/tests/load/synapse-compat/bodies/responses.json` — Load-test body (Delta-AI fork).
 
 ---
 

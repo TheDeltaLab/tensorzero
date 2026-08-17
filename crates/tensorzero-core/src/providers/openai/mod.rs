@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use async_trait::async_trait;
 use futures::future::try_join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
@@ -83,6 +84,16 @@ lazy_static! {
     };
 }
 
+tokio::task_local! {
+    static VOLCENGINE_AUDIO_COMPAT: bool;
+}
+
+fn volcengine_audio_compat() -> bool {
+    VOLCENGINE_AUDIO_COMPAT
+        .try_with(|value| *value)
+        .unwrap_or(false)
+}
+
 const PROVIDER_NAME: &str = "OpenAI";
 pub const PROVIDER_TYPE: &str = "openai";
 
@@ -138,6 +149,11 @@ pub struct OpenAIProvider {
     provider_tools: Vec<Value>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     content_type_overrides: HashMap<String, ContentBlockType>,
+    /// Volcengine Ark wants `input_audio.url` for HTTP sources and always
+    /// includes `stream_options.include_usage` on streams (already the OpenAI default).
+    #[serde(skip)]
+    #[ts(skip)]
+    volcengine_audio_compat: bool,
 }
 
 impl OpenAIProvider {
@@ -176,7 +192,13 @@ impl OpenAIProvider {
 
             provider_tools,
             content_type_overrides,
+            volcengine_audio_compat: false,
         })
+    }
+
+    pub fn with_volcengine_audio_compat(mut self) -> Self {
+        self.volcengine_audio_compat = true;
+        self
     }
 
     pub fn model_name(&self) -> &str {
@@ -318,12 +340,16 @@ impl WrappedProvider for OpenAIProvider {
                 })
             })?),
             OpenAIAPIType::ChatCompletions => Ok(serde_json::to_value(
-                OpenAIRequest::new(
-                    &self.model_name,
-                    request,
-                    Some(&self.content_type_overrides),
-                )
-                .await?,
+                VOLCENGINE_AUDIO_COMPAT
+                    .scope(
+                        self.volcengine_audio_compat,
+                        OpenAIRequest::new(
+                            &self.model_name,
+                            request,
+                            Some(&self.content_type_overrides),
+                        ),
+                    )
+                    .await?,
             )
             .map_err(|e| {
                 Error::new(ErrorDetails::Serialization {
@@ -664,12 +690,16 @@ impl InferenceProvider for OpenAIProvider {
                     get_chat_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
 
                 let request_body = serde_json::to_value(
-                    OpenAIRequest::new(
-                        &self.model_name,
-                        request,
-                        Some(&self.content_type_overrides),
-                    )
-                    .await?,
+                    VOLCENGINE_AUDIO_COMPAT
+                        .scope(
+                            self.volcengine_audio_compat,
+                            OpenAIRequest::new(
+                                &self.model_name,
+                                request,
+                                Some(&self.content_type_overrides),
+                            ),
+                        )
+                        .await?,
                 )
                 .map_err(|e| {
                     Error::new(ErrorDetails::Serialization {
@@ -1553,8 +1583,14 @@ pub struct OpenAIFile<'a> {
 
 #[derive(Clone, Deserialize, Debug, PartialEq, Serialize)]
 pub struct OpenAIInputAudio<'a> {
-    data: Cow<'a, str>,
-    format: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    format: Option<Cow<'a, str>>,
+    /// Volcengine Ark (and similar) accept a remote audio URL here. OpenAI's
+    /// native API uses `data` (base64) instead.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    url: Option<Cow<'a, str>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2060,6 +2096,34 @@ pub(super) async fn prepare_file_message(
                 },
             })
         }
+        LazyFile::Url {
+            file_url:
+                FileUrl {
+                    mime_type,
+                    url,
+                    detail: _,
+                    filename: _,
+                },
+            future: _,
+        } if volcengine_audio_compat()
+            && mime_type
+                .as_ref()
+                .is_some_and(|mime| mime.type_() == mime::AUDIO) =>
+        {
+            // Some Synapse-compatible clients send `input_audio.data` as an HTTP URL.
+            // Forward it as `input_audio.url` so Volcengine Ark fetches the audio itself.
+            let format = mime_type
+                .as_ref()
+                .and_then(|mime| mime_type_to_audio_format(mime).ok())
+                .map(ToOwned::to_owned);
+            Ok(OpenAIContentBlock::InputAudio {
+                input_audio: OpenAIInputAudio {
+                    data: None,
+                    format: format.map(Cow::Owned),
+                    url: Some(Cow::Owned(url.to_string())),
+                },
+            })
+        }
         _ => {
             let resolved_file = file.resolve().await?;
             let ObjectStorageFile { file, data } = &*resolved_file;
@@ -2099,11 +2163,25 @@ pub(super) async fn prepare_file_message(
                     })
                 }
                 ContentBlockType::InputAudio => {
+                    if volcengine_audio_compat()
+                        && let Some(source_url) = file.source_url.as_ref()
+                        && matches!(source_url.scheme(), "http" | "https")
+                    {
+                        let format = mime_type_to_audio_format(&file.mime_type)?;
+                        return Ok(OpenAIContentBlock::InputAudio {
+                            input_audio: OpenAIInputAudio {
+                                data: None,
+                                format: Some(Cow::Owned(format.to_string())),
+                                url: Some(Cow::Owned(source_url.to_string())),
+                            },
+                        });
+                    }
                     let format = mime_type_to_audio_format(&file.mime_type)?;
                     Ok(OpenAIContentBlock::InputAudio {
                         input_audio: OpenAIInputAudio {
-                            data: Cow::Owned(data.clone()),
-                            format: Cow::Owned(format.to_string()),
+                            data: Some(Cow::Owned(data.clone())),
+                            format: Some(Cow::Owned(format.to_string())),
+                            url: None,
                         },
                     })
                 }
@@ -3383,6 +3461,22 @@ mod tests {
     use super::*;
 
     static FERRIS_PNG: &[u8] = include_bytes!("../../../tests/e2e/providers/ferris.png");
+
+    #[test]
+    fn test_openai_input_audio_url_serializes_without_data() {
+        let block = OpenAIContentBlock::InputAudio {
+            input_audio: OpenAIInputAudio {
+                data: None,
+                format: Some(Cow::Borrowed("wav")),
+                url: Some(Cow::Borrowed("https://audio.test/a.wav")),
+            },
+        };
+        let value = serde_json::to_value(&block).unwrap();
+        assert_eq!(value["type"], "input_audio");
+        assert_eq!(value["input_audio"]["url"], "https://audio.test/a.wav");
+        assert_eq!(value["input_audio"]["format"], "wav");
+        assert!(value["input_audio"].get("data").is_none());
+    }
 
     #[test]
     fn test_get_chat_url() {

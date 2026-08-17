@@ -20,6 +20,7 @@ reqwest-sse-stream.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+tokio = { workspace = true }
 tracing.workspace = true
 tracing-futures = { version = "0.2.5", features = ["futures-03"] }
 

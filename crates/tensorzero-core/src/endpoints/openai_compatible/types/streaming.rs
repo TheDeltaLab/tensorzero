@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Streaming response types and logic for OpenAI-compatible API.
 //!
 //! This module provides types and functions for streaming chat completion responses
@@ -7,7 +8,10 @@
 use axum::response::sse::Event;
 use futures::Stream;
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::{HashMap, HashSet, hash_map::Entry};
+use std::time::Instant;
+use tokio::time::sleep;
 use tokio_stream::StreamExt;
 
 use crate::error::{Error, ErrorDetails};
@@ -20,6 +24,9 @@ use crate::endpoints::inference::{InferenceResponseChunk, InferenceStream};
 use super::chat_completions::OpenAICompatibleFinishReason;
 use super::tool::{OpenAICompatibleToolCallChunk, OpenAICompatibleToolCallDelta};
 use super::usage::OpenAICompatibleUsage;
+use crate::endpoints::openai_compatible::stream_aggregator::{
+    StreamAggregateRule, StreamAggregator,
+};
 use crate::serde_util::is_none_or_empty;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -77,6 +84,8 @@ pub struct OpenAICompatibleDelta {
     pub role: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<OpenAICompatibleToolCallChunk>>,
     #[serde(skip_serializing_if = "is_none_or_empty")]
@@ -121,6 +130,16 @@ pub fn convert_inference_response_chunk_to_openai_compatible(
     let response_chunk = match chunk {
         InferenceResponseChunk::Chat(c) => {
             let (content, tool_calls, extra_content) = process_chat_content_chunk(c.content, state);
+            let reasoning_content = extra_content
+                .iter()
+                .filter_map(|block| match block {
+                    ExtraContentBlockChunk::Thought { chunk, .. } => chunk.text.clone(),
+                    ExtraContentBlockChunk::Unknown { .. } => None,
+                })
+                .reduce(|mut acc, piece| {
+                    acc.push_str(&piece);
+                    acc
+                });
             let usage = if include_usage {
                 c.usage.map(OpenAICompatibleUsage::from)
             } else {
@@ -153,6 +172,7 @@ pub fn convert_inference_response_chunk_to_openai_compatible(
                     delta: OpenAICompatibleDelta {
                         role: role.clone(),
                         content,
+                        reasoning_content,
                         tool_calls: if tool_calls.is_empty() {
                             None
                         } else {
@@ -210,6 +230,7 @@ pub fn convert_inference_response_chunk_to_openai_compatible(
                     delta: OpenAICompatibleDelta {
                         role,
                         content: Some(c.raw),
+                        reasoning_content: None,
                         tool_calls: None,
                         tensorzero_extra_content: None,
                     },
@@ -322,12 +343,46 @@ pub fn prepare_serialized_openai_compatible_events(
     include_raw_usage: bool,
     include_original_response: bool,
     include_raw_response: bool,
+    stream_aggregate: Option<Vec<StreamAggregateRule>>,
 ) -> impl Stream<Item = Result<Event, Error>> {
     async_stream::stream! {
         let mut state = StreamingContentState::default();
         let mut is_first_chunk = true;
+        let mut aggregator = stream_aggregate.map(StreamAggregator::new);
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let wait = aggregator
+                .as_ref()
+                .and_then(StreamAggregator::next_deadline)
+                .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+            if wait.is_some_and(|duration| duration.is_zero()) {
+                if let Some(agg) = aggregator.as_mut()
+                    && let Some((event, value)) = agg.flush_if_due(Instant::now())
+                {
+                    yield Ok(value_to_sse_event(event, value));
+                }
+                continue;
+            }
+
+            let chunk = if let Some(wait) = wait {
+                tokio::select! {
+                    chunk = stream.next() => chunk,
+                    () = sleep(wait) => {
+                        if let Some(agg) = aggregator.as_mut()
+                            && let Some((event, value)) = agg.flush_if_due(Instant::now())
+                        {
+                            yield Ok(value_to_sse_event(event, value));
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                stream.next().await
+            };
+
+            let Some(chunk) = chunk else {
+                break;
+            };
             let chunk = match chunk {
                 Ok(chunk) => chunk,
                 Err(e) => {
@@ -354,15 +409,45 @@ pub fn prepare_serialized_openai_compatible_events(
             is_first_chunk = false;
 
             for chunk in openai_compatible_chunks {
-                yield Event::default().json_data(&chunk).map_err(|e| {
-                    Error::new(ErrorDetails::Inference {
-                        message: format!("Failed to convert chunk to Event: {e}"),
-                    })
-                })
+                if let Some(agg) = aggregator.as_mut() {
+                    let Ok(serialized) = serde_json::to_string(&chunk) else {
+                        yield Err(Error::new(ErrorDetails::Inference {
+                            message: "Failed to convert chunk to JSON".to_string(),
+                        }));
+                        continue;
+                    };
+                    for (event, value) in agg.push(None, &serialized, Instant::now()) {
+                        yield Ok(value_to_sse_event(event, value));
+                    }
+                } else {
+                    yield Event::default().json_data(&chunk).map_err(|e| {
+                        Error::new(ErrorDetails::Inference {
+                            message: format!("Failed to convert chunk to Event: {e}"),
+                        })
+                    });
+                }
             }
         }
 
-        yield Ok(Event::default().data("[DONE]"));
+        if let Some(agg) = aggregator.as_mut() {
+            for (event, value) in agg.push(None, "[DONE]", Instant::now()) {
+                yield Ok(value_to_sse_event(event, value));
+            }
+        } else {
+            yield Ok(Event::default().data("[DONE]"));
+        }
+    }
+}
+
+fn value_to_sse_event(event: Option<String>, value: Value) -> Event {
+    let mut ev = Event::default();
+    if let Some(name) = event {
+        ev = ev.event(name);
+    }
+    if value.as_str() == Some("[DONE]") {
+        ev.data("[DONE]")
+    } else {
+        ev.data(value.to_string())
     }
 }
 

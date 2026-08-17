@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /*
 TensorZero Client (for internal use only for now)
 
@@ -99,6 +100,22 @@ import type {
   ResolveUuidResponse,
 } from "~/types/tensorzero";
 
+export interface SynapseAnalyticsRow {
+  model_name: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  avg_latency_ms: number | null;
+  avg_ttft_ms: number | null;
+  output_tps_excluding_ttft: number | null;
+  kind: string;
+}
+
+export interface SynapseBalances {
+  deepseek: unknown | null;
+  openrouter: unknown | null;
+}
+
 /**
  * Feedback requests attach a metric value to a given inference or episode.
  */
@@ -158,6 +175,78 @@ export class TensorZeroClient extends BaseTensorZeroClient {
     }
     const body = (await response.json()) as InferenceResponse;
     return body;
+  }
+
+  async embeddings(request: {
+    model: string;
+    input: string | string[];
+  }): Promise<unknown> {
+    const response = await this.fetch("/v1/embeddings", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return response.json();
+  }
+
+  async rerank(request: {
+    model: string;
+    query: string;
+    documents: string[];
+    top_n?: number;
+  }): Promise<unknown> {
+    const response = await this.fetch("/v1/rerank", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return response.json();
+  }
+
+  async getSynapseAnalytics(
+    from: string,
+    to: string,
+  ): Promise<{ data: SynapseAnalyticsRow[] }> {
+    const params = new URLSearchParams({ from, to });
+    const response = await this.fetch(
+      `/internal/synapse/analytics?${params.toString()}`,
+      { method: "GET" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as { data: SynapseAnalyticsRow[] };
+  }
+
+  async getSynapseUsageExport(from: string, to: string): Promise<string> {
+    const params = new URLSearchParams({ from, to });
+    const response = await this.fetch(
+      `/internal/synapse/usage_export?${params.toString()}`,
+      { method: "GET" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return response.text();
+  }
+
+  async getSynapseBalances(): Promise<SynapseBalances> {
+    const response = await this.fetch("/internal/synapse/balances", {
+      method: "GET",
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as SynapseBalances;
   }
 
   /**
