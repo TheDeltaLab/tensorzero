@@ -49,9 +49,7 @@ def main() -> None:
             )
         )
     rows.sort(key=lambda row: (row[0], row[1]))
-    print(
-        "scenario\tworkers\treqs\tthroughput_rps\tsuccess\tp50_ms\tp95_ms\tp99_ms\tstatus_codes\trss_kb_min_avg_max"
-    )
+    print("scenario\tworkers\treqs\tthroughput_rps\tsuccess\tp50_ms\tp95_ms\tp99_ms\tstatus_codes\trss_kb_min_avg_max")
     for row in rows:
         print(
             f"{row[0]}\t{row[1]}\t{row[2]}\t{row[3]:.1f}\t{row[4]:.4f}\t{row[5]}\t{row[6]}\t{row[7]}\t{row[8]}\t{row[9]}"
