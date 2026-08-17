@@ -1,0 +1,51 @@
+# Synapse-compatible OpenAI entry: callers send bare alias names
+# (e.g. `deepseek-v4-flash`) plus `x-synapse-*` headers.
+#
+# These aliases are public model names only. Do not add Merlin / cluster
+# internals here. Override api bases with env vars:
+#   ALIBABA_BASE_URL, ALIBABA_RERANK_BASE_URL, SILICONFLOW_BASE_URL,
+#   VOLCENGINE_BASE_URL, DEEPSEEK_BASE_URL, OPENROUTER_BASE_URL
+
+[gateway.observability]
+enabled = true
+backend = "postgres"
+
+[model_aliases.deepseek-v4-flash]
+task = "chat"
+min_tokens_per_sec = 10.0
+targets = [
+    { provider = "deepseek", model = "deepseek-v4-flash" },
+    { provider = "alibaba", model = "deepseek-v4-flash" },
+]
+
+[model_aliases.deepseek-v4-pro]
+task = "chat"
+targets = [
+    { provider = "deepseek", model = "deepseek-v4-pro" },
+    { provider = "alibaba", model = "deepseek-v4-pro" },
+]
+
+[model_aliases.qwen3-embedding-4b]
+task = "embedding"
+targets = [
+    { provider = "openrouter", model = "qwen/qwen3-embedding-4b" },
+    { provider = "siliconflow", model = "Qwen/Qwen3-Embedding-4B" },
+]
+
+[model_aliases.qwen3-rerank]
+task = "rerank"
+targets = [
+    { provider = "alibaba", model = "qwen3-rerank" },
+]
+
+[model_aliases.glm-5.1]
+task = "chat"
+targets = [{ provider = "alibaba", model = "glm-5.1" }]
+
+[model_aliases.glm-5.2]
+task = "chat"
+targets = [{ provider = "alibaba", model = "glm-5.2" }]
+
+[model_aliases.kimi-k2.6]
+task = "chat"
+targets = [{ provider = "alibaba", model = "kimi-k2.6" }]

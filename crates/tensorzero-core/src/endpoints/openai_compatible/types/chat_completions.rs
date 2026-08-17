@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Chat completion types and conversion logic for OpenAI-compatible API.
 //!
 //! This module contains all request/response types for the chat completion endpoint,
@@ -175,7 +176,9 @@ enum StopSequences {
     Multiple(Vec<String>),
 }
 
-fn deserialize_stop_sequences<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+pub(crate) fn deserialize_stop_sequences<'de, D>(
+    deserializer: D,
+) -> Result<Option<Vec<String>>, D::Error>
 where
     D: Deserializer<'de>,
 {
@@ -362,9 +365,11 @@ impl Params {
         {
             (None, Some(model_name.to_string()))
         } else {
-            return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-                message: "`model` field must start with `tensorzero::function_name::` or `tensorzero::model_name::`. For example, `tensorzero::function_name::my_function` for a function `my_function` defined in your config, `tensorzero::model_name::my_model` for a model `my_model` defined in your config, or default functions like `tensorzero::model_name::openai::gpt-4o-mini`.".to_string(),
-            }));
+            // Bare names are treated as TensorZero model names (config models, aliases,
+            // or provider shorthands like `deepseek::deepseek-v4-flash`). Synapse clients
+            // send unprefixed names; `tensorzero::function_name::` / `tensorzero::model_name::`
+            // remain supported.
+            (None, Some(openai_compatible_params.model.clone()))
         };
 
         if let Some(function_name) = &function_name
@@ -960,6 +965,36 @@ mod tests {
         assert_eq!(params.params.chat_completion.presence_penalty, Some(0.5));
         assert_eq!(params.params.chat_completion.frequency_penalty, Some(0.5));
         assert_eq!(params.tags, tensorzero_tags);
+    }
+
+    #[test]
+    fn test_try_from_openai_bare_model_name() {
+        let params = Params::try_from_openai(OpenAICompatibleParams {
+            messages: vec![OpenAICompatibleMessage::User(OpenAICompatibleUserMessage {
+                content: Value::String("Hello, world!".to_string()),
+            })],
+            model: "deepseek-v4-flash".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(params.function_name, None);
+        assert_eq!(params.model_name.as_deref(), Some("deepseek-v4-flash"));
+    }
+
+    #[test]
+    fn test_try_from_openai_shorthand_model_name() {
+        let params = Params::try_from_openai(OpenAICompatibleParams {
+            messages: vec![OpenAICompatibleMessage::User(OpenAICompatibleUserMessage {
+                content: Value::String("Hello, world!".to_string()),
+            })],
+            model: "deepseek::deepseek-v4-flash".into(),
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(
+            params.model_name.as_deref(),
+            Some("deepseek::deepseek-v4-flash")
+        );
     }
 
     #[test]

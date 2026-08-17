@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::Duration;
 use http_body::{Frame, SizeHint};
 use once_cell::sync::OnceCell;
@@ -42,6 +43,23 @@ pub const TENSORZERO_EXTERNAL_SPAN_ATTRIBUTE_NAME: &str = "tensorzero.overhead.e
 /// enabled) for an outbound HTTP proxy URL. Override via
 /// [`TensorzeroHttpClient::new_with_proxy_env_var`].
 pub const DEFAULT_PROXY_ENV_VAR: &str = "TENSORZERO_E2E_PROXY";
+
+tokio::task_local! {
+    static REQUEST_TIMEOUT_OVERRIDE: std::time::Duration;
+}
+
+/// Override the per-request HTTP timeout for the current async task
+/// (Synapse `x-synapse-request-profile: long-audio-eval`).
+pub async fn scope_request_timeout<F>(timeout: std::time::Duration, fut: F) -> F::Output
+where
+    F: std::future::Future,
+{
+    REQUEST_TIMEOUT_OVERRIDE.scope(timeout, fut).await
+}
+
+fn current_request_timeout_override() -> Option<std::time::Duration> {
+    REQUEST_TIMEOUT_OVERRIDE.try_with(|timeout| *timeout).ok()
+}
 
 /// This is `Cow` without the `T: Clone` bound.
 /// Useful when we want a `Cow`, but don't want to (or can't) implement `Clone`
@@ -547,6 +565,13 @@ impl<'a> TensorzeroRequestBuilder<'a> {
         }
     }
 
+    fn apply_request_timeout_override(self) -> TensorzeroRequestBuilder<'a> {
+        match current_request_timeout_override() {
+            Some(timeout) => self.timeout(timeout),
+            None => self,
+        }
+    }
+
     pub fn query<T: Serialize + ?Sized>(self, query: &T) -> TensorzeroRequestBuilder<'a> {
         Self {
             builder: self.builder.query(query),
@@ -615,6 +640,7 @@ impl<'a> TensorzeroRequestBuilder<'a> {
     }
 
     pub async fn eventsource(mut self) -> Result<TensorZeroEventSource, ReqwestSseStreamError> {
+        self = self.apply_request_timeout_override();
         self = self.with_otlp_headers();
         let event_source = self.builder.eventsource().await?;
         Ok(TensorZeroEventSource {
@@ -634,6 +660,7 @@ impl<'a> TensorzeroRequestBuilder<'a> {
         (TensorZeroEventSource, http::HeaderMap),
         (ReqwestSseStreamError, Option<http::HeaderMap>),
     > {
+        self = self.apply_request_timeout_override();
         self = self.with_otlp_headers();
         let ticket = self.ticket.into_owned();
         let (event_stream, headers) = self.builder.eventsource_with_headers().await?;
@@ -658,6 +685,7 @@ impl<'a> TensorzeroRequestBuilder<'a> {
     // body will not be read until `text()` is called)
     #[tracing::instrument(skip_all, fields({ TENSORZERO_EXTERNAL_SPAN_ATTRIBUTE_NAME } = true))]
     pub async fn send(mut self) -> Result<TensorzeroResponseWrapper, reqwest::Error> {
+        self = self.apply_request_timeout_override();
         self = self.with_otlp_headers();
         Ok(TensorzeroResponseWrapper {
             response: self
@@ -674,6 +702,7 @@ impl<'a> TensorzeroRequestBuilder<'a> {
         provider_type: &str,
         api_type: ApiType,
     ) -> Result<T, HttpClientError> {
+        self = self.apply_request_timeout_override();
         self = self.with_otlp_headers();
         let (client, request) = self.builder.build_split();
         let request = request.map_err(|e| HttpClientError::InferenceClient {

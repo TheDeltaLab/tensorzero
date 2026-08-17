@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![expect(clippy::print_stdout)]
 
 use std::collections::HashSet;
@@ -6,6 +7,7 @@ use googletest::prelude::*;
 use tensorzero::ClientExt;
 
 use axum::extract::State;
+use axum::http::HeaderMap;
 use http_body_util::BodyExt;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
@@ -19,6 +21,9 @@ use tensorzero_core::db::model_inferences::ModelInferenceQueries;
 use tensorzero_core::db::test_helpers::TestDatabaseHelpers;
 use tensorzero_core::endpoints::openai_compatible::OpenAIStructuredJson;
 use tensorzero_core::endpoints::openai_compatible::chat_completions::chat_completions_handler;
+use tensorzero_core::endpoints::openai_compatible::completions::completions_handler;
+use tensorzero_core::endpoints::openai_compatible::rerank::rerank_handler;
+use tensorzero_core::endpoints::openai_compatible::responses::responses_handler;
 use tensorzero_core::stored_inference::StoredInferenceDatabase;
 use tensorzero_core::test_helpers::get_e2e_config;
 
@@ -39,6 +44,7 @@ async fn test_openai_compatible_route_with_function_name_as_model(model: &str) {
     let response = chat_completions_handler(
         State(state),
         None,
+        HeaderMap::new(),
         OpenAIStructuredJson(
             serde_json::from_value(serde_json::json!({
                 "model": model,
@@ -916,6 +922,7 @@ async fn test_openai_compatible_warn_unknown_fields() {
     chat_completions_handler(
         State(state),
         None,
+        HeaderMap::new(),
         OpenAIStructuredJson(
             serde_json::from_value(serde_json::json!({
                 "messages": [],
@@ -942,6 +949,7 @@ async fn test_openai_compatible_deny_unknown_fields() {
     let err = chat_completions_handler(
         State(state),
         None,
+        HeaderMap::new(),
         OpenAIStructuredJson(
             serde_json::from_value(serde_json::json!({
                 "messages": [],
@@ -954,9 +962,12 @@ async fn test_openai_compatible_deny_unknown_fields() {
         ),
     )
     .await
-    .unwrap_err();
+    .unwrap();
+    expect_that!(err.status(), eq(StatusCode::BAD_REQUEST));
+    let body = err.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
     expect_that!(
-        err.to_string(),
+        body["error"]["message"].as_str().unwrap(),
         eq(
             "Invalid request to OpenAI-compatible endpoint: `tensorzero::deny_unknown_fields` is set to true, but found unknown fields in the request: [my_fake_param, my_other_fake_param]"
         )
@@ -1103,6 +1114,7 @@ async fn test_openai_compatible_file_with_custom_filename() {
     let response = chat_completions_handler(
         State(state),
         None,
+        HeaderMap::new(),
         OpenAIStructuredJson(
             serde_json::from_value(serde_json::json!({
                 "model": "tensorzero::function_name::basic_test_no_system_schema",
@@ -1342,4 +1354,272 @@ async fn test_openai_compatible_parallel_tool_calls_multi_turn() {
         "Multi-turn test passed! Got final response: {}",
         content.unwrap()
     );
+}
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_bare_model_and_synapse_headers() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-synapse-provider", "dummy".parse().unwrap());
+    headers.insert("x-synapse-request-id", "caller-trace-1".parse().unwrap());
+
+    let response = chat_completions_handler(
+        State(state),
+        None,
+        headers,
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "good",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": false,
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+
+    assert_that!(response.status(), eq(StatusCode::OK));
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-served-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("dummy/good")
+    );
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("caller-trace-1")
+    );
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-fallback-count")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("0")
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    expect_that!(
+        body["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap()
+            .contains("Megumin"),
+        eq(true)
+    );
+}
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_v1_alias_route() {
+    let client = Client::new();
+    let payload = json!({
+        "model": "tensorzero::model_name::json",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "tensorzero::dryrun": true,
+    });
+    let response = client
+        .post(get_gateway_endpoint("/v1/chat/completions"))
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    assert_that!(response.status(), eq(StatusCode::OK));
+}
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_completions_endpoint() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let response = completions_handler(
+        State(state),
+        None,
+        HeaderMap::new(),
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "dummy::good",
+                "prompt": "Hello",
+                "max_tokens": 16,
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::OK));
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-served-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("dummy/good")
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    expect_that!(body["object"].as_str().unwrap(), eq("text_completion"));
+    expect_that!(
+        body["choices"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Megumin"),
+        eq(true)
+    );
+}
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_responses_endpoint() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let response = responses_handler(
+        State(state),
+        None,
+        HeaderMap::new(),
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "dummy::good",
+                "input": "Hello",
+                "instructions": "Be brief",
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::OK));
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    expect_that!(body["object"].as_str().unwrap(), eq("response"));
+    expect_that!(body["status"].as_str().unwrap(), eq("completed"));
+    expect_that!(
+        body["output"][0]["content"][0]["type"].as_str().unwrap(),
+        eq("output_text")
+    );
+    expect_that!(
+        body["output"][0]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Megumin"),
+        eq(true)
+    );
+}
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_alias_failover_and_fallback_header() {
+    let config = r#"
+[model_aliases.alias_failover]
+task = "chat"
+targets = [
+  { provider = "dummy", model = "error" },
+  { provider = "dummy", model = "good" },
+]
+"#;
+    let client = tensorzero::test_helpers::make_embedded_gateway_with_config(config).await;
+
+    let response = chat_completions_handler(
+        State(client.get_app_state_data().unwrap().load_latest()),
+        None,
+        HeaderMap::new(),
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "alias_failover",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": false,
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::OK));
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-served-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("dummy/good")
+    );
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-fallback-count")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("1")
+    );
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-synapse-fallback", "false".parse().unwrap());
+    let response = chat_completions_handler(
+        State(client.get_app_state_data().unwrap().load_latest()),
+        None,
+        headers,
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "alias_failover",
+                "messages": [{"role": "user", "content": "Hello"}],
+                "stream": false,
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::BAD_GATEWAY));
+}
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_rerank_dummy() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-synapse-provider", "dummy".parse().unwrap());
+    let response = rerank_handler(
+        State(state),
+        headers,
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "qwen3-rerank",
+                "query": "capital",
+                "documents": ["Paris is the capital of France.", "London is the capital of England."],
+                "top_n": 1
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::OK));
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-served-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("dummy/qwen3-rerank")
+    );
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&body).unwrap();
+    expect_that!(body["results"][0]["index"].as_u64().unwrap(), eq(0));
+    expect_that!(body["results"].as_array().unwrap().len(), eq(1));
 }

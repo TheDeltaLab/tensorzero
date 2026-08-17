@@ -1,0 +1,10 @@
+{
+  "model": "qwen3-rerank",
+  "query": "capital of France",
+  "documents": [
+    "Paris is the capital of France.",
+    "London is the capital of England.",
+    "Berlin is the capital of Germany."
+  ],
+  "top_n": 2
+}

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![recursion_limit = "256"]
 #![expect(
     clippy::expect_used,
@@ -47,6 +48,7 @@ mod raw_usage;
 mod render_inferences;
 mod retries;
 mod streaming_errors;
+mod synapse_compat;
 mod template;
 mod timeouts;
 mod utils;

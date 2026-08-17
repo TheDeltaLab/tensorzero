@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![expect(clippy::unwrap_used)]
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -182,6 +183,81 @@ impl DummyProvider {
                 provider_latency: Duration::from_millis(50 + 10 * (num_chunks as u64)),
             })))
             .throttle(std::time::Duration::from_millis(10));
+
+        (
+            futures::stream::StreamExt::peekable(Box::pin(stream)),
+            DUMMY_RAW_REQUEST.to_string(),
+        )
+    }
+
+    /// 40k thinking tokens + 10k text tokens at 100 tok/s (~5 chars/token, 20 tok / 200ms).
+    fn create_load_long_reasoner_stream(
+        &self,
+        model_inference_id: Uuid,
+    ) -> (PeekableProviderInferenceResponseStream, String) {
+        const THINK_TOKENS: u32 = 40_000;
+        const TEXT_TOKENS: u32 = 10_000;
+        const TOKENS_PER_CHUNK: u32 = 20;
+        const CHARS_PER_TOKEN: usize = 5;
+        let chunk_interval = Duration::from_millis(200);
+        let think_chunks = THINK_TOKENS / TOKENS_PER_CHUNK;
+        let text_chunks = TEXT_TOKENS / TOKENS_PER_CHUNK;
+        let total_tokens = THINK_TOKENS + TEXT_TOKENS;
+        let piece = "x".repeat(TOKENS_PER_CHUNK as usize * CHARS_PER_TOKEN);
+        let usage = self.get_model_usage(total_tokens);
+        let stream = async_stream::stream! {
+            for i in 0..think_chunks {
+                yield Ok(ProviderInferenceResponseChunk {
+                    content: vec![ContentBlockChunk::Thought(ThoughtChunk {
+                        text: Some(piece.clone()),
+                        signature: None,
+                        summary_id: None,
+                        summary_text: None,
+                        id: "0".to_string(),
+                        provider_type: None,
+                        extra_data: None,
+                    })],
+                    usage: None,
+                    raw_usage: None,
+                    raw_response: String::new(),
+                    provider_latency: Duration::from_millis(50 + 10 * (i as u64 + 1)),
+                    finish_reason: None,
+                });
+                sleep_excluding_latency(chunk_interval).await;
+            }
+            for i in 0..text_chunks {
+                yield Ok(ProviderInferenceResponseChunk {
+                    content: vec![ContentBlockChunk::Text(TextChunk {
+                        text: piece.clone(),
+                        id: "0".to_string(),
+                    })],
+                    usage: None,
+                    raw_usage: None,
+                    raw_response: String::new(),
+                    provider_latency: Duration::from_millis(
+                        50 + 10 * (u64::from(think_chunks) + i as u64 + 1),
+                    ),
+                    finish_reason: None,
+                });
+                sleep_excluding_latency(chunk_interval).await;
+            }
+            yield Ok(ProviderInferenceResponseChunk {
+                content: vec![],
+                usage: Some(usage),
+                raw_usage: Some(vec![RawUsageEntry {
+                    model_inference_id,
+                    provider_type: "dummy".to_string(),
+                    api_type: ApiType::ChatCompletions,
+                    data: serde_json::Value::Null,
+                }]),
+                finish_reason: Some(FinishReason::Stop),
+                raw_response: format!(
+                    r#"{{"usage":{{"prompt_tokens":10,"completion_tokens":{total_tokens},"total_tokens":{}}}}}"#,
+                    10 + total_tokens
+                ),
+                provider_latency: Duration::from_millis(50 + 10 * u64::from(think_chunks + text_chunks)),
+            });
+        };
 
         (
             futures::stream::StreamExt::peekable(Box::pin(stream)),
@@ -769,6 +845,9 @@ impl InferenceProvider for DummyProvider {
                 }
                 .into());
             }
+        }
+        if self.model_name == "load_40k_think" {
+            return Ok(self.create_load_long_reasoner_stream(model_inference_id));
         }
         if self.model_name == "reasoner" {
             return Ok(self.create_streaming_reasoning_response(

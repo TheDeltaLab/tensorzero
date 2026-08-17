@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import {
   useSearchParams,
   data,
@@ -29,6 +30,7 @@ import { ChatOutputElement } from "~/components/input_output/ChatOutputElement";
 import { JsonOutputElement } from "~/components/input_output/JsonOutputElement";
 import { Label } from "~/components/ui/label";
 import DatapointPlaygroundOutput from "./DatapointPlaygroundOutput";
+import { PlaygroundNav } from "./PlaygroundNav";
 import { safeParseInt, symmetricDifference } from "~/utils/common";
 import { EditButton } from "~/components/utils/EditButton";
 import { VariantEditor } from "~/components/function/variant/VariantEditor";
@@ -321,6 +323,7 @@ export default function PlaygroundPage({ loaderData }: Route.ComponentProps) {
   return (
     <PageLayout>
       <PageHeader heading="Playground" />
+      <PlaygroundNav current="/playground" />
       <div className="flex max-w-180 flex-col gap-2">
         <Label>Function</Label>
         <FunctionSelector

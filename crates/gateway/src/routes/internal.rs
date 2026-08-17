@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Internal route definitions for the TensorZero Gateway API.
 //!
 //! These routes are for internal use. They are unstable and might change without notice,
@@ -303,6 +304,18 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
         .route(
             "/internal/autopilot/status",
             get(endpoints::internal::autopilot::autopilot_status_handler),
+        )
+        .route(
+            "/internal/synapse/usage_export",
+            get(endpoints::internal::synapse::usage_export_handler),
+        )
+        .route(
+            "/internal/synapse/analytics",
+            get(endpoints::internal::synapse::analytics_handler),
+        )
+        .route(
+            "/internal/synapse/balances",
+            get(endpoints::internal::synapse::balances_handler),
         );
 
     if feature_flags::ENABLE_CONFIG_IN_DATABASE.get() {

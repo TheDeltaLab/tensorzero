@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::future::Future;
 use std::sync::Arc;
 
@@ -550,10 +551,22 @@ pub fn start_cache_write_streaming<C: CacheQueries + Clone + 'static>(
     let output = StreamingCacheData {
         chunks: chunks
             .into_iter()
-            .map(|c| CachedProviderInferenceResponseChunk {
-                content: c.content,
-                usage: c.usage,
-                raw_response: c.raw_response,
+            .filter_map(|c| {
+                let content: Vec<_> = c
+                    .content
+                    .into_iter()
+                    .filter(|block| !matches!(block, ContentBlockChunk::Thought(_)))
+                    .collect();
+                let reasoning_only =
+                    content.is_empty() && c.finish_reason.is_none() && c.usage.is_none();
+                if reasoning_only {
+                    return None;
+                }
+                Some(CachedProviderInferenceResponseChunk {
+                    content,
+                    usage: c.usage,
+                    raw_response: c.raw_response,
+                })
             })
             .collect(),
     };

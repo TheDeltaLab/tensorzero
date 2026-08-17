@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![recursion_limit = "256"]
 
 use clap::Parser;
@@ -283,6 +284,26 @@ async fn handle_create_api_key(
     Ok(())
 }
 
+#[expect(clippy::print_stdout)]
+async fn handle_import_synapse_api_key(
+    hash_or_key: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let postgres_url = std::env::var("TENSORZERO_POSTGRES_URL")
+        .map_err(|_| "TENSORZERO_POSTGRES_URL environment variable not set")?;
+    let pool = sqlx::PgPool::connect(&postgres_url).await?;
+    let public_id = tensorzero_auth::postgres::import_synapse_key_or_plaintext(
+        DEFAULT_ORGANIZATION,
+        DEFAULT_WORKSPACE,
+        None,
+        hash_or_key,
+        &pool,
+    )
+    .await?;
+    println!("{public_id}");
+    tracing::debug!("Imported Synapse API key with public_id: {public_id}");
+    Ok(())
+}
+
 async fn run_optimization_postgres_migrations() -> Result<(), Error> {
     let postgres_url = std::env::var("TENSORZERO_POSTGRES_URL").map_err(|_| {
         Error::new(ErrorDetails::PostgresConnectionInitialization {
@@ -396,6 +417,13 @@ async fn run() -> Result<(), ExitCode> {
         handle_create_api_key(args.early_exit_command_arguments.expiration)
             .await
             .log_err_pretty("Failed to create API key")?;
+        return Ok(());
+    }
+
+    if let Some(hash_or_key) = args.early_exit_commands.import_synapse_api_key {
+        handle_import_synapse_api_key(&hash_or_key)
+            .await
+            .log_err_pretty("Failed to import Synapse API key")?;
         return Ok(());
     }
 

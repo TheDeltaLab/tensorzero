@@ -1,0 +1,29 @@
+# Same dummy models as tensorzero.toml, with observability off.
+# Use to isolate gateway CPU vs Postgres write-path.
+
+[gateway]
+disable_pseudonymous_usage_analytics = true
+
+[gateway.observability]
+enabled = false
+
+[object_storage]
+type = "disabled"
+
+[models.dummy-chat]
+routing = ["dummy"]
+
+[models.dummy-chat.providers.dummy]
+type = "dummy"
+model_name = "good"
+
+[embedding_models.qwen3-embedding-4b]
+routing = ["dummy"]
+
+[embedding_models.qwen3-embedding-4b.providers.dummy]
+type = "dummy"
+model_name = "test-embeddings"
+
+[model_aliases.dummy-chat]
+task = "chat"
+targets = [{ provider = "dummy", model = "good" }]

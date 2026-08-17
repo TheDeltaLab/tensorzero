@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import {
   type RouteConfig,
   index,
@@ -153,6 +154,8 @@ export default [
 
   // Playground
   route("playground", "routes/playground/route.tsx"),
+  route("playground/embeddings", "routes/playground/embeddings.tsx"),
+  route("playground/rerank", "routes/playground/rerank.tsx"),
 
   // Observability
   ...prefix("observability", [

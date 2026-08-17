@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::sync::Arc;
 
 use rand::distr::{Alphanumeric, SampleString};
@@ -17,6 +18,7 @@ pub struct TensorZeroApiKey {
 
 const SK_PREFIX: &str = "sk";
 const T0_PREFIX: &str = "t0";
+const SYNAPSE_KEY_PREFIX: &str = "sk-syn-v1-";
 pub const PUBLIC_ID_LENGTH: usize = 12;
 const LONG_KEY_LENGTH: usize = 48;
 
@@ -98,6 +100,28 @@ impl TensorZeroApiKey {
             public_id: (*public_id).to_owned(),
             hashed_long_key: Self::hash_long_key(long_key).into(),
         })
+    }
+
+    /// Synapse keys are `sk-syn-v1-` plus 48 lowercase alphanumeric characters.
+    pub fn is_synapse_key(key: &str) -> bool {
+        let Some(rest) = key.strip_prefix(SYNAPSE_KEY_PREFIX) else {
+            return false;
+        };
+        rest.len() == LONG_KEY_LENGTH
+            && rest
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+    }
+
+    /// Identity used for request extensions / tracing when a Synapse key authenticates.
+    /// The SHA-256 is only a cache key; verification uses bcrypt against the import table.
+    pub fn from_synapse_plaintext(key: &str) -> Self {
+        let hash = hex::encode(Sha256::digest(key.as_bytes()));
+        let public_id = format!("syn{}", &hash[..9]);
+        Self {
+            public_id,
+            hashed_long_key: hash.into(),
+        }
     }
 
     /// Returns a cache key that includes both the public_id and the hashed long key.
@@ -212,5 +236,21 @@ mod tests {
             ),
             "TensorZeroApiKey { public_id: \"123456789012\", hashed_long_key: SecretBox<str>([REDACTED]) }"
         );
+    }
+
+    #[test]
+    fn test_synapse_key_format() {
+        let key = format!("sk-syn-v1-{}", "a".repeat(48));
+        assert!(TensorZeroApiKey::is_synapse_key(&key));
+        assert!(!TensorZeroApiKey::is_synapse_key(
+            "sk-t0-123456789012-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        ));
+        assert!(!TensorZeroApiKey::is_synapse_key(&format!(
+            "sk-syn-v1-{}",
+            "A".repeat(48)
+        )));
+        let parsed = TensorZeroApiKey::from_synapse_plaintext(&key);
+        assert_eq!(parsed.public_id.len(), PUBLIC_ID_LENGTH);
+        assert!(parsed.public_id.starts_with("syn"));
     }
 }
