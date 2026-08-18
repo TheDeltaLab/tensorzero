@@ -38,10 +38,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
+      contents: read # Required for checkout or repository metadata reads.
+      packages: write # Required to publish package or container metadata.
+      id-token: write # Required for OIDC-backed build or publish tooling.
+      attestations: write # Required to publish artifact attestations.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -84,10 +84,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     permissions:
-      contents: read
-      packages: write
-      id-token: write
-      attestations: write
+      contents: read # Required for checkout or repository metadata reads.
+      packages: write # Required to publish package or container metadata.
+      id-token: write # Required for OIDC-backed build or publish tooling.
+      attestations: write # Required to publish artifact attestations.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
