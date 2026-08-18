@@ -1,0 +1,125 @@
+# Publish gateway and UI images to GHCR for TheDeltaLab/tensorzero.
+# Upstream Docker Hub publish is gated on tensorzero/tensorzero and does not run here.
+
+name: Publish GHCR images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "ui/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/publish-ghcr.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      push:
+        description: "Push images to GHCR"
+        type: boolean
+        default: true
+
+concurrency:
+  group: publish-ghcr-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+permissions: {}
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  gateway:
+    name: Build gateway
+    if: github.repository == 'TheDeltaLab/tensorzero'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read # Required for checkout or repository metadata reads.
+      packages: write # Required to publish package or container metadata.
+      id-token: write # Required for OIDC-backed build or publish tooling.
+      attestations: write # Required to publish artifact attestations.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/thedeltalab/tensorzero/gateway
+          tags: |
+            type=raw,value=nightly,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: crates/gateway/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  ui:
+    name: Build UI
+    if: github.repository == 'TheDeltaLab/tensorzero'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read # Required for checkout or repository metadata reads.
+      packages: write # Required to publish package or container metadata.
+      id-token: write # Required for OIDC-backed build or publish tooling.
+      attestations: write # Required to publish artifact attestations.
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.REGISTRY }}/thedeltalab/tensorzero/ui
+          tags: |
+            type=raw,value=nightly,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
+            type=sha,prefix=sha-,format=short
+            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
+
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: ui/Dockerfile
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -45,6 +45,8 @@ COPY --from=builder /release/gateway /usr/local/bin/gateway
 
 WORKDIR /app
 
-EXPOSE 3000
+ENV TENSORZERO_GATEWAY_BIND_ADDRESS=0.0.0.0:3720
+
+EXPOSE 3720
 
 ENTRYPOINT ["gateway"]

@@ -14,7 +14,7 @@ use tensorzero_core::observability::LogFormat;
 #[command(version, about)]
 pub struct GatewayArgs {
     /// Use all of the config files matching the specified glob pattern. Incompatible with `--default-config`
-    #[arg(long)]
+    #[arg(long, env = "TENSORZERO_CONFIG_FILE")]
     pub config_file: Option<PathBuf>,
 
     /// Use a default config file. Incompatible with `--config-file`
@@ -84,6 +84,16 @@ pub struct EarlyExitCommandArguments {
 mod tests {
     use super::*;
     use googletest::prelude::*;
+
+    #[gtest]
+    fn test_config_file_flag_parses() {
+        let args = GatewayArgs::try_parse_from(["gateway", "--config-file", "tensorzero.toml"])
+            .expect("`--config-file` should parse");
+        expect_that!(
+            args.config_file,
+            some(eq(&PathBuf::from("tensorzero.toml")))
+        );
+    }
 
     #[gtest]
     fn test_migrate_config_accepts_a_glob_argument() {

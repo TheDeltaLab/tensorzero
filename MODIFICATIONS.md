@@ -15,6 +15,11 @@ See `NOTICE` for the overall attribution statement.
 - `SECURITY.md` — Changed security contact to security@thebrainly.ai.
 - `crates/tensorzero-stored-config/src/postgres/migrations/20260622000001_model_aliases.sql` — New model_aliases DB migration table (Delta-AI fork).
 - `docs/synapse-migration-plan.md` — Synapse → TensorZero migration plan (Delta-AI fork).
+- `docs/superpowers/plans/2026-06-22-model-alias.md` — Model alias implementation plan (Delta-AI fork).
+- `.github/workflows/general.yml` — Changed lint-rust from 4-partition `cargo hack --each-feature` to single `cargo clippy --all-features` (Delta-AI fork).
+- `.github/workflows/publish-ghcr.yml` — Publish gateway and UI images to GHCR for this fork (Delta-AI fork).
+- `crates/gateway/Dockerfile` — Default container bind address `0.0.0.0:3720` (Delta-AI fork).
+- `ui/Dockerfile` — Default UI listen port `3721` (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.model_aliases.toml` — E2E alias failover fixtures (Delta-AI fork).
 - `examples/guides/synapse-compat/config/tensorzero.toml` — Synapse-compatible `[model_aliases]` for public providers (Delta-AI fork).
 - `crates/Cargo.lock` — Workspace lockfile for Synapse-compat auth (bcrypt) and HTTP timeout deps (Delta-AI fork).

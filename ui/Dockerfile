@@ -101,12 +101,12 @@ RUN chmod +x /app/entrypoint.sh
 
 USER ui
 
-EXPOSE 4000
+EXPOSE 3721
 
 ENV HOST=0.0.0.0
 ENV NODE_ENV=production
-ENV PORT=4000
+ENV PORT=3721
 ENV RUST_LOG=warn
 
 ENTRYPOINT ["./entrypoint.sh"]
-HEALTHCHECK --start-period=10s --start-interval=1s --timeout=1s CMD wget --no-verbose --tries=1 --spider http://localhost:4000/health
+HEALTHCHECK --start-period=10s --start-interval=1s --timeout=1s CMD wget --no-verbose --tries=1 --spider http://localhost:3721/health
