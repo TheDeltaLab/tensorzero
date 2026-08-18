@@ -1,0 +1,35 @@
+# Dummy-backed Synapse-compat load test config.
+# Requires `cargo run --features e2e_tests` so `type = "dummy"` is available.
+# Observability writes to Postgres (async). Do not set TENSORZERO_CLICKHOUSE_URL.
+
+[gateway]
+disable_pseudonymous_usage_analytics = true
+
+[gateway.observability]
+enabled = true
+backend = "postgres"
+async_writes = true
+
+[postgres]
+connection_pool_size = 50
+
+[object_storage]
+type = "disabled"
+
+[models.dummy-chat]
+routing = ["dummy"]
+
+[models.dummy-chat.providers.dummy]
+type = "dummy"
+model_name = "good"
+
+[embedding_models.qwen3-embedding-4b]
+routing = ["dummy"]
+
+[embedding_models.qwen3-embedding-4b.providers.dummy]
+type = "dummy"
+model_name = "test-embeddings"
+
+[model_aliases.dummy-chat]
+task = "chat"
+targets = [{ provider = "dummy", model = "good" }]

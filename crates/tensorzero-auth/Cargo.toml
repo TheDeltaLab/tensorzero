@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+bcrypt = "0.17"
 hex = "0.4.3"
 
 secrecy.workspace = true

@@ -904,7 +904,7 @@ impl ModelConfig {
                     false,
                 ));
             }
-            for provider_name in &self.routing {
+            for provider_name in &crate::routing::effective_routing(&self.routing) {
                 let provider = self.providers.get(provider_name).ok_or_else(|| {
                     Error::new(ErrorDetails::ProviderNotFound {
                         provider_name: provider_name.to_string(),
@@ -987,9 +987,27 @@ impl ModelConfig {
                             }
                         }
 
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
+                        }
+                        if !response.cached {
+                            crate::routing::record_tokens_per_sec_from_latency(
+                                provider_name,
+                                model_name,
+                                &response.usage,
+                                &response.provider_latency,
+                            );
+                        }
+
                         return Ok(response);
                     }
                     Err(error) => {
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
+                        }
+                        if !crate::routing::should_failover(&error) {
+                            return Err(error);
+                        }
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }
@@ -1059,7 +1077,7 @@ impl ModelConfig {
                     messages: request.messages.clone(),
                 });
             }
-            for provider_name in &self.routing {
+            for provider_name in &crate::routing::effective_routing(&self.routing) {
                 let provider = self.providers.get(provider_name).ok_or_else(|| {
                     Error::new(ErrorDetails::ProviderNotFound {
                         provider_name: provider_name.to_string(),
@@ -1140,9 +1158,18 @@ impl ModelConfig {
                             });
                             response.response.stream = wrapped.peekable().instrument(span);
                         }
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
+                        }
                         return Ok(response);
                     }
                     Err(error) => {
+                        if let Some(session) = crate::routing::RoutingSession::current() {
+                            session.record_provider(&self.routing, provider_name, model_name);
+                        }
+                        if !crate::routing::should_failover(&error) {
+                            return Err(error);
+                        }
                         provider_errors.insert(provider_name.to_string(), error);
                     }
                 }
@@ -1282,6 +1309,9 @@ fn wrap_provider_stream(
     let capture_content = otlp_config.genai_content_capture_enabled();
     let deferred_tasks = clients.deferred_tasks.clone();
     let span_clone = span.clone();
+    let throughput_provider = model_request.provider_name.to_string();
+    let throughput_model = model_request.model_name.to_string();
+    let stream_started_at = tokio::time::Instant::now();
 
     // Collect usage objects for later use (e.g. rate limiting)
     let mut usages: Vec<Usage> = vec![];
@@ -1325,6 +1355,15 @@ fn wrap_provider_stream(
         }
 
         let aggregated_usage = aggregate_usage_from_single_streaming_model_inference(usages);
+
+        if !errored {
+            crate::routing::record_tokens_per_sec(
+                &throughput_provider,
+                &throughput_model,
+                aggregated_usage.output_tokens,
+                stream_started_at.elapsed(),
+            );
+        }
 
         otlp_config.apply_usage_to_model_provider_span(&span_clone, &aggregated_usage);
         if capture_content && !errored {
@@ -3482,6 +3521,75 @@ pub use tensorzero_inference_types::credentials::{
     EndpointLocation, ModelProviderRequestInfo, ProviderInferenceRequest,
 };
 
+/// Default API roots for OpenAI-compatible Chinese providers.
+/// TensorZero appends `/v1` (except Volcengine Ark, which already includes `/api/v3`).
+pub(crate) const ALIBABA_DEFAULT_API_ROOT: &str = "https://dashscope.aliyuncs.com/compatible-mode";
+pub(crate) const SILICONFLOW_DEFAULT_API_ROOT: &str = "https://api.siliconflow.cn";
+pub(crate) const VOLCENGINE_DEFAULT_API_ROOT: &str = "https://ark.cn-beijing.volces.com/api/v3";
+
+pub(crate) fn openai_compatible_shorthand_api_base_from_raw(
+    raw: &str,
+    append_openai_v1: bool,
+) -> Result<Url, Error> {
+    let mut raw = raw.trim().to_string();
+    while raw.ends_with('/') {
+        raw.pop();
+    }
+    if append_openai_v1 {
+        let versioned = raw.ends_with("/v1")
+            || raw.ends_with("/v3")
+            || raw.contains("/v1/")
+            || raw.contains("/v3/");
+        if !versioned {
+            raw.push_str("/v1");
+        }
+    }
+    Url::parse(&raw).map_err(|e| {
+        Error::new(ErrorDetails::Config {
+            message: format!("Invalid OpenAI-compatible api_base `{raw}`: {e}"),
+        })
+    })
+}
+
+pub(crate) fn openai_compatible_shorthand_api_base(
+    base_url_env: &str,
+    default_root: &str,
+    append_openai_v1: bool,
+) -> Result<Url, Error> {
+    let raw = std::env::var(base_url_env).unwrap_or_else(|_| default_root.to_string());
+    openai_compatible_shorthand_api_base_from_raw(&raw, append_openai_v1)
+}
+
+pub(crate) async fn openai_compatible_shorthand_provider(
+    model_name: String,
+    base_url_env: &str,
+    default_root: &str,
+    append_openai_v1: bool,
+    api_key_env: &str,
+    default_credentials: &ProviderTypeDefaultCredentials,
+) -> Result<OpenAIProvider, Error> {
+    OpenAIProvider::new(
+        model_name,
+        Some(openai_compatible_shorthand_api_base(
+            base_url_env,
+            default_root,
+            append_openai_v1,
+        )?),
+        OpenAIKind
+            .get_defaulted_credential(
+                Some(&CredentialLocationWithFallback::Single(
+                    CredentialLocation::Env(api_key_env.to_string()),
+                )),
+                default_credentials,
+            )
+            .await?,
+        OpenAIAPIType::ChatCompletions,
+        false,
+        Vec::new(),
+        HashMap::new(),
+    )
+}
+
 pub const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
     "anthropic::",
     "deepseek::",
@@ -3496,6 +3604,9 @@ pub const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
     "openrouter::",
     "together::",
     "xai::",
+    "alibaba::",
+    "siliconflow::",
+    "volcengine::",
     "dummy::",
 ];
 
@@ -3634,6 +3745,40 @@ impl ShorthandModelConfig for ModelConfig {
                     .get_defaulted_credential(None, default_credentials)
                     .await?,
             )),
+            "alibaba" => ProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "ALIBABA_BASE_URL",
+                    ALIBABA_DEFAULT_API_ROOT,
+                    true,
+                    "ALIBABA_API_KEY",
+                    default_credentials,
+                )
+                .await?,
+            ),
+            "siliconflow" => ProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "SILICONFLOW_BASE_URL",
+                    SILICONFLOW_DEFAULT_API_ROOT,
+                    true,
+                    "SILICONFLOW_API_KEY",
+                    default_credentials,
+                )
+                .await?,
+            ),
+            "volcengine" => ProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "VOLCENGINE_BASE_URL",
+                    VOLCENGINE_DEFAULT_API_ROOT,
+                    false,
+                    "VOLCENGINE_API_KEY",
+                    default_credentials,
+                )
+                .await?
+                .with_volcengine_audio_compat(),
+            ),
             #[cfg(any(test, feature = "e2e_tests"))]
             "dummy" => ProviderConfig::Dummy(DummyProvider::new(model_name, None)?),
             _ => {
@@ -3658,6 +3803,38 @@ impl ShorthandModelConfig for ModelConfig {
                     batch_cost: None,
                 },
             )]),
+            timeouts: Default::default(),
+            skip_relay: false,
+            namespace: None,
+        })
+    }
+
+    fn merge_shorthand_targets(parts: Vec<(Arc<str>, Self)>) -> Result<Self, Error> {
+        if parts.is_empty() {
+            return Err(Error::new(ErrorDetails::Config {
+                message: "Model alias has no shorthand targets".to_string(),
+            }));
+        }
+        let mut routing = Vec::with_capacity(parts.len());
+        let mut providers = HashMap::new();
+        for (key, mut config) in parts {
+            let inner_key = config.routing.first().cloned().ok_or_else(|| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Shorthand target `{key}` has empty routing"),
+                })
+            })?;
+            let mut provider = config.providers.remove(&inner_key).ok_or_else(|| {
+                Error::new(ErrorDetails::Config {
+                    message: format!("Shorthand target `{key}` is missing its provider"),
+                })
+            })?;
+            provider.name = key.clone();
+            routing.push(key.clone());
+            providers.insert(key, provider);
+        }
+        Ok(ModelConfig {
+            routing,
+            providers,
             timeouts: Default::default(),
             skip_relay: false,
             namespace: None,
@@ -4137,6 +4314,94 @@ mod tests {
             }
         );
         assert_eq!(&*response.model_provider_name, "good_provider");
+    }
+
+    #[tokio::test]
+    async fn test_alias_shorthand_targets_failover() {
+        let creds = crate::model_table::ProviderTypeDefaultCredentials::default();
+        let error = ModelConfig::from_shorthand("dummy", "error", &creds)
+            .await
+            .unwrap();
+        let good = ModelConfig::from_shorthand("dummy", "good", &creds)
+            .await
+            .unwrap();
+        let model = ModelConfig::merge_shorthand_targets(vec![
+            ("dummy::error".into(), error),
+            ("dummy::good".into(), good),
+        ])
+        .unwrap();
+        assert_eq!(model.routing.len(), 2);
+
+        let api_keys = InferenceCredentials::default();
+        let http_client = TensorzeroHttpClient::new_testing().unwrap();
+        let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
+        let clients = InferenceClients {
+            http_client: http_client.clone(),
+            clickhouse_connection_info: clickhouse_connection_info.clone(),
+            postgres_connection_info: PostgresConnectionInfo::Disabled,
+            credentials: Arc::new(api_keys),
+            cache_options: CacheOptions {
+                max_age_s: None,
+                enabled: CacheEnabledMode::WriteOnly,
+            },
+            cache_manager: CacheManager::new(Arc::new(clickhouse_connection_info.clone())),
+            tags: Arc::new(Default::default()),
+            rate_limiting_manager: Arc::new(RateLimitingManager::new_dummy()),
+            otlp_config: Default::default(),
+            deferred_tasks: tokio_util::task::TaskTracker::new(),
+            scope_info: ScopeInfo {
+                tags: Arc::new(HashMap::new()),
+                api_key_public_id: None,
+            },
+            relay: None,
+            include_raw_usage: false,
+            include_raw_response: false,
+            include_aggregated_response: false,
+        };
+        let request = ModelInferenceRequest {
+            inference_id: Uuid::now_v7(),
+            messages: vec![],
+            system: None,
+            tool_config: None,
+            temperature: None,
+            top_p: None,
+            presence_penalty: None,
+            frequency_penalty: None,
+            max_tokens: None,
+            seed: None,
+            stream: false,
+            json_mode: ModelInferenceRequestJsonMode::Off,
+            function_type: FunctionType::Chat,
+            output_schema: None,
+            extra_body: Default::default(),
+            ..Default::default()
+        };
+
+        let session = crate::routing::RoutingSession::new(false);
+        let response = crate::routing::RoutingSession::scope(session.clone(), async {
+            model
+                .infer(&request, &clients, "alias_failover", None)
+                .await
+        })
+        .await
+        .unwrap();
+        assert_eq!(&*response.model_provider_name, "dummy::good");
+        let outcome = session.take_outcome().unwrap();
+        assert_eq!(outcome.fallback_count, 1);
+        assert_eq!(outcome.served_by, "dummy/good");
+
+        let session = crate::routing::RoutingSession::new(true);
+        let err = crate::routing::RoutingSession::scope(session, async {
+            model
+                .infer(&request, &clients, "alias_failover", None)
+                .await
+        })
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("Error sending request to Dummy provider for model 'error'")
+        );
     }
 
     #[tokio::test]
@@ -4799,6 +5064,51 @@ mod tests {
                 "Shorthand prefix '{shorthand}' is not in RESERVED_MODEL_PREFIXES"
             );
         }
+    }
+
+    #[test]
+    fn test_openai_compatible_api_base_appends_v1() {
+        let alibaba =
+            openai_compatible_shorthand_api_base_from_raw(ALIBABA_DEFAULT_API_ROOT, true).unwrap();
+        assert_eq!(
+            alibaba.as_str(),
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        );
+        let already_versioned = openai_compatible_shorthand_api_base_from_raw(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1/",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            already_versioned.as_str(),
+            "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        );
+        let volcengine =
+            openai_compatible_shorthand_api_base_from_raw(VOLCENGINE_DEFAULT_API_ROOT, false)
+                .unwrap();
+        assert_eq!(
+            volcengine.as_str(),
+            "https://ark.cn-beijing.volces.com/api/v3"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_china_provider_shorthand_validate_and_get() {
+        let table = ModelTable::default();
+        table.validate("alibaba::qwen-plus").unwrap();
+        table.validate("siliconflow::Qwen/Qwen2-7B").unwrap();
+        table.validate("volcengine::ep-xxx").unwrap();
+
+        let model =
+            with_skip_credential_validation(async { table.get("alibaba::qwen-plus", None).await })
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(model.routing.as_slice(), &[std::sync::Arc::from("alibaba")]);
+        assert!(matches!(
+            model.providers["alibaba"].config,
+            crate::model::ProviderConfig::OpenAI(_)
+        ));
     }
 
     #[test]

@@ -1,0 +1,5 @@
+{
+  "model": "dummy::good",
+  "prompt": "Hello",
+  "max_tokens": 16
+}

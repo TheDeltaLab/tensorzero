@@ -1,0 +1,6 @@
+{
+  "model": "dummy::good",
+  "max_tokens": 32,
+  "messages": [{ "role": "user", "content": "Hello" }],
+  "stream": false
+}

@@ -1,3 +1,4 @@
+# Modified by Delta-AI under Apache 2.0
 # type: ignore
 """
 Tests for the OpenAI compatibility interface using the OpenAI Python client
@@ -434,7 +435,7 @@ async def test_async_inference_streaming_malformed_function(async_openai_client)
         # TODO(#3192): handle json errors in patched client
         assert (
             str(exc_info.value)
-            == """Error code: 400 - {'error': {'message': 'Invalid request to OpenAI-compatible endpoint: `model` field must start with `tensorzero::function_name::` or `tensorzero::model_name::`. For example, `tensorzero::function_name::my_function` for a function `my_function` defined in your config, `tensorzero::model_name::my_model` for a model `my_model` defined in your config, or default functions like `tensorzero::model_name::openai::gpt-4o-mini`.', 'error_json': {'InvalidOpenAICompatibleRequest': {'message': '`model` field must start with `tensorzero::function_name::` or `tensorzero::model_name::`. For example, `tensorzero::function_name::my_function` for a function `my_function` defined in your config, `tensorzero::model_name::my_model` for a model `my_model` defined in your config, or default functions like `tensorzero::model_name::openai::gpt-4o-mini`.'}}, 'tensorzero_error_json': {'InvalidOpenAICompatibleRequest': {'message': '`model` field must start with `tensorzero::function_name::` or `tensorzero::model_name::`. For example, `tensorzero::function_name::my_function` for a function `my_function` defined in your config, `tensorzero::model_name::my_model` for a model `my_model` defined in your config, or default functions like `tensorzero::model_name::openai::gpt-4o-mini`.'}}}}"""
+            == """Error code: 400 - {'error': {'message': "Invalid inference target: Invalid model name: Model name 'chatgpt' not found in model table", 'error_json': {'InvalidInferenceTarget': {'message': "Invalid model name: Model name 'chatgpt' not found in model table"}}, 'tensorzero_error_json': {'InvalidInferenceTarget': {'message': "Invalid model name: Model name 'chatgpt' not found in model table"}}}}"""
         )
 
 

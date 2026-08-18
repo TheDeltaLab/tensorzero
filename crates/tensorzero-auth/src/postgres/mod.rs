@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashSet;
 
 use chrono::SubsecRound;
@@ -5,6 +6,7 @@ use chrono::{DateTime, Utc};
 use futures::TryStreamExt;
 use secrecy::{ExposeSecret, SecretString};
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use sqlx::Row;
 
@@ -164,6 +166,108 @@ pub async fn check_key(
         }
         None => Ok(AuthResult::MissingKey),
     }
+}
+
+#[derive(sqlx::FromRow)]
+struct SynapseKeyRow {
+    public_id: String,
+    organization: String,
+    workspace: String,
+    description: Option<String>,
+    created_at: DateTime<Utc>,
+    disabled_at: Option<DateTime<Utc>>,
+    expires_at: Option<DateTime<Utc>>,
+    bcrypt_hash: String,
+}
+
+/// Import a precomputed Synapse bcrypt hash (cost 10). Does not re-hash.
+pub async fn import_synapse_key(
+    organization: &str,
+    workspace: &str,
+    description: Option<&str>,
+    bcrypt_hash: &str,
+    pool: &PgPool,
+) -> Result<String, TensorZeroAuthError> {
+    let digest = hex::encode(Sha256::digest(bcrypt_hash.as_bytes()));
+    let public_id = format!("syn{}", &digest[..9]);
+    sqlx::query(
+        "INSERT INTO tensorzero_auth_synapse_api_key \
+         (organization, workspace, description, public_id, bcrypt_hash) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(organization)
+    .bind(workspace)
+    .bind(description)
+    .bind(&public_id)
+    .bind(bcrypt_hash)
+    .execute(pool)
+    .await?;
+    Ok(public_id)
+}
+
+const SYNAPSE_BCRYPT_COST: u32 = 10;
+
+/// Import either a bcrypt hash (`$2...`) or a plaintext `sk-syn-v1-...` key.
+pub async fn import_synapse_key_or_plaintext(
+    organization: &str,
+    workspace: &str,
+    description: Option<&str>,
+    hash_or_key: &str,
+    pool: &PgPool,
+) -> Result<String, TensorZeroAuthError> {
+    let bcrypt_hash = if hash_or_key.starts_with("$2") {
+        hash_or_key.to_string()
+    } else if TensorZeroApiKey::is_synapse_key(hash_or_key) {
+        bcrypt::hash(hash_or_key, SYNAPSE_BCRYPT_COST).map_err(|e| {
+            TensorZeroAuthError::Middleware {
+                message: format!("Failed to bcrypt Synapse key: {e}"),
+                key_info: None,
+            }
+        })?
+    } else {
+        return Err(TensorZeroAuthError::InvalidKeyFormat(
+            "expected a bcrypt hash or a plaintext sk-syn-v1- key",
+        ));
+    };
+    import_synapse_key(organization, workspace, description, &bcrypt_hash, pool).await
+}
+
+/// Scan imported Synapse bcrypt hashes. Matches Synapse's compare-all-keys lookup.
+pub async fn check_synapse_key(
+    plaintext: &str,
+    pool: &PgPool,
+) -> Result<AuthResult, TensorZeroAuthError> {
+    let rows: Vec<SynapseKeyRow> = sqlx::query_as(
+        "SELECT public_id, organization, workspace, description, created_at, disabled_at, expires_at, bcrypt_hash \
+         FROM tensorzero_auth_synapse_api_key",
+    )
+    .fetch_all(pool)
+    .await?;
+    for row in rows {
+        let ok = bcrypt::verify(plaintext, &row.bcrypt_hash).unwrap_or(false);
+        if !ok {
+            continue;
+        }
+        let key = KeyInfo {
+            public_id: row.public_id,
+            organization: row.organization,
+            workspace: row.workspace,
+            description: row.description,
+            created_at: row.created_at,
+            disabled_at: row.disabled_at,
+            expires_at: row.expires_at,
+        };
+        if let Some(disabled_at) = key.disabled_at {
+            return Ok(AuthResult::Disabled(disabled_at, key));
+        }
+        if let Some(expires_at) = key.expires_at
+            && expires_at <= Utc::now()
+        {
+            return Ok(AuthResult::Expired(expires_at, key));
+        }
+        return Ok(AuthResult::Success(key));
+    }
+    Ok(AuthResult::MissingKey)
 }
 
 /// Marks an API key as disabled in the database by its public_id

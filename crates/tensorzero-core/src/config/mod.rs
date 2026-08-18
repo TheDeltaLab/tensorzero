@@ -1788,6 +1788,7 @@ impl Config {
                 table.aliases.push(ModelAlias {
                     name: Arc::from(name.as_str()),
                     task: uninit_alias.task.map(|t| Arc::from(t.as_str())),
+                    min_tokens_per_sec: uninit_alias.min_tokens_per_sec,
                     targets: uninit_alias
                         .targets
                         .into_iter()
@@ -2299,6 +2300,9 @@ pub struct UninitializedModelAlias {
     /// If omitted, alias matches any task type (wildcard).
     pub task: Option<String>,
     pub targets: Vec<UninitializedModelAliasTarget>,
+    /// Skip a target when recent output tok/s is below this threshold.
+    #[serde(default)]
+    pub min_tokens_per_sec: Option<f64>,
 }
 
 #[serde_with::skip_serializing_none]

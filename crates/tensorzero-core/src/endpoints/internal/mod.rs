@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 pub mod autopilot;
 pub mod config;
 pub mod config_toml;
@@ -8,4 +9,5 @@ pub mod inference_metadata;
 pub mod model_inferences;
 pub mod models;
 pub mod resolve_uuid;
+pub mod synapse;
 pub mod variant_statistics;

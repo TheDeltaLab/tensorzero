@@ -1,18 +1,31 @@
+// Modified by Delta-AI under Apache 2.0
 //! OpenAI-compatible API endpoints.
 //!
-//! This module provides compatibility with OpenAI's API format, supporting both
-//! chat completions and embeddings endpoints. It handles routing, request/response
-//! conversion, and provides the main entry points for OpenAI-compatible requests.
+//! This module provides compatibility with OpenAI's API format, supporting
+//! chat completions, embeddings, completions, and responses. Routes are
+//! registered at both `/openai/v1/...` (TensorZero native) and `/v1/...`
+//! (Synapse / OpenAI SDK default).
 
+pub mod anthropic_messages;
 pub mod chat_completions;
+pub mod completions;
 pub mod embeddings;
 pub mod error;
+pub mod infer;
+pub mod rerank;
+pub mod responses;
+pub mod stream_aggregator;
+pub mod synapse;
 pub mod types;
 
 pub use error::{OpenAICompatibleError, OpenAIStructuredJson};
 
+use anthropic_messages::messages_handler;
 use chat_completions::chat_completions_handler;
+use completions::completions_handler;
 use embeddings::embeddings_handler;
+use rerank::rerank_handler;
+use responses::responses_handler;
 
 use axum::Router;
 use axum::routing::post;
@@ -37,7 +50,20 @@ pub fn build_openai_compatible_routes() -> RouteHandlers {
                 "/openai/v1/chat/completions",
                 post(chat_completions_handler),
             ),
+            ("/v1/chat/completions", post(chat_completions_handler)),
             ("/openai/v1/embeddings", post(embeddings_handler)),
+            ("/v1/embeddings", post(embeddings_handler)),
+            ("/openai/v1/completions", post(completions_handler)),
+            ("/v1/completions", post(completions_handler)),
+            ("/openai/v1/responses", post(responses_handler)),
+            ("/v1/responses", post(responses_handler)),
+            ("/openai/v1/rerank", post(rerank_handler)),
+            ("/v1/rerank", post(rerank_handler)),
+            ("/openai/v1/reranks", post(rerank_handler)),
+            ("/v1/reranks", post(rerank_handler)),
+            ("/openai/v1/messages", post(messages_handler)),
+            ("/v1/messages", post(messages_handler)),
+            ("/anthropic/v1/messages", post(messages_handler)),
         ],
     }
 }
@@ -59,5 +85,36 @@ impl RouterExt for Router<SwappableAppStateData> {
             self = self.route(path, handler);
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_openai_compatible_routes_include_v1_aliases() {
+        let paths: Vec<_> = super::build_openai_compatible_routes()
+            .routes
+            .iter()
+            .map(|(path, _)| *path)
+            .collect();
+        for path in [
+            "/openai/v1/chat/completions",
+            "/v1/chat/completions",
+            "/openai/v1/embeddings",
+            "/v1/embeddings",
+            "/openai/v1/completions",
+            "/v1/completions",
+            "/openai/v1/responses",
+            "/v1/responses",
+            "/openai/v1/rerank",
+            "/v1/rerank",
+            "/openai/v1/reranks",
+            "/v1/reranks",
+            "/openai/v1/messages",
+            "/v1/messages",
+            "/anthropic/v1/messages",
+        ] {
+            assert!(paths.contains(&path), "missing route {path}");
+        }
     }
 }

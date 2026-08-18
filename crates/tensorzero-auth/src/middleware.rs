@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::sync::Arc;
 
 use axum::{
@@ -45,9 +46,20 @@ fn build_error_response_body(
 }
 
 fn is_openai_compatible_route(matched_path: Option<&MatchedPath>, base_path: Option<&str>) -> bool {
-    matched_path.is_some_and(|p| match base_path {
-        Some(base) => p.as_str().starts_with(&format!("{base}/openai/v1")),
-        None => p.as_str().starts_with("/openai/v1"),
+    matched_path.is_some_and(|p| {
+        let path = p.as_str();
+        match base_path {
+            Some(base) => {
+                path.starts_with(&format!("{base}/openai/v1"))
+                    || path.starts_with(&format!("{base}/v1"))
+                    || path.starts_with(&format!("{base}/anthropic/v1"))
+            }
+            None => {
+                path.starts_with("/openai/v1")
+                    || path.starts_with("/v1")
+                    || path.starts_with("/anthropic/v1")
+            }
+        }
     })
 }
 
@@ -107,7 +119,11 @@ pub async fn tensorzero_auth_middleware(
     // of our `tensorzero_auth` OpenTelemetry span.
     let do_auth = async {
         let raw_api_key = extract_raw_api_key(headers, state.auth_header.as_ref())?;
-        let parsed_key = TensorZeroApiKey::parse(raw_api_key)?;
+        let parsed_key = if TensorZeroApiKey::is_synapse_key(raw_api_key) {
+            TensorZeroApiKey::from_synapse_plaintext(raw_api_key)
+        } else {
+            TensorZeroApiKey::parse(raw_api_key)?
+        };
 
         // Record the public ID immediately, in case we fail to look up the key in the database/cache
         let span = tracing::Span::current();
@@ -159,7 +175,11 @@ pub async fn tensorzero_auth_middleware(
         }
 
         // Cache miss or no cache - query database
-        let postgres_key = crate::postgres::check_key(&parsed_key, pool).await?;
+        let postgres_key = if TensorZeroApiKey::is_synapse_key(raw_api_key) {
+            crate::postgres::check_synapse_key(raw_api_key, pool).await?
+        } else {
+            crate::postgres::check_key(&parsed_key, pool).await?
+        };
 
         // Store result in cache if available
         if let Some(cache) = &state.auth_cache {
@@ -227,30 +247,40 @@ fn extract_raw_api_key<'a>(
     auth_header: Option<&HeaderName>,
 ) -> Result<&'a str, TensorZeroAuthError> {
     let header_name = auth_header.unwrap_or(&http::header::AUTHORIZATION);
-    let Some(auth_header) = headers.get(header_name) else {
-        return Err(TensorZeroAuthError::Middleware {
-            message: format!("{header_name} header is required"),
-            key_info: None,
-        });
-    };
-    let auth_header_value = auth_header
-        .to_str()
-        .map_err(|e| TensorZeroAuthError::Middleware {
-            message: format!("Invalid {header_name} header: {e}"),
-            key_info: None,
-        })?;
-    if header_name == http::header::AUTHORIZATION
-        || header_name == http::header::PROXY_AUTHORIZATION
-    {
-        auth_header_value
-            .strip_prefix("Bearer ")
-            .ok_or_else(|| TensorZeroAuthError::Middleware {
-                message: format!("{header_name} header must start with 'Bearer '"),
-                key_info: None,
-            })
-    } else {
-        Ok(auth_header_value)
+    if let Some(auth_header_value) = headers.get(header_name) {
+        let auth_header_value =
+            auth_header_value
+                .to_str()
+                .map_err(|e| TensorZeroAuthError::Middleware {
+                    message: format!("Invalid {header_name} header: {e}"),
+                    key_info: None,
+                })?;
+        if header_name == http::header::AUTHORIZATION
+            || header_name == http::header::PROXY_AUTHORIZATION
+        {
+            return auth_header_value.strip_prefix("Bearer ").ok_or_else(|| {
+                TensorZeroAuthError::Middleware {
+                    message: format!("{header_name} header must start with 'Bearer '"),
+                    key_info: None,
+                }
+            });
+        }
+        return Ok(auth_header_value);
     }
+    if auth_header.is_none()
+        && let Some(api_key) = headers.get("x-api-key")
+    {
+        return api_key
+            .to_str()
+            .map_err(|e| TensorZeroAuthError::Middleware {
+                message: format!("Invalid x-api-key header: {e}"),
+                key_info: None,
+            });
+    }
+    Err(TensorZeroAuthError::Middleware {
+        message: format!("{header_name} header is required"),
+        key_info: None,
+    })
 }
 
 // Our auth middleware stores this in the request extensions when auth is enabled,
@@ -327,5 +357,12 @@ mod tests {
         let headers = HeaderMap::new();
         let err = extract_raw_api_key(&headers, Some(&custom)).expect_err("should fail");
         assert_that!(err.to_string(), contains_substring("x-api-key"));
+    }
+
+    #[gtest]
+    fn default_auth_falls_back_to_x_api_key() {
+        let headers = headers_with(HeaderName::from_static("x-api-key"), "sk-syn-v1-key");
+        let result = extract_raw_api_key(&headers, None).expect("should succeed");
+        assert_that!(result, eq("sk-syn-v1-key"));
     }
 }

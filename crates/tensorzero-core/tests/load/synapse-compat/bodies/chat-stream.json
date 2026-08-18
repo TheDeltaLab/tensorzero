@@ -1,0 +1,5 @@
+{
+  "model": "dummy::good",
+  "messages": [{ "role": "user", "content": "Hello" }],
+  "stream": true
+}

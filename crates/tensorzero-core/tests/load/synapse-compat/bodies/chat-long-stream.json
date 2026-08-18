@@ -1,0 +1,5 @@
+{
+  "model": "dummy::load_40k_think",
+  "messages": [{ "role": "user", "content": "Hello" }],
+  "stream": true
+}
