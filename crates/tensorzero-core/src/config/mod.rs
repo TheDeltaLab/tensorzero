@@ -2292,7 +2292,9 @@ pub struct UninitializedModelAliasTarget {
     pub model: String,
 }
 
-/// TOML representation: `[model_aliases.<name>]`
+/// TOML representation: `[model_aliases.<name>]`.
+/// Names containing `.` must be quoted (`[model_aliases."glm-5.1"]`);
+/// otherwise TOML treats the dots as nested tables.
 #[serde_with::skip_serializing_none]
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -3381,6 +3383,36 @@ mod round_trip_tests {
         expect_that!(stored.strict, eq(true));
         expect_that!(stored.parameters.file_path, eq(&file_path));
         expect_that!(stored.parameters.file_version_id, eq(template_id));
+    }
+
+    #[gtest]
+    fn test_model_alias_dotted_name_requires_quoted_toml_key() {
+        let unquoted = r#"
+[model_aliases.glm-5.1]
+task = "chat"
+targets = [{ provider = "alibaba", model = "glm-5.1" }]
+"#;
+        let err = toml::from_str::<UninitializedConfig>(unquoted)
+            .expect_err("unquoted dotted alias names must fail because TOML nests on `.`");
+        expect_that!(err.to_string(), contains_substring("unknown field `1`"));
+
+        let quoted = r#"
+[model_aliases."glm-5.1"]
+task = "chat"
+targets = [{ provider = "alibaba", model = "glm-5.1" }]
+"#;
+        let config: UninitializedConfig =
+            toml::from_str(quoted).expect("quoted dotted alias names should deserialize");
+        let alias = config
+            .model_aliases
+            .as_ref()
+            .expect("model_aliases should be present")
+            .get("glm-5.1")
+            .expect("alias glm-5.1 should be present");
+        expect_that!(alias.task.as_deref(), some(eq("chat")));
+        expect_that!(alias.targets.len(), eq(1));
+        expect_that!(alias.targets[0].provider.as_str(), eq("alibaba"));
+        expect_that!(alias.targets[0].model.as_str(), eq("glm-5.1"));
     }
 
     #[gtest]
