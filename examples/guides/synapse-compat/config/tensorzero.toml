@@ -38,14 +38,16 @@ targets = [
     { provider = "alibaba", model = "qwen3-rerank" },
 ]
 
-[model_aliases.glm-5.1]
+# Dotted alias names must be quoted. Unquoted `[model_aliases.glm-5.1]`
+# is nested table `glm-5` + field `1`.
+[model_aliases."glm-5.1"]
 task = "chat"
 targets = [{ provider = "alibaba", model = "glm-5.1" }]
 
-[model_aliases.glm-5.2]
+[model_aliases."glm-5.2"]
 task = "chat"
 targets = [{ provider = "alibaba", model = "glm-5.2" }]
 
-[model_aliases.kimi-k2.6]
+[model_aliases."kimi-k2.6"]
 task = "chat"
 targets = [{ provider = "alibaba", model = "kimi-k2.6" }]
