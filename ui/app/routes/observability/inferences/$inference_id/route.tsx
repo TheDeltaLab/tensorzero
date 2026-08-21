@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { useEffect, useState, useCallback } from "react";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import { getConfigForSnapshot } from "~/utils/config/index.server";
@@ -23,9 +24,11 @@ import { AlertTriangle } from "lucide-react";
 import { useToast } from "~/hooks/use-toast";
 import { ChatOutputElement } from "~/components/input_output/ChatOutputElement";
 import { JsonOutputElement } from "~/components/input_output/JsonOutputElement";
+import { StandaloneOutputElement } from "~/components/inference/StandaloneInferencePanels";
 import { ParameterCard } from "./ParameterCard";
 import { ToolParametersSection } from "~/components/inference/ToolParametersSection";
-import { TagsTable } from "~/components/tags/TagsTable";
+import { InferenceMetadataSections } from "~/components/inference/InferenceMetadataSections";
+import { UsageDetailsSection } from "~/components/inference/UsageDetails";
 import {
   fetchModelInferences,
   fetchUsedVariants,
@@ -38,6 +41,11 @@ import { InferenceActionBar } from "./InferenceActionBar";
 import { InputSection } from "./InputSection";
 import { FeedbackSection } from "./FeedbackSection";
 import { ModelInferencesSection } from "./ModelInferencesSection";
+import {
+  inferenceKindFromStored,
+  isStandaloneInferenceKind,
+  variantTypeForKind,
+} from "~/utils/observability/standaloneInference";
 
 export const handle: RouteHandle = {
   crumb: (match) => [{ label: match.params.inference_id!, isIdentifier: true }],
@@ -85,16 +93,17 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   }
 
   const inference = inferences.inferences[0];
+  const kind = inferenceKindFromStored(inference);
 
   const snapshotConfig = await getConfigForSnapshot(inference.snapshot_hash);
 
   const snapshotFunctionConfig =
     snapshotConfig.functions[inference.function_name];
-  const variantType =
-    snapshotFunctionConfig?.variants[inference.variant_name]?.inner.type ??
-    (inference.function_name === "tensorzero::default"
-      ? "chat_completion"
-      : "unknown");
+  const variantType = variantTypeForKind(
+    kind,
+    inference.function_name,
+    snapshotFunctionConfig?.variants[inference.variant_name]?.inner.type,
+  );
 
   return {
     inference,
@@ -124,6 +133,8 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
     input,
     feedbackData,
   } = loaderData;
+  const kind = inferenceKindFromStored(inference);
+  const standalone = isStandaloneInferenceKind(kind);
   const location = useLocation();
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -193,11 +204,19 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
       </PageHeader>
 
       <SectionsGroup>
-        <InputSection promise={input} locationKey={location.key} />
+        <UsageDetailsSection
+          inference={inference}
+          promise={modelInferences}
+          locationKey={location.key}
+        />
+
+        <InputSection promise={input} locationKey={location.key} kind={kind} />
 
         <SectionLayout>
           <SectionHeader heading="Output" />
-          {inference.type === "json" ? (
+          {standalone ? (
+            <StandaloneOutputElement kind={kind} inference={inference} />
+          ) : inference.type === "json" ? (
             <JsonOutputElement
               output={inference.output}
               outputSchema={inference.output_schema}
@@ -214,20 +233,22 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
           onCountUpdate={setFeedbackCount}
         />
 
-        <SectionLayout>
-          <SectionHeader heading="Inference Parameters" />
-          {inference.inference_params ? (
-            <ParameterCard
-              parameters={JSON.stringify(inference.inference_params, null, 2)}
-            />
-          ) : (
-            <div className="text-fg-muted flex items-center justify-center py-12 text-sm">
-              Parameters missing
-            </div>
-          )}
-        </SectionLayout>
+        {!standalone && (
+          <SectionLayout>
+            <SectionHeader heading="Inference Parameters" />
+            {inference.inference_params ? (
+              <ParameterCard
+                parameters={JSON.stringify(inference.inference_params, null, 2)}
+              />
+            ) : (
+              <div className="text-fg-muted flex items-center justify-center py-12 text-sm">
+                Parameters missing
+              </div>
+            )}
+          </SectionLayout>
+        )}
 
-        {inference.type === "chat" && (
+        {inference.type === "chat" && !standalone && (
           <SectionLayout>
             <SectionHeader heading="Tool Parameters" />
             <ToolParametersSection
@@ -240,17 +261,7 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
           </SectionLayout>
         )}
 
-        <SectionLayout>
-          <SectionHeader heading="Tags" />
-          <TagsTable
-            tags={Object.fromEntries(
-              Object.entries(inference.tags).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined,
-              ),
-            )}
-            isEditing={false}
-          />
-        </SectionLayout>
+        <InferenceMetadataSections tags={inference.tags} />
 
         <ModelInferencesSection
           promise={modelInferences}

@@ -3,9 +3,11 @@
 //!
 //! Callers that previously hit Synapse send bare model names, `x-synapse-*`
 //! request headers, and expect `x-synapse-served-by` / `x-synapse-request-id`
-//! on the response. TensorZero applies that contract here so existing Synapse
-//! clients can keep their current request shape.
+//! on the response. TensorZero also accepts the canonical `x-tensorzero-*`
+//! names (preferred when both are set) and returns both prefixes so Trinity /
+//! Lovelace / Cortex keep working while new callers can use TensorZero headers.
 
+use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::http::{HeaderMap, HeaderName, HeaderValue};
@@ -19,6 +21,15 @@ use crate::endpoints::openai_compatible::stream_aggregator::{
 };
 use crate::error::{Error, ErrorDetails, TimeoutKind};
 use crate::http::scope_request_timeout;
+use crate::observability_tags::{
+    HEADER_TAG_PREFIX, REQUEST_HEADERS_TAG, SYNAPSE_REQUEST_ID_TAG, inbound_request_headers,
+    is_valid_request_id,
+};
+
+pub use crate::observability_tags::{
+    TENSORZERO_EPISODE_ID_HEADER, TENSORZERO_EPISODES_ID_HEADER, TENSORZERO_TAGS_HEADER,
+    overlay_compat_headers,
+};
 
 pub const SYNAPSE_PROVIDER_HEADER: &str = "x-synapse-provider";
 pub const SYNAPSE_FALLBACK_HEADER: &str = "x-synapse-fallback";
@@ -29,6 +40,15 @@ pub const SYNAPSE_CACHE_HEADER: &str = "x-synapse-cache";
 pub const SYNAPSE_STREAM_AGGREGATE_HEADER: &str = "x-synapse-stream-aggregate";
 pub const SYNAPSE_REQUEST_PROFILE_HEADER: &str = "x-synapse-request-profile";
 pub const SYNAPSE_RESPONSE_STYLE_HEADER: &str = "x-synapse-response-style";
+pub const TENSORZERO_PROVIDER_HEADER: &str = "x-tensorzero-provider";
+pub const TENSORZERO_FALLBACK_HEADER: &str = "x-tensorzero-fallback";
+pub const TENSORZERO_REQUEST_ID_HEADER: &str = "x-tensorzero-request-id";
+pub const TENSORZERO_SERVED_BY_HEADER: &str = "x-tensorzero-served-by";
+pub const TENSORZERO_FALLBACK_COUNT_HEADER: &str = "x-tensorzero-fallback-count";
+pub const TENSORZERO_CACHE_HEADER: &str = "x-tensorzero-cache";
+pub const TENSORZERO_STREAM_AGGREGATE_HEADER: &str = "x-tensorzero-stream-aggregate";
+pub const TENSORZERO_REQUEST_PROFILE_HEADER: &str = "x-tensorzero-request-profile";
+pub const TENSORZERO_RESPONSE_STYLE_HEADER: &str = "x-tensorzero-response-style";
 const X_REQUEST_ID_HEADER: &str = "x-request-id";
 const LONG_AUDIO_EVAL_PROFILE: &str = "long-audio-eval";
 pub const LONG_AUDIO_EVAL_TIMEOUT: Duration = Duration::from_secs(25 * 60);
@@ -36,28 +56,34 @@ pub const LONG_AUDIO_EVAL_TIMEOUT: Duration = Duration::from_secs(25 * 60);
 static SYNAPSE_REQUEST_ID: HeaderName = HeaderName::from_static("x-synapse-request-id");
 static SYNAPSE_SERVED_BY: HeaderName = HeaderName::from_static("x-synapse-served-by");
 static SYNAPSE_FALLBACK_COUNT: HeaderName = HeaderName::from_static("x-synapse-fallback-count");
-
-const MAX_REQUEST_ID_LEN: usize = 200;
+static TENSORZERO_REQUEST_ID: HeaderName = HeaderName::from_static("x-tensorzero-request-id");
+static TENSORZERO_SERVED_BY: HeaderName = HeaderName::from_static("x-tensorzero-served-by");
+static TENSORZERO_FALLBACK_COUNT: HeaderName =
+    HeaderName::from_static("x-tensorzero-fallback-count");
 
 /// Request-scoped Synapse compatibility state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SynapseRequestContext {
     pub request_id: String,
     pub provider: Option<String>,
-    /// `x-synapse-fallback: false` disables alias / routing fallback for this
-    /// request (head candidate only). Pinning via `x-synapse-provider` already
-    /// selects a single shorthand, which is then rotated to the front of any
-    /// matching alias chain unless fallback is disabled.
+    /// `x-tensorzero-fallback` / `x-synapse-fallback: false` disables alias /
+    /// routing fallback for this request (head candidate only). Pinning via
+    /// `x-tensorzero-provider` / `x-synapse-provider` already selects a single
+    /// shorthand, which is then rotated to the front of any matching alias
+    /// chain unless fallback is disabled.
     pub fallback_disabled: bool,
     pub served_by: Option<String>,
     pub fallback_count: u32,
-    /// `x-synapse-cache: false` skips cache read and write.
+    /// `x-tensorzero-cache` / `x-synapse-cache: false` skips cache read and write.
     pub cache_disabled: bool,
-    /// Parsed `x-synapse-stream-aggregate` rules. `None` means pass through.
+    /// Parsed `x-tensorzero-stream-aggregate` / `x-synapse-stream-aggregate`
+    /// rules. `None` means pass through.
     pub stream_aggregate: Option<Vec<StreamAggregateRule>>,
-    /// Per-request upstream timeout from `x-synapse-request-profile`.
+    /// Per-request upstream timeout from `x-tensorzero-request-profile` /
+    /// `x-synapse-request-profile`.
     pub request_timeout: Option<Duration>,
-    /// `x-synapse-response-style: anthropic` on an OpenAI path.
+    /// `x-tensorzero-response-style` / `x-synapse-response-style: anthropic`
+    /// on an OpenAI path.
     pub response_style_anthropic: bool,
 }
 
@@ -77,21 +103,33 @@ impl SynapseRequestContext {
     }
 
     pub fn try_from_headers(headers: &HeaderMap) -> Result<Self, Error> {
-        let provider = header_str(headers, SYNAPSE_PROVIDER_HEADER)
+        let provider = compat_header(headers, TENSORZERO_PROVIDER_HEADER, SYNAPSE_PROVIDER_HEADER)
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned);
-        let fallback_disabled = header_str(headers, SYNAPSE_FALLBACK_HEADER)
-            .is_some_and(|value| value.eq_ignore_ascii_case("false"));
-        let cache_disabled = header_str(headers, SYNAPSE_CACHE_HEADER)
-            .is_some_and(|value| value.eq_ignore_ascii_case("false"));
-        let response_style_anthropic = header_str(headers, SYNAPSE_RESPONSE_STYLE_HEADER)
-            .is_some_and(|value| value.eq_ignore_ascii_case("anthropic"));
-        let stream_aggregate = match header_str(headers, SYNAPSE_STREAM_AGGREGATE_HEADER) {
+        let fallback_disabled =
+            header_is_false(headers, TENSORZERO_FALLBACK_HEADER, SYNAPSE_FALLBACK_HEADER);
+        let cache_disabled =
+            header_is_false(headers, TENSORZERO_CACHE_HEADER, SYNAPSE_CACHE_HEADER);
+        let response_style_anthropic = compat_header(
+            headers,
+            TENSORZERO_RESPONSE_STYLE_HEADER,
+            SYNAPSE_RESPONSE_STYLE_HEADER,
+        )
+        .is_some_and(|value| value.eq_ignore_ascii_case("anthropic"));
+        let stream_aggregate = match compat_header(
+            headers,
+            TENSORZERO_STREAM_AGGREGATE_HEADER,
+            SYNAPSE_STREAM_AGGREGATE_HEADER,
+        ) {
             Some(raw) if !raw.trim().is_empty() => Some(parse_stream_aggregate_header(raw)?),
             _ => None,
         };
-        let request_timeout = match header_str(headers, SYNAPSE_REQUEST_PROFILE_HEADER) {
+        let request_timeout = match compat_header(
+            headers,
+            TENSORZERO_REQUEST_PROFILE_HEADER,
+            SYNAPSE_REQUEST_PROFILE_HEADER,
+        ) {
             Some(raw) if !raw.trim().is_empty() => Some(parse_request_profile(raw)?),
             _ => None,
         };
@@ -120,18 +158,53 @@ impl SynapseRequestContext {
 
     pub fn apply_to_response(&self, response: &mut Response) {
         insert_header(response, &SYNAPSE_REQUEST_ID, &self.request_id);
+        insert_header(response, &TENSORZERO_REQUEST_ID, &self.request_id);
         if let Some(served_by) = &self.served_by {
             insert_header(response, &SYNAPSE_SERVED_BY, served_by);
+            insert_header(response, &TENSORZERO_SERVED_BY, served_by);
         }
-        insert_header(
-            response,
-            &SYNAPSE_FALLBACK_COUNT,
-            &self.fallback_count.to_string(),
-        );
+        let fallback_count = self.fallback_count.to_string();
+        insert_header(response, &SYNAPSE_FALLBACK_COUNT, &fallback_count);
+        insert_header(response, &TENSORZERO_FALLBACK_COUNT, &fallback_count);
+    }
+
+    /// Tags written onto the inference row so logs can be queried by request
+    /// id / provider / inbound Synapse headers (not Authorization).
+    pub fn observability_tags(&self, headers: &HeaderMap) -> HashMap<String, String> {
+        let mut tags = HashMap::new();
+        tags.insert(SYNAPSE_REQUEST_ID_TAG.to_string(), self.request_id.clone());
+        if let Some(provider) = &self.provider {
+            tags.insert(
+                crate::observability_tags::PROVIDER_TAG.to_string(),
+                provider.clone(),
+            );
+        }
+        if let Some(served_by) = &self.served_by {
+            tags.insert(
+                crate::observability_tags::SERVED_BY_TAG.to_string(),
+                served_by.clone(),
+            );
+        }
+        let request_headers = inbound_request_headers(headers);
+        for (name, value) in &request_headers {
+            tags.insert(format!("{HEADER_TAG_PREFIX}{name}"), value.clone());
+        }
+        if !request_headers.is_empty()
+            && let Ok(json) = serde_json::to_string(&request_headers)
+        {
+            tags.insert(REQUEST_HEADERS_TAG.to_string(), json);
+        }
+        crate::observability_tags::insert_api_key_public_id_from_headers(&mut tags, headers);
+        tags
     }
 }
 
-/// Apply `x-synapse-provider` to a (possibly bare) model name.
+/// Overlay episode id and user tags from request headers. Body fields win.
+pub fn apply_compat_to_params(headers: &HeaderMap, params: &mut Params) -> Result<(), Error> {
+    overlay_compat_headers(headers, &mut params.episode_id, &mut params.tags)
+}
+
+/// Apply `x-tensorzero-provider` / `x-synapse-provider` to a (possibly bare) model name.
 ///
 /// A provider header rewrites `gpt-4o` into `openai::gpt-4o`. If a matching
 /// alias contains that `(provider, model)` pair, lookup rotates it to the
@@ -177,7 +250,9 @@ pub fn parse_request_profile(raw: &str) -> Result<Duration, Error> {
         return Ok(LONG_AUDIO_EVAL_TIMEOUT);
     }
     Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-        message: format!("Unsupported x-synapse-request-profile: {profile}"),
+        message: format!(
+            "Unsupported request profile `{profile}` (`x-tensorzero-request-profile` / `x-synapse-request-profile`)"
+        ),
     }))
 }
 
@@ -212,17 +287,24 @@ pub fn served_by_from_model_name(model_name: &str) -> String {
 }
 
 fn inbound_request_id(headers: &HeaderMap) -> Option<String> {
-    header_str(headers, SYNAPSE_REQUEST_ID_HEADER)
-        .or_else(|| header_str(headers, X_REQUEST_ID_HEADER))
-        .filter(|value| is_valid_request_id(value))
-        .map(ToOwned::to_owned)
+    compat_header(
+        headers,
+        TENSORZERO_REQUEST_ID_HEADER,
+        SYNAPSE_REQUEST_ID_HEADER,
+    )
+    .or_else(|| header_str(headers, X_REQUEST_ID_HEADER))
+    .filter(|value| is_valid_request_id(value))
+    .map(ToOwned::to_owned)
 }
 
-fn is_valid_request_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_REQUEST_ID_LEN
-        && value.is_ascii()
-        && !value.bytes().any(|byte| byte < 0x20 || byte == 0x7f)
+/// Prefer `x-tensorzero-*` when both prefixes are present.
+fn compat_header<'a>(headers: &'a HeaderMap, tensorzero: &str, synapse: &str) -> Option<&'a str> {
+    header_str(headers, tensorzero).or_else(|| header_str(headers, synapse))
+}
+
+fn header_is_false(headers: &HeaderMap, tensorzero: &str, synapse: &str) -> bool {
+    compat_header(headers, tensorzero, synapse)
+        .is_some_and(|value| value.eq_ignore_ascii_case("false"))
 }
 
 fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
@@ -326,5 +408,69 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(SYNAPSE_STREAM_AGGREGATE_HEADER, "[]".parse().unwrap());
         assert!(SynapseRequestContext::try_from_headers(&headers).is_err());
+    }
+
+    #[gtest]
+    fn observability_tags_capture_request_id_and_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert(SYNAPSE_REQUEST_ID_HEADER, "caller-trace-1".parse().unwrap());
+        headers.insert(SYNAPSE_PROVIDER_HEADER, "volcengine".parse().unwrap());
+        headers.insert("authorization", "Bearer secret".parse().unwrap());
+        let ctx = SynapseRequestContext::from_headers(&headers);
+        let tags = ctx.observability_tags(&headers);
+        expect_that!(
+            tags.get(SYNAPSE_REQUEST_ID_TAG).map(String::as_str),
+            eq(Some("caller-trace-1"))
+        );
+        expect_that!(
+            tags.get(crate::observability_tags::PROVIDER_TAG)
+                .map(String::as_str),
+            eq(Some("volcengine"))
+        );
+        expect_that!(
+            tags.get("tensorzero::header::x-tensorzero-request-id")
+                .map(String::as_str),
+            eq(Some("caller-trace-1"))
+        );
+        expect_that!(
+            tags.values().any(|value| value.contains("secret")),
+            eq(false)
+        );
+    }
+
+    #[test]
+    fn tensorzero_headers_win_over_synapse() {
+        let mut headers = HeaderMap::new();
+        headers.insert(TENSORZERO_PROVIDER_HEADER, "openai".parse().unwrap());
+        headers.insert(SYNAPSE_PROVIDER_HEADER, "deepseek".parse().unwrap());
+        headers.insert(TENSORZERO_CACHE_HEADER, "true".parse().unwrap());
+        headers.insert(SYNAPSE_CACHE_HEADER, "false".parse().unwrap());
+        headers.insert(TENSORZERO_REQUEST_ID_HEADER, "tz-id".parse().unwrap());
+        headers.insert(SYNAPSE_REQUEST_ID_HEADER, "syn-id".parse().unwrap());
+        let ctx = SynapseRequestContext::from_headers(&headers);
+        assert_eq!(ctx.provider.as_deref(), Some("openai"));
+        assert!(!ctx.cache_disabled);
+        assert_eq!(ctx.request_id, "tz-id");
+    }
+
+    #[test]
+    fn overlay_episode_and_tags_from_headers() {
+        let episode = Uuid::now_v7();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            TENSORZERO_EPISODES_ID_HEADER,
+            episode.to_string().parse().unwrap(),
+        );
+        headers.insert(
+            TENSORZERO_TAGS_HEADER,
+            "env=prod,team=ml,canary".parse().unwrap(),
+        );
+        let mut episode_id = None;
+        let mut tags = HashMap::from([("env".to_string(), "staging".to_string())]);
+        overlay_compat_headers(&headers, &mut episode_id, &mut tags).unwrap();
+        assert_eq!(episode_id, Some(episode));
+        assert_eq!(tags.get("env").map(String::as_str), Some("staging"));
+        assert_eq!(tags.get("team").map(String::as_str), Some("ml"));
+        assert_eq!(tags.get("canary").map(String::as_str), Some("true"));
     }
 }

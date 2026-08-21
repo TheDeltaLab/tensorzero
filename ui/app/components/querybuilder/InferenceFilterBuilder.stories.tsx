@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import InferenceFilterBuilder from "./InferenceFilterBuilder";
 import { ConfigProvider } from "~/context/config";
@@ -103,6 +104,10 @@ const mockConfig: UiConfig = {
   tools: {},
   evaluations: {},
   model_names: [],
+  embedding_model_names: [],
+  model_providers: {},
+  embedding_model_providers: {},
+  model_aliases: [],
   config_hash: "test-config-hash",
   config_in_database: false,
   auth_enabled: false,

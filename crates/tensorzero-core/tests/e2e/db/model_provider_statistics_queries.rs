@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for model provider statistics queries (ClickHouse and Postgres).
 //!
 //! Tests verify model usage timeseries and latency quantile operations work correctly with both backends.
@@ -772,6 +773,7 @@ fn make_cost_test_inferences(model_name: &str) -> Vec<StoredModelInference> {
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(500, 6)), // 0.000500
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -796,6 +798,7 @@ fn make_cost_test_inferences(model_name: &str) -> Vec<StoredModelInference> {
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(1500, 6)), // 0.001500
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -820,6 +823,7 @@ fn make_cost_test_inferences(model_name: &str) -> Vec<StoredModelInference> {
             ttft_ms: None,
             cached: false,
             cost: None, // NULL cost — should be excluded from SUM
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -870,6 +874,7 @@ fn make_cross_minute_cost_test_inferences(model_name: &str) -> Vec<StoredModelIn
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(500, 6)), // 0.000500
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -895,6 +900,7 @@ fn make_cross_minute_cost_test_inferences(model_name: &str) -> Vec<StoredModelIn
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(1500, 6)), // 0.001500
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -920,6 +926,7 @@ fn make_cross_minute_cost_test_inferences(model_name: &str) -> Vec<StoredModelIn
             ttft_ms: None,
             cached: false,
             cost: None,
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,

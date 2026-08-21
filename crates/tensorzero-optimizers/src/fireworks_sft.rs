@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Fireworks SFT implementation. The overall flow is:
 //! 1. `FireworksSFTConfig.launch` creates and uploads training/validation datasets to Fireworks
 //! 2. We kick off a SFT job in Fireworks, and produce a `FireworksSFTJobHandle` with the job ID
@@ -313,6 +314,8 @@ impl JobHandle for FireworksSFTJobHandle {
                             discard_unknown_chunks: false,
                             cost: None,
                             batch_cost: None,
+                            timezone: None,
+                            currency: None,
                         },
                     )]),
                     timeouts: TimeoutsConfig::default(),

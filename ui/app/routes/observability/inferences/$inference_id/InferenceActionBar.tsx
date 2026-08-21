@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { Suspense, useMemo } from "react";
 import { Await } from "react-router";
 import type { StoredInference, Input } from "~/types/tensorzero";
@@ -13,6 +14,10 @@ import { CopyMessagesButton } from "~/components/inference/CopyMessagesButton";
 import { TryWithVariantAction } from "./TryWithVariantAction";
 import { HumanFeedbackAction } from "./HumanFeedbackAction";
 import type { ModelInferencesData } from "./inference-data.server";
+import {
+  inferenceKindFromStored,
+  isStandaloneInferenceKind,
+} from "~/utils/observability/standaloneInference";
 
 interface InferenceActionBarProps {
   inference: StoredInference;
@@ -33,21 +38,28 @@ export function InferenceActionBar({
   onFeedbackAdded,
   locationKey,
 }: InferenceActionBarProps) {
+  const standalone = isStandaloneInferenceKind(
+    inferenceKindFromStored(inference),
+  );
   return (
     <ActionBar>
-      <TryWithVariantActionStreaming
-        key={`try-${locationKey}`}
-        inference={inference}
-        usedVariantsPromise={usedVariantsPromise}
-        inputPromise={inputPromise}
-        modelInferencesPromise={modelInferencesPromise}
-        onFeedbackAdded={onFeedbackAdded}
-      />
-      <AddToDatasetButtonStreaming
-        key={`dataset-${locationKey}`}
-        inference={inference}
-        hasDemonstrationPromise={hasDemonstrationPromise}
-      />
+      {!standalone && (
+        <TryWithVariantActionStreaming
+          key={`try-${locationKey}`}
+          inference={inference}
+          usedVariantsPromise={usedVariantsPromise}
+          inputPromise={inputPromise}
+          modelInferencesPromise={modelInferencesPromise}
+          onFeedbackAdded={onFeedbackAdded}
+        />
+      )}
+      {!standalone && (
+        <AddToDatasetButtonStreaming
+          key={`dataset-${locationKey}`}
+          inference={inference}
+          hasDemonstrationPromise={hasDemonstrationPromise}
+        />
+      )}
       <HumanFeedbackAction
         key={`human-${locationKey}`}
         inference={inference}
@@ -56,12 +68,13 @@ export function InferenceActionBar({
       <AskAutopilotButton
         message={`Inference ID: ${inference.inference_id}\n\n`}
       />
-      {/* Keep at end of row — conditionally hidden, so trailing position avoids jitter */}
-      <CopyMessagesButtonStreaming
-        key={`copy-${locationKey}`}
-        inference={inference}
-        inputPromise={inputPromise}
-      />
+      {!standalone && (
+        <CopyMessagesButtonStreaming
+          key={`copy-${locationKey}`}
+          inference={inference}
+          inputPromise={inputPromise}
+        />
+      )}
     </ActionBar>
   );
 }

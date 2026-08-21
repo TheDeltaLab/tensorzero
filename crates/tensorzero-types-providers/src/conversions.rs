@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! `From` implementations converting provider-specific types into TensorZero core types.
 
 use tensorzero_types::{FinishReason, Usage};
@@ -64,6 +65,7 @@ impl From<XAIUsage> for Usage {
                 .and_then(|d| d.cached_tokens),
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         }
     }
 }
@@ -76,6 +78,7 @@ impl From<DeepSeekUsage> for Usage {
             provider_cache_read_input_tokens: usage.prompt_cache_hit_tokens,
             provider_cache_write_input_tokens: usage.prompt_cache_miss_tokens,
             cost: None,
+            currency: None,
         }
     }
 }

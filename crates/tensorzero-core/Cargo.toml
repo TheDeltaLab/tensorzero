@@ -54,6 +54,7 @@ backon = { version = "1.6.0", features = ["tokio-sleep"] }
 blake3 = { workspace = true }
 bytes = "1.11.1"
 chrono = { workspace = true }
+chrono-tz = { workspace = true }
 derive_builder = { workspace = true }
 durable = { workspace = true }
 futures = { workspace = true }

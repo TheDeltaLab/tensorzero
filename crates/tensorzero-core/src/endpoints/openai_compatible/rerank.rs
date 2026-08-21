@@ -4,6 +4,9 @@
 //! Callers send `{ model, query, documents }` with `x-synapse-provider: alibaba`.
 //! DashScope's compatible-api path is `/v1/reranks` (note the trailing `s`).
 
+use std::collections::HashMap;
+use std::time::Instant;
+
 use axum::Json;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
@@ -12,8 +15,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::endpoints::standalone_inference::{
+    RERANK_ENDPOINT, StandaloneInferenceRecord, StandaloneInput, maybe_write_standalone_inference,
+    rerank_output_payload, usage_from_json,
+};
 use crate::error::{Error, ErrorDetails};
 use crate::http::TensorzeroHttpClient;
+use crate::inference::types::Latency;
 use crate::model::{SILICONFLOW_DEFAULT_API_ROOT, openai_compatible_shorthand_api_base};
 use crate::model_alias::ModelAliasTable;
 use crate::utils::gateway::{AppState, AppStateData};
@@ -21,8 +29,8 @@ use crate::utils::gateway::{AppState, AppStateData};
 use super::OpenAIStructuredJson;
 use super::infer::error_response;
 use super::synapse::{
-    SynapseRequestContext, resolve_openai_compatible_model, run_with_request_timeout,
-    served_by_from_model_name,
+    SynapseRequestContext, overlay_compat_headers, resolve_openai_compatible_model,
+    run_with_request_timeout, served_by_from_model_name,
 };
 
 /// DashScope rerank is on `compatible-api`, not the chat `compatible-mode` host.
@@ -74,6 +82,9 @@ pub async fn rerank_handler(
     State(AppStateData {
         http_client,
         config,
+        clickhouse_connection_info,
+        postgres_connection_info,
+        deferred_tasks,
         ..
     }): AppState,
     headers: HeaderMap,
@@ -104,18 +115,83 @@ pub async fn rerank_handler(
         Err(error) => return Ok(error_response(error, false, &synapse)),
     };
 
-    let response = match Box::pin(run_with_request_timeout(
-        synapse.request_timeout,
-        dispatch_rerank(&http_client, &model, &query, &documents, top_n, &params),
-    ))
-    .await
-    {
-        Ok(mut response) => {
-            synapse.apply_to_response(&mut response);
-            response
-        }
-        Err(error) => error_response(error, false, &synapse),
+    let (provider, upstream_model) = match split_provider_model(&model) {
+        Ok(parts) => parts,
+        Err(error) => return Ok(error_response(error, false, &synapse)),
     };
+    let provider_name = provider.to_string();
+    let upstream_name = upstream_model.to_string();
+    let raw_request = serde_json::to_string(&build_upstream_body(
+        upstream_model,
+        &query,
+        &documents,
+        top_n,
+        &params.extra,
+    ))
+    .unwrap_or_else(|_| "{}".to_string());
+    let start = Instant::now();
+    let dispatch_result = Box::pin(run_with_request_timeout(
+        synapse.request_timeout,
+        dispatch_rerank(
+            &http_client,
+            provider,
+            upstream_model,
+            &query,
+            &documents,
+            top_n,
+            &params.extra,
+        ),
+    ))
+    .await;
+    let latency = Latency::NonStreaming {
+        response_time: start.elapsed(),
+    };
+
+    let (status, body) = match dispatch_result {
+        Ok(result) => result,
+        Err(error) => return Ok(error_response(error, false, &synapse)),
+    };
+
+    if status.is_success() {
+        let mut episode_id = None;
+        let mut tags = HashMap::new();
+        if let Err(error) = overlay_compat_headers(&headers, &mut episode_id, &mut tags) {
+            return Ok(error_response(error, false, &synapse));
+        }
+        maybe_write_standalone_inference(
+            config,
+            clickhouse_connection_info,
+            postgres_connection_info,
+            deferred_tasks,
+            false,
+            StandaloneInferenceRecord {
+                endpoint: RERANK_ENDPOINT,
+                variant_name: model,
+                model_name: upstream_name,
+                model_provider_name: provider_name.clone(),
+                provider_type: provider_name,
+                input: StandaloneInput::Rerank { query, documents },
+                output_text: rerank_output_payload(&body),
+                raw_request,
+                raw_response: serde_json::to_string(&body).unwrap_or_else(|_| body.to_string()),
+                usage: usage_from_json(&body),
+                latency,
+                cached: false,
+                extra_internal_tags: synapse.observability_tags(&headers),
+                tags,
+                episode_id,
+            },
+        )
+        .await;
+    }
+
+    let mut response = (status, Json(body)).into_response();
+    if let Ok(value) = HeaderValue::from_str("application/json") {
+        response
+            .headers_mut()
+            .insert(axum::http::header::CONTENT_TYPE, value);
+    }
+    synapse.apply_to_response(&mut response);
     Ok(response)
 }
 
@@ -178,15 +254,15 @@ fn extract_rerank_args(
 
 async fn dispatch_rerank(
     http_client: &TensorzeroHttpClient,
-    model: &str,
+    provider: &str,
+    upstream_model: &str,
     query: &str,
     documents: &[String],
     top_n: Option<u32>,
-    params: &OpenAICompatibleRerankParams,
-) -> Result<Response, Error> {
-    let (provider, upstream_model) = split_provider_model(model)?;
+    extra: &serde_json::Map<String, Value>,
+) -> Result<(StatusCode, Value), Error> {
     if provider == "dummy" {
-        return Ok(dummy_rerank(upstream_model, documents, top_n));
+        return dummy_rerank(upstream_model, documents, top_n);
     }
 
     let (url, api_key_env) = rerank_upstream(provider)?;
@@ -197,7 +273,7 @@ async fn dispatch_rerank(
         })
     })?;
 
-    let body = build_upstream_body(upstream_model, query, documents, top_n, &params.extra);
+    let body = build_upstream_body(upstream_model, query, documents, top_n, extra);
 
     let request = http_client
         .post(url)
@@ -229,16 +305,10 @@ async fn dispatch_rerank(
         .unwrap_or_else(|_| json!({ "error": String::from_utf8_lossy(&bytes) }));
     unwrap_dashscope_results(&mut json);
 
-    let mut http = (
+    Ok((
         StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::BAD_GATEWAY),
-        Json(json),
-    )
-        .into_response();
-    if let Ok(value) = HeaderValue::from_str("application/json") {
-        http.headers_mut()
-            .insert(axum::http::header::CONTENT_TYPE, value);
-    }
-    Ok(http)
+        json,
+    ))
 }
 
 fn build_upstream_body(
@@ -338,17 +408,20 @@ fn unwrap_dashscope_results(json: &mut Value) {
     obj.insert("results".to_string(), nested);
 }
 
-fn dummy_rerank(model: &str, documents: &[String], top_n: Option<u32>) -> Response {
+fn dummy_rerank(
+    model: &str,
+    documents: &[String],
+    top_n: Option<u32>,
+) -> Result<(StatusCode, Value), Error> {
     if model.starts_with("error") {
-        return Error::new(ErrorDetails::InferenceClient {
+        return Err(Error::new(ErrorDetails::InferenceClient {
             message: format!("Error sending request to Dummy provider for model '{model}'."),
             status_code: Some(StatusCode::INTERNAL_SERVER_ERROR),
             provider_type: "dummy".to_string(),
             api_type: crate::inference::types::ApiType::ChatCompletions,
             raw_request: None,
             raw_response: None,
-        })
-        .into_response_with_raw_entries(true, false);
+        }));
     }
     let take = top_n
         .and_then(|n| usize::try_from(n).ok())
@@ -364,11 +437,13 @@ fn dummy_rerank(model: &str, documents: &[String], top_n: Option<u32>) -> Respon
             document: Some(CohereRerankDocument { text: text.clone() }),
         })
         .collect();
-    Json(json!({
-        "results": results,
-        "usage": { "total_tokens": 0 }
-    }))
-    .into_response()
+    Ok((
+        StatusCode::OK,
+        json!({
+            "results": results,
+            "usage": { "total_tokens": 0 }
+        }),
+    ))
 }
 
 #[cfg(test)]
@@ -413,8 +488,10 @@ mod tests {
 
     #[test]
     fn dummy_scores_preserve_index() {
-        let response = dummy_rerank("good", &["a".into(), "b".into()], Some(1));
-        assert_eq!(response.status(), StatusCode::OK);
+        let (status, body) = dummy_rerank("good", &["a".into(), "b".into()], Some(1)).unwrap();
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["results"].as_array().unwrap().len(), 1);
+        assert_eq!(body["results"][0]["index"], 0);
     }
 
     #[test]

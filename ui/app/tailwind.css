@@ -1,3 +1,4 @@
+/* Modified by Delta-AI under Apache 2.0 */
 @import "tailwindcss";
 
 @plugin 'tailwindcss-animate';
@@ -53,6 +54,8 @@
   --color-bg-hover: hsl(var(--background-hover));
   --color-bg-type-chat: hsl(var(--emerald-100));
   --color-bg-type-json: hsl(var(--blue-100));
+  --color-bg-type-embedding: hsl(var(--purple-100));
+  --color-bg-type-rerank: hsl(var(--orange-100));
 
   --color-foreground: hsl(var(--foreground-primary));
 
@@ -63,6 +66,8 @@
   --color-fg-muted: hsl(var(--foreground-muted));
   --color-fg-type-chat: hsl(var(--emerald-600));
   --color-fg-type-json: hsl(var(--blue-600));
+  --color-fg-type-embedding: hsl(var(--purple-600));
+  --color-fg-type-rerank: hsl(var(--orange-600));
 
   --color-card: hsl(var(--card));
   --color-card-foreground: hsl(var(--card-foreground));

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for evaluation queries (ClickHouse and Postgres).
 
 use std::collections::HashMap;
@@ -1704,6 +1705,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(15, 4)), // 0.0015
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
@@ -1729,6 +1731,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(25, 4)), // 0.0025
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
@@ -1754,6 +1757,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             ttft_ms: None,
             cached: false,
             cost: Some(Decimal::new(50, 4)), // 0.0050
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
@@ -1779,6 +1783,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             ttft_ms: None,
             cached: false,
             cost: None, // Missing cost
+            currency: None,
             finish_reason: None,
             snapshot_hash: None,
             provider_cache_read_input_tokens: None,
@@ -1951,6 +1956,7 @@ fn make_model_inference_for_eval(
         ttft_ms: None,
         cached: false,
         cost,
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         provider_cache_read_input_tokens: None,

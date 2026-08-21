@@ -23,6 +23,13 @@ See `NOTICE` for the overall attribution statement.
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.model_aliases.toml` — E2E alias failover fixtures (Delta-AI fork).
 - `examples/guides/synapse-compat/config/tensorzero.toml` — Synapse-compatible `[model_aliases]` for public providers (Delta-AI fork).
 - `crates/Cargo.lock` — Workspace lockfile for Synapse-compat auth (bcrypt) and HTTP timeout deps (Delta-AI fork).
+- `.github/workflows/modification-notice-check.yml` — Exclude generated ts-rs bindings from header notice check (Delta-AI fork).
+- `crates/Cargo.toml` — Added chrono-tz for peak/off-peak cost windows (Delta-AI fork).
+- `crates/tensorzero-core/Cargo.toml` — Added chrono-tz for peak/off-peak cost windows (Delta-AI fork).
+- `docs/operations/track-usage-and-cost.mdx` — Documented per-provider usage pointers, peak windows, pointer lists, token-length tiers, currency, and tag filters (Delta-AI fork).
+- `docs/gateway/api-reference/inference-openai-compatible.mdx` — Documented `x-tensorzero-*` header aliases, episode-id header, and `x-tensorzero-tags` (Delta-AI fork).
+- `docs/gateway/configuration-reference.mdx` — Documented `usage`, `peak`, `timezone`, `currency`, pointer lists, and token-length tiers (Delta-AI fork).
+- `examples/docs/guides/operations/track-usage-and-cost/config/tensorzero.toml` — Peak/off-peak, GLM-5.1-style bucket cost, and CNY examples (Delta-AI fork).
 - `crates/tensorzero-http/Cargo.toml` — Added tokio for per-request timeout override (Delta-AI fork).
 - `crates/tensorzero-auth/Cargo.toml` — Added bcrypt for imported Synapse API keys (Delta-AI fork).
 - `crates/tensorzero-core/tests/load/synapse-compat/tensorzero.toml` — Dummy-backed Synapse-compat load-test gateway config, Postgres observability (Delta-AI fork).

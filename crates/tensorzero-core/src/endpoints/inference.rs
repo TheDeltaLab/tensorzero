@@ -1,5 +1,7 @@
+// Modified by Delta-AI under Apache 2.0
 use axum::body::Body;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::response::sse::{Event, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::{Extension, Json};
@@ -29,7 +31,7 @@ use crate::config::snapshot::SnapshotHash;
 use crate::config::{
     Config, ErrorContext, Namespace, OtlpConfig, SchemaData, UninitializedVariantInfo,
 };
-use crate::cost::{CostConfig, compute_cost_from_streaming_chunks};
+use crate::cost::{CostConfig, apply_computed_cost_from_streaming_chunks};
 use crate::db::clickhouse::ClickHouseConnectionInfo;
 use crate::db::delegating_connection::{DelegatingDatabaseConnection, PrimaryDatastore};
 use crate::db::inferences::InferenceQueries;
@@ -62,8 +64,13 @@ use crate::minijinja_util::TemplateConfig;
 use crate::model::ModelTable;
 use crate::observability::internal_metrics::TENSORZERO_INFERENCES_TOTAL;
 use crate::observability::request_logging::HttpMetricData;
+use crate::observability_tags::{
+    API_KEY_PUBLIC_ID_TAG, apply_usage_observability_tags, insert_api_key_public_id_from_headers,
+    overlay_compat_headers,
+};
 use crate::rate_limiting::{RateLimitingManager, ScopeInfo};
 use crate::relay::TensorzeroRelay;
+use crate::routing::{RoutingSession, apply_cached_observability_tag};
 use crate::tool::{ToolCallConfig, ToolChoice};
 use crate::utils::gateway::{AppState, AppStateData, StructuredJson};
 use crate::variant::chat_completion::UninitializedChatCompletionConfig;
@@ -116,6 +123,10 @@ pub struct Params {
     // the tags to add to the inference
     #[serde(default)]
     pub tags: HashMap<String, String>,
+    /// Gateway-injected tags that may use the reserved `tensorzero::` prefix.
+    /// Applied after client tag validation. Not part of the public JSON API.
+    #[serde(skip)]
+    pub extra_internal_tags: HashMap<String, String>,
     // dynamic information about tool calling. Don't directly include `dynamic_tool_params` in `Params`.
     #[serde(flatten)]
     pub dynamic_tool_params: DynamicToolParams,
@@ -218,8 +229,13 @@ pub async fn inference_handler(
         ..
     }): AppState,
     api_key_ext: Option<Extension<RequestApiKeyExtension>>,
-    StructuredJson(params): StructuredJson<Params>,
+    headers: HeaderMap,
+    StructuredJson(mut params): StructuredJson<Params>,
 ) -> Response<Body> {
+    if let Err(error) = overlay_compat_headers(&headers, &mut params.episode_id, &mut params.tags) {
+        return error.into_response();
+    }
+    insert_api_key_public_id_from_headers(&mut params.extra_internal_tags, &headers);
     let mut metric_data = HttpMetricData {
         extra_overhead_labels: vec![],
     };
@@ -365,6 +381,9 @@ pub async fn inference(
     let inference_id = Uuid::now_v7();
     span.record("inference_id", inference_id.to_string());
     validate_tags(&params.tags, params.internal)?;
+    params
+        .tags
+        .extend(std::mem::take(&mut params.extra_internal_tags));
 
     // Retrieve or generate the episode ID
     let episode_id = params.episode_id.unwrap_or_else(Uuid::now_v7);
@@ -388,7 +407,7 @@ pub async fn inference(
     }
     if let Some(api_key_ext) = &api_key_ext {
         params.tags.insert(
-            "tensorzero::api_key_public_id".to_string(),
+            API_KEY_PUBLIC_ID_TAG.to_string(),
             api_key_ext.0.api_key.get_public_id().into(),
         );
     }
@@ -873,7 +892,7 @@ async fn infer_variant(args: InferVariantArgs<'_>) -> Result<InferenceOutput, Er
             system: model_used_info.system,
             input_messages: model_used_info.input_messages,
             previous_model_inference_results: model_used_info.previous_model_inference_results,
-            tags: tags.clone(),
+            tags: tags_for_observability_write(tags),
             tool_config: tool_config.clone(),
             dynamic_output_schema: output_schema.clone(),
             cached: model_used_info.cached,
@@ -931,7 +950,7 @@ async fn infer_variant(args: InferVariantArgs<'_>) -> Result<InferenceOutput, Er
                 tool_config: tool_config.clone(),
                 processing_time: Some(start_time.elapsed()),
                 ttft_ms: None,
-                tags: tags.clone(),
+                tags: tags_for_observability_write(tags),
                 extra_body,
                 extra_headers,
                 snapshot_hash: config.hash.clone(),
@@ -1308,8 +1327,11 @@ fn create_stream(
         // Compute cost from all collected raw chunks (handles both cumulative and split-usage providers)
         if let Some(ref cost_config) = metadata.cost_config {
             let chunk_refs: Vec<&str> = cost_raw_chunks.iter().map(|s| s.as_str()).collect();
-            model_inference_usage.cost =
-                compute_cost_from_streaming_chunks(&chunk_refs, cost_config).ok();
+            apply_computed_cost_from_streaming_chunks(
+                &mut model_inference_usage,
+                &chunk_refs,
+                cost_config,
+            );
         }
 
         // Then add the usage from previous inferences (e.g. best-of-N candidates)
@@ -1649,13 +1671,25 @@ pub struct InferenceDatabaseInsertMetadata {
     pub snapshot_hash: SnapshotHash,
 }
 
+fn tags_for_observability_write(base: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut tags = base.clone();
+    RoutingSession::apply_observability_tags(&mut tags);
+    tags
+}
+
 async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sync>(
     database: &T,
     config: &Config,
     input: ResolvedInput,
     result: InferenceResult,
-    metadata: InferenceDatabaseInsertMetadata,
+    mut metadata: InferenceDatabaseInsertMetadata,
 ) {
+    let cached = result
+        .model_inference_results()
+        .iter()
+        .any(|model_result| model_result.cached);
+    apply_cached_observability_tag(&mut metadata.tags, cached);
+    RoutingSession::apply_observability_tags(&mut metadata.tags);
     let model_inferences = result
         .get_model_inferences(
             &metadata.function_name,
@@ -1663,6 +1697,17 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
             metadata.snapshot_hash.clone(),
         )
         .await;
+    apply_usage_observability_tags(
+        &mut metadata.tags,
+        model_inferences.iter().map(|row| {
+            (
+                row.input_tokens,
+                row.output_tokens,
+                row.cost,
+                row.currency.as_deref(),
+            )
+        }),
+    );
     let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> =
         input.clone().write_all_files(config);
     // Write the model inferences to the database (dual-write via ModelInferenceQueries trait)
@@ -2742,6 +2787,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: Some(raw_usage_entries.clone()),
             raw_response: None,
@@ -2797,6 +2843,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: Some(raw_usage_entries),
             raw_response: None,
@@ -2836,6 +2883,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: None,
             raw_response: None,
@@ -2872,6 +2920,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: None,
             raw_response: None,
@@ -2922,6 +2971,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: Some(raw_usage_entries),
             raw_response: None,
@@ -3014,6 +3064,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: Duration::from_millis(100),
@@ -3118,6 +3169,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: Duration::from_millis(100),
@@ -3204,6 +3256,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: Duration::from_millis(100),
@@ -3291,6 +3344,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             ..Default::default()
         });
@@ -3409,6 +3463,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 latency: Latency::NonStreaming {
                     response_time: Duration::from_millis(100),

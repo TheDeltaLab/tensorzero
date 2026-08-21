@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Implementation of `TensorZeroClient` for the TensorZero SDK `Client`.
 //!
 //! This extends the `tensorzero::Client` type with the `TensorZeroClient` trait,
@@ -112,6 +113,7 @@ impl TensorZeroClient for Client {
                         provider_cache_read_input_tokens: None,
                         provider_cache_write_input_tokens: None,
                         cost: usage.as_ref().and_then(|u| u.tensorzero_cost),
+                        currency: None,
                     },
                     model,
                     tensorzero_raw_response,

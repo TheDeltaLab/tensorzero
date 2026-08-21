@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -36,6 +37,10 @@ pub struct StoredModelProvider {
     pub discard_unknown_chunks: Option<bool>,
     pub cost: Option<StoredCostConfig>,
     pub batch_cost: Option<StoredUnifiedCostConfig>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 // --- Provider config (large tagged enum) ---

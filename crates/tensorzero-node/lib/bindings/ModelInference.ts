@@ -82,4 +82,8 @@ export type ModelInference = {
    * Cost of the inference.
    */
   cost: number | undefined;
+  /**
+   * ISO 4217 code for `cost`.
+   */
+  currency?: string;
 };

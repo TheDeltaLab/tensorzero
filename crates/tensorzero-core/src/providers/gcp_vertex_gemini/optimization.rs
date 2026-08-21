@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -221,6 +222,8 @@ pub fn convert_to_optimizer_status(
                 discard_unknown_chunks: false,
                 cost: None,
                 batch_cost: None,
+                timezone: None,
+                currency: None,
             };
             OptimizationJobInfo::Completed {
                 output: OptimizerOutput::Model(UninitializedModelConfig {

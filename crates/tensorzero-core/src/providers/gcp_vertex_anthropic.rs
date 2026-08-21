@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
 use std::fmt::Display;
 
@@ -778,6 +779,7 @@ impl GCPVertexAnthropicUsage {
             provider_cache_read_input_tokens: self.cache_read_input_tokens,
             provider_cache_write_input_tokens: self.cache_creation_input_tokens,
             cost: None,
+            currency: None,
         }
     }
 }

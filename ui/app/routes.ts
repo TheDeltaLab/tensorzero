@@ -154,6 +154,7 @@ export default [
 
   // Playground
   route("playground", "routes/playground/route.tsx"),
+  route("playground/functions", "routes/playground/functions.tsx"),
   route("playground/embeddings", "routes/playground/embeddings.tsx"),
   route("playground/rerank", "routes/playground/rerank.tsx"),
 
@@ -189,6 +190,7 @@ export default [
     ]),
 
     route("models", "routes/observability/models/route.tsx"),
+    route("analysis", "routes/observability/analysis/route.tsx"),
   ]),
 
   // Optimization

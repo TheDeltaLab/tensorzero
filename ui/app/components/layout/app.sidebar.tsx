@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import * as React from "react";
 import {
   Inferences,
@@ -13,7 +14,7 @@ import {
   SidebarCollapse,
   SidebarExpand,
 } from "~/components/icons/Icons";
-import { FileCode2, KeyRound, LayoutGrid, Plus } from "lucide-react";
+import { BarChart3, FileCode2, KeyRound, LayoutGrid, Plus } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -33,14 +34,13 @@ import { useAutopilotAvailable } from "~/context/autopilot-available";
 import { useConfig } from "~/context/config";
 import { TensorZeroLogo } from "~/components/icons/Icons";
 import { Link } from "react-router";
-import type { IconProps } from "~/components/icons/Icons";
 import TensorZeroStatusIndicator from "./TensorZeroStatusIndicator";
 import { ReadOnlyBadge } from "./ReadOnlyBadge";
 
 interface NavigationItem {
   title: string;
   url: string;
-  icon: React.FC<IconProps>;
+  icon: React.ComponentType<{ className?: string; size?: number }>;
 }
 
 interface NavigationSection {
@@ -71,6 +71,11 @@ const navigation: NavigationSection[] = [
         title: "Models",
         url: "/observability/models",
         icon: Model,
+      },
+      {
+        title: "Analysis",
+        url: "/observability/analysis",
+        icon: BarChart3,
       },
     ],
   },

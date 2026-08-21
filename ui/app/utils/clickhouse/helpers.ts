@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { z } from "zod";
 import type { FeedbackRow } from "~/types/tensorzero";
 import type { ParsedModelInferenceRow } from "./inference";
@@ -17,10 +18,27 @@ export const getMetricName = (feedback: FeedbackRow) => {
 export const inferenceUsageSchema = z.object({
   input_tokens: z.number().nullish(),
   output_tokens: z.number().nullish(),
+  provider_cache_read_input_tokens: z.number().nullish(),
+  provider_cache_write_input_tokens: z.number().nullish(),
   cost: z.number().nullish(),
+  currency: z.string().nullish(),
 });
 
 export type InferenceUsage = z.infer<typeof inferenceUsageSchema>;
+
+function sumOptionalTokens(
+  values: Array<number | undefined | null>,
+): number | undefined {
+  let total = 0;
+  let any = false;
+  for (const value of values) {
+    if (value != null) {
+      total += value;
+      any = true;
+    }
+  }
+  return any ? total : undefined;
+}
 
 export function getTotalInferenceUsage(
   model_inferences: ParsedModelInferenceRow[],
@@ -28,16 +46,45 @@ export function getTotalInferenceUsage(
   const allCostsPresent =
     model_inferences.length > 0 &&
     model_inferences.every((m) => m.cost != null);
-  return model_inferences.reduce(
+  const currencies = model_inferences.map((m) =>
+    normalizeInferenceCurrency(m.currency),
+  );
+  const sameCurrency =
+    currencies.length > 0 && currencies.every((code) => code === currencies[0]);
+  const canSumCost = allCostsPresent && sameCurrency;
+  return model_inferences.reduce<InferenceUsage>(
     (acc, curr) => {
       return {
-        input_tokens: acc.input_tokens + (curr.input_tokens ?? 0),
-        output_tokens: acc.output_tokens + (curr.output_tokens ?? 0),
-        cost: allCostsPresent ? (acc.cost ?? 0) + (curr.cost ?? 0) : null,
+        input_tokens: (acc.input_tokens ?? 0) + (curr.input_tokens ?? 0),
+        output_tokens: (acc.output_tokens ?? 0) + (curr.output_tokens ?? 0),
+        provider_cache_read_input_tokens: sumOptionalTokens([
+          acc.provider_cache_read_input_tokens,
+          curr.provider_cache_read_input_tokens,
+        ]),
+        provider_cache_write_input_tokens: sumOptionalTokens([
+          acc.provider_cache_write_input_tokens,
+          curr.provider_cache_write_input_tokens,
+        ]),
+        cost: canSumCost ? (acc.cost ?? 0) + (curr.cost ?? 0) : null,
+        currency: acc.currency,
       };
     },
-    { input_tokens: 0, output_tokens: 0, cost: allCostsPresent ? 0 : null },
+    {
+      input_tokens: 0,
+      output_tokens: 0,
+      provider_cache_read_input_tokens: undefined,
+      provider_cache_write_input_tokens: undefined,
+      cost: canSumCost ? 0 : null,
+      currency: canSumCost ? currencies[0] : undefined,
+    },
   );
+}
+
+function normalizeInferenceCurrency(value?: string | null): string {
+  const code = (value ?? "USD").trim().toUpperCase();
+  if (!code) return "USD";
+  if (code === "RMB") return "CNY";
+  return code;
 }
 
 /**

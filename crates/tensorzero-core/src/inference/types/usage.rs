@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use rust_decimal::Decimal;
 
 pub use tensorzero_inference_types::{RawUsageEntry, Usage, raw_usage_entries_from_value};
@@ -51,6 +52,33 @@ fn cumulative_max_decimal(
     }
 }
 
+fn merge_currency(
+    left: Option<tensorzero_types::Currency>,
+    right: Option<tensorzero_types::Currency>,
+) -> Option<tensorzero_types::Currency> {
+    match (left, right) {
+        (None, None) => Some(tensorzero_types::Currency::USD),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (Some(left), Some(right)) if left == right => Some(left),
+        (Some(_), Some(_)) => None,
+    }
+}
+
+fn sum_costs(
+    left_cost: Option<Decimal>,
+    left_currency: Option<tensorzero_types::Currency>,
+    right_cost: Option<Decimal>,
+    right_currency: Option<tensorzero_types::Currency>,
+) -> (Option<Decimal>, Option<tensorzero_types::Currency>) {
+    match (left_cost, right_cost) {
+        (Some(left), Some(right)) => match merge_currency(left_currency, right_currency) {
+            Some(currency) => (Some(left + right), Some(currency)),
+            None => (None, None),
+        },
+        _ => (None, None),
+    }
+}
+
 /// Aggregate `Usage` from a single streaming model inference.
 ///
 /// Different model providers report usage differently while streaming:
@@ -81,6 +109,7 @@ where
                 provider_cache_read_input_tokens: chunk_cache_read,
                 provider_cache_write_input_tokens: chunk_cache_write,
                 cost: chunk_cost,
+                currency: chunk_currency,
             } = chunk_usage;
 
             acc.input_tokens =
@@ -98,6 +127,9 @@ where
                 "provider_cache_write_input_tokens",
             );
             acc.cost = cumulative_max_decimal(acc.cost, chunk_cost, "cost");
+            if acc.currency.is_none() {
+                acc.currency = chunk_currency;
+            }
 
             acc
         })
@@ -122,7 +154,10 @@ where
             provider_cache_read_input_tokens: mi_cache_read,
             provider_cache_write_input_tokens: mi_cache_write,
             cost: mi_cost,
+            currency: mi_currency,
         } = mi_usage;
+
+        let (cost, currency) = sum_costs(acc.cost, acc.currency, mi_cost, mi_currency);
 
         Usage {
             input_tokens: match (acc.input_tokens, mi_input_tokens) {
@@ -151,10 +186,8 @@ where
                 (Some(a), None) | (None, Some(a)) => Some(a),
                 (None, None) => None,
             },
-            cost: match (acc.cost, mi_cost) {
-                (Some(a), Some(b)) => Some(a + b),
-                _ => None,
-            },
+            cost,
+            currency,
         }
     })
 }
@@ -236,6 +269,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let result = aggregate_usage_from_single_streaming_model_inference(vec![usage]);
         assert_eq!(
@@ -260,6 +294,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(100),
@@ -267,6 +302,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(100),
@@ -274,6 +310,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -299,6 +336,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None,
@@ -306,6 +344,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -313,6 +352,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -337,6 +377,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None,
@@ -344,6 +385,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -366,6 +408,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None,
@@ -373,6 +416,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -400,6 +444,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(80),  // Smaller than previous (unexpected)
@@ -407,6 +452,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         // This will panic due to debug_assert! when non-cumulative values are detected
@@ -438,6 +484,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let result = aggregate_usage_across_model_inferences(vec![usage]);
         assert_eq!(
@@ -461,6 +508,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -468,6 +516,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -492,6 +541,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None, // This should propagate None for input_tokens
@@ -499,6 +549,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -522,6 +573,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(100),
@@ -529,6 +581,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -551,6 +604,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None,
@@ -558,6 +612,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -581,6 +636,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             // message_delta chunk: only output_tokens, no input_tokens
             Usage {
@@ -589,6 +645,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
 
@@ -622,6 +679,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: Some(Decimal::new(18, 5)), // 0.00018
+            currency: None,
         };
         let result = aggregate_usage_from_single_streaming_model_inference(vec![usage]);
         assert_eq!(
@@ -640,6 +698,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: Some(Decimal::new(5, 5)), // 0.00005
+                currency: None,
             },
             Usage {
                 input_tokens: Some(100),
@@ -647,6 +706,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: Some(Decimal::new(12, 5)), // 0.00012
+                currency: None,
             },
             Usage {
                 input_tokens: Some(100),
@@ -654,6 +714,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: Some(Decimal::new(18, 5)), // 0.00018
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -675,6 +736,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: Some(Decimal::new(18, 5)), // 0.00018
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -682,6 +744,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: Some(Decimal::new(27, 5)), // 0.00027
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -701,6 +764,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(100),
                 provider_cache_write_input_tokens: Some(10),
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -708,6 +772,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(200),
                 provider_cache_write_input_tokens: Some(20),
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -732,6 +797,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(100),
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -739,6 +805,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -762,6 +829,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(80),
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -769,6 +837,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: Some(40),
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
@@ -794,6 +863,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(4000),
                 provider_cache_write_input_tokens: Some(500),
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None,
@@ -801,6 +871,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: None,
@@ -808,6 +879,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -833,6 +905,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(2000),
                 provider_cache_write_input_tokens: Some(300),
                 cost: None,
+                currency: None,
             },
             Usage {
                 input_tokens: Some(100),
@@ -840,6 +913,7 @@ mod tests {
                 provider_cache_read_input_tokens: Some(4000),
                 provider_cache_write_input_tokens: Some(500),
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_from_single_streaming_model_inference(chunks);
@@ -864,6 +938,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: Some(Decimal::new(18, 5)), // 0.00018
+                currency: None,
             },
             Usage {
                 input_tokens: Some(200),
@@ -871,12 +946,67 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
         assert_eq!(
             result.cost, None,
             "None cost in any inference should propagate to result"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_across_inferences_mixed_currency_drops_cost() {
+        let usages = vec![
+            Usage {
+                input_tokens: Some(100),
+                output_tokens: Some(50),
+                provider_cache_read_input_tokens: None,
+                provider_cache_write_input_tokens: None,
+                cost: Some(Decimal::ONE),
+                currency: Some(tensorzero_types::Currency::USD),
+            },
+            Usage {
+                input_tokens: Some(200),
+                output_tokens: Some(100),
+                provider_cache_read_input_tokens: None,
+                provider_cache_write_input_tokens: None,
+                cost: Some(Decimal::ONE),
+                currency: Some(tensorzero_types::Currency::CNY),
+            },
+        ];
+        let result = aggregate_usage_across_model_inferences(usages);
+        assert_eq!(
+            result.cost, None,
+            "mixed currencies should drop aggregated cost"
+        );
+        assert_eq!(
+            result.currency, None,
+            "mixed currencies should drop aggregated currency"
+        );
+    }
+
+    #[test]
+    fn test_aggregate_across_inferences_adopts_currency_from_zero() {
+        let usages = vec![Usage {
+            input_tokens: Some(10),
+            output_tokens: Some(4),
+            provider_cache_read_input_tokens: None,
+            provider_cache_write_input_tokens: None,
+            cost: Some(Decimal::new(6, 1)),
+            currency: Some(tensorzero_types::Currency::CNY),
+        }];
+        let result = aggregate_usage_across_model_inferences(usages);
+        assert_eq!(
+            result.cost,
+            Some(Decimal::new(6, 1)),
+            "fold identity should keep the CNY cost"
+        );
+        assert_eq!(
+            result.currency,
+            Some(tensorzero_types::Currency::CNY),
+            "fold identity should adopt CNY from the first inference"
         );
     }
 }

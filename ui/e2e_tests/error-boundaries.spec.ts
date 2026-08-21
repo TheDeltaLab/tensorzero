@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { test, expect } from "@playwright/test";
 
 test.describe("Error Boundaries", () => {
@@ -28,7 +29,7 @@ test.describe("Error Boundaries", () => {
       await page.getByRole("link", { name: "Overview" }).click();
 
       // Should navigate to home page successfully
-      await expect(page.getByText("Ask a question")).toBeVisible();
+      await expect(page.getByText("Learn more")).toBeVisible();
       await expect(page.getByText("Page Not Found")).not.toBeVisible();
     });
   });
@@ -102,7 +103,7 @@ test.describe("Error Boundaries", () => {
     }) => {
       // Start on a valid page
       await page.goto("/");
-      await expect(page.getByText("Ask a question")).toBeVisible();
+      await expect(page.getByText("Learn more")).toBeVisible();
 
       // Navigate to error page
       await page.goto("/invalid-route");
@@ -112,7 +113,7 @@ test.describe("Error Boundaries", () => {
       await page.goBack();
 
       // Should be back on valid page without errors
-      await expect(page.getByText("Ask a question")).toBeVisible();
+      await expect(page.getByText("Learn more")).toBeVisible();
       await expect(page.getByText("Page Not Found")).not.toBeVisible();
     });
 
@@ -131,7 +132,7 @@ test.describe("Error Boundaries", () => {
 
       // Should still be able to navigate to valid page
       await page.goto("/");
-      await expect(page.getByText("Ask a question")).toBeVisible();
+      await expect(page.getByText("Learn more")).toBeVisible();
     });
   });
 });

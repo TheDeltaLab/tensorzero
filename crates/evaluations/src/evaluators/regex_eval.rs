@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use anyhow::Result;
 use regex::Regex;
 use serde_json::Value;
@@ -83,6 +84,7 @@ mod tests {
                 input_tokens: Some(10),
                 output_tokens: Some(10),
                 cost: None,
+                currency: None,
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
             },
@@ -107,6 +109,7 @@ mod tests {
                 input_tokens: Some(10),
                 output_tokens: Some(10),
                 cost: None,
+                currency: None,
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
             },
@@ -146,6 +149,7 @@ mod tests {
                 input_tokens: Some(10),
                 output_tokens: Some(10),
                 cost: None,
+                currency: None,
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
             },

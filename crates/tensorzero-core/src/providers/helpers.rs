@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use axum::http;
 use bytes::Bytes;
 use futures::{Stream, stream::Peekable};
@@ -18,6 +19,8 @@ use crate::{
         usage::ApiType,
     },
     model::ModelProviderRequestInfo,
+    observability_tags::extract_upstream_metadata,
+    routing::RoutingSession,
 };
 
 pub struct JsonlBatchFileInfo {
@@ -417,6 +420,9 @@ pub async fn inject_extra_request_data_and_send_with_headers(
             )
         })?;
     let response_headers = response.headers().clone();
+    if let Some(session) = RoutingSession::current() {
+        session.record_upstream_metadata(extract_upstream_metadata(&response_headers));
+    }
     Ok(InjectedResponse {
         response,
         raw_request,
@@ -512,6 +518,9 @@ pub async fn inject_extra_request_data_and_send_eventsource_with_headers(
             return Err((error, headers));
         }
     };
+    if let Some(session) = RoutingSession::current() {
+        session.record_upstream_metadata(extract_upstream_metadata(&response_headers));
+    }
     Ok(InjectedResponse {
         response: event_source,
         raw_request,

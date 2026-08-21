@@ -1,4 +1,5 @@
-import type { InferenceFilter, InferenceMetadata } from "~/types/tensorzero";
+// Modified by Delta-AI under Apache 2.0
+import type { InferenceMetadata } from "~/types/tensorzero";
 import { uuidv7ToTimestamp } from "~/utils/clickhouse/helpers";
 import {
   Table,
@@ -10,71 +11,112 @@ import {
   TableRow,
   TableEmptyState,
 } from "~/components/ui/table";
-import {
-  TableItemShortUuid,
-  TableItemTime,
-  TableItemFunction,
-} from "~/components/ui/TableItems";
-import { VariantLink } from "~/components/function/variant/VariantLink";
+import { TableItemTime } from "~/components/ui/TableItems";
 import { toInferenceUrl, toEpisodeUrl, toFunctionUrl } from "~/utils/urls";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
-import { Input } from "~/components/ui/input";
-import { Filter } from "lucide-react";
-import { Suspense, useState, useEffect } from "react";
-import { useNavigate, useLocation, Await } from "react-router";
-import { useForm } from "react-hook-form";
-import { Form } from "~/components/ui/form";
+import { Eye, Layers } from "lucide-react";
+import { Suspense, type ReactNode } from "react";
 import {
-  Sheet,
-  SheetContent,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "~/components/ui/sheet";
-import { FunctionSelector } from "~/components/function/FunctionSelector";
-import { VariantSelector } from "~/components/function/variant/VariantSelector";
-import { useAllFunctionConfigs } from "~/context/config";
-import InferenceFilterBuilder from "~/components/querybuilder/InferenceFilterBuilder";
+  Link,
+  useNavigate,
+  useLocation,
+  useSearchParams,
+  Await,
+} from "react-router";
 import { Skeleton } from "~/components/ui/skeleton";
 import PageButtons from "~/components/utils/PageButtons";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "~/components/ui/tooltip";
+import { getFunctionTypeIcon } from "~/utils/icon";
+import { formatCost } from "~/utils/cost";
+import {
+  cachedFromTags,
+  fallbackCountFromTags,
+  providerFromTags,
+  statusCodeFromTags,
+} from "./inferenceQuery";
+import {
+  isStandaloneFunctionName,
+  observabilityInferenceKind,
+} from "~/utils/observability/standaloneInference";
+import { splitInferenceTags } from "~/utils/observability/inferenceTags";
+import {
+  formatOutputTps,
+  outputTpsExcludingTtft,
+  toFiniteMs,
+} from "~/utils/observability/usageDetails";
+
+export type InferenceListRow = InferenceMetadata & {
+  tags?: Record<string, string>;
+  processing_time_ms?: number;
+  ttft_ms?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cost?: number | null;
+  currency?: string | null;
+};
 
 export type InferencesData = {
-  inferences: InferenceMetadata[];
+  inferences: InferenceListRow[];
   hasNextPage: boolean;
   hasPreviousPage: boolean;
 };
 
-// Skeleton rows for loading state - co-located with real rows
+const COLUMN_COUNT = 14;
+
 function SkeletonRows() {
   return (
     <>
       {Array.from({ length: 10 }).map((_, i) => (
         <TableRow key={i}>
           <TableCell>
-            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-5 w-36" />
           </TableCell>
           <TableCell>
-            <Skeleton className="h-5 w-24" />
-          </TableCell>
-          <TableCell>
-            <Skeleton className="h-5 w-32" />
+            <Skeleton className="h-5 w-16" />
           </TableCell>
           <TableCell>
             <Skeleton className="h-5 w-28" />
           </TableCell>
           <TableCell>
-            <Skeleton className="h-5 w-36" />
+            <Skeleton className="ml-auto h-5 w-12" />
           </TableCell>
-          <TableCell />
+          <TableCell>
+            <Skeleton className="ml-auto h-5 w-14" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="ml-auto h-5 w-14" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="ml-auto h-5 w-12" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="ml-auto h-5 w-16" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-5 w-14" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-5 w-10" />
+          </TableCell>
+          <TableCell>
+            <Skeleton className="h-5 w-16" />
+          </TableCell>
+          <TableCell className="w-[44px]" />
+          <TableCell className="w-[36px]" />
+          <TableCell className="w-[36px]" />
         </TableRow>
       ))}
     </>
   );
 }
 
-// Renders table rows from resolved data
 function TableRows({ data }: { data: InferencesData }) {
+  const navigate = useNavigate();
   const { inferences } = data;
 
   if (inferences.length === 0) {
@@ -83,84 +125,272 @@ function TableRows({ data }: { data: InferencesData }) {
 
   return (
     <>
-      {inferences.map((inference) => (
-        <TableRow key={inference.id} id={inference.id}>
-          <TableCell>
-            <TableItemShortUuid
-              id={inference.id}
-              link={toInferenceUrl(inference.id)}
-            />
-          </TableCell>
-          <TableCell>
-            <TableItemShortUuid
-              id={inference.episode_id}
-              link={toEpisodeUrl(inference.episode_id)}
-            />
-          </TableCell>
-          <TableCell>
-            <TableItemFunction
-              functionName={inference.function_name}
-              functionType={inference.function_type}
-              link={toFunctionUrl(
-                inference.function_name,
-                inference.snapshot_hash,
+      {inferences.map((inference) => {
+        const kind = observabilityInferenceKind({
+          functionName: inference.function_name,
+          functionType: inference.function_type,
+          tags: inference.tags,
+        });
+        const provider = providerFromTags(
+          inference.tags,
+          inference.variant_name,
+        );
+        const fallbackCount = fallbackCountFromTags(inference.tags);
+        const cached = cachedFromTags(inference.tags);
+        const statusCode = statusCodeFromTags(inference.tags);
+        const tokens = totalTokens(inference);
+        const outputTps = outputTpsExcludingTtft({
+          outputTokens: inference.output_tokens,
+          durationMs: inference.processing_time_ms,
+          ttftMs: inference.ttft_ms,
+        });
+        const { userTags } = splitInferenceTags(inference.tags);
+        const tagEntries = Object.entries(userTags).slice(0, 3);
+        const inferenceUrl = toInferenceUrl(inference.id);
+
+        return (
+          <TableRow
+            key={inference.id}
+            id={inference.id}
+            className="cursor-pointer"
+            onClick={() => navigate(inferenceUrl)}
+          >
+            <TableCell className="text-sm">
+              <TableItemTime
+                timestamp={uuidv7ToTimestamp(inference.id).toISOString()}
+              />
+            </TableCell>
+            <TableCell>
+              {provider ? (
+                <Badge variant="secondary">{provider}</Badge>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
               )}
-            />
-          </TableCell>
-          <TableCell>
-            <VariantLink
-              variantName={inference.variant_name}
-              functionName={inference.function_name}
-              snapshotHash={inference.snapshot_hash}
-            >
-              <code className="block overflow-hidden rounded font-mono text-ellipsis whitespace-nowrap transition-colors duration-300 hover:text-gray-500">
-                {inference.variant_name}
-              </code>
-            </VariantLink>
-          </TableCell>
-          <TableCell>
-            <TableItemTime
-              timestamp={uuidv7ToTimestamp(inference.id).toISOString()}
-            />
-          </TableCell>
-          <TableCell />
-        </TableRow>
-      ))}
+            </TableCell>
+            <TableCell className="font-mono text-sm">
+              <span className="align-middle">{inference.variant_name}</span>
+              {fallbackCount > 0 && (
+                <Badge
+                  variant="outline"
+                  className="ml-2 text-[10px] border-yellow-500/40 text-yellow-700 dark:text-yellow-300"
+                >
+                  🔀 {fallbackCount}
+                </Badge>
+              )}
+            </TableCell>
+            <TableCell className="text-right text-sm">
+              {tokens === undefined ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>{tokens.toLocaleString()}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {(inference.input_tokens ?? 0).toLocaleString()} in /{" "}
+                    {(inference.output_tokens ?? 0).toLocaleString()} out
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </TableCell>
+            <TableCell className="text-right text-sm">
+              {inference.cost == null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                formatCost(inference.cost, inference.currency ?? undefined)
+              )}
+            </TableCell>
+            <TableCell className="text-right text-sm">
+              {inference.processing_time_ms == null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                `${inference.processing_time_ms}ms`
+              )}
+            </TableCell>
+            <TableCell className="text-right text-sm">
+              {toFiniteMs(inference.ttft_ms) == null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                `${inference.ttft_ms}ms`
+              )}
+            </TableCell>
+            <TableCell className="text-right text-sm">
+              {outputTps == null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>{formatOutputTps(outputTps)}</span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    Output tokens per second, excluding TTFT
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </TableCell>
+            <TableCell>
+              {cached ? (
+                <Badge variant="outline">cached</Badge>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
+            </TableCell>
+            <TableCell>
+              <Badge
+                variant={statusCode >= 400 ? "destructive" : "secondary"}
+                className={
+                  statusCode >= 200 && statusCode < 300
+                    ? "border-transparent bg-emerald-600 text-white"
+                    : undefined
+                }
+              >
+                {statusCode}
+              </Badge>
+            </TableCell>
+            <TableCell>
+              {tagEntries.length === 0 ? (
+                <span className="text-sm text-muted-foreground">—</span>
+              ) : (
+                <div className="flex max-w-[180px] flex-wrap gap-1">
+                  {tagEntries.map(([key, value]) => (
+                    <Badge
+                      key={key}
+                      variant="outline"
+                      className="max-w-full truncate text-[10px]"
+                      title={`${key}=${value}`}
+                    >
+                      {key}={value}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </TableCell>
+            <TableCell className="w-[44px] px-1">
+              <FunctionIcon
+                functionName={inference.function_name}
+                functionType={kind}
+                snapshotHash={inference.snapshot_hash}
+              />
+            </TableCell>
+            <TableCell className="w-[36px] px-1">
+              <JumpIcon
+                to={inferenceUrl}
+                label={`Open inference ${inference.id}`}
+              >
+                <Eye className="h-4 w-4" />
+              </JumpIcon>
+            </TableCell>
+            <TableCell className="w-[36px] px-1">
+              <JumpIcon
+                to={toEpisodeUrl(inference.episode_id)}
+                label={`Open episode ${inference.episode_id}`}
+              >
+                <Layers className="h-4 w-4" />
+              </JumpIcon>
+            </TableCell>
+          </TableRow>
+        );
+      })}
     </>
   );
+}
+
+function FunctionIcon({
+  functionName,
+  functionType,
+  snapshotHash,
+}: {
+  functionName: string;
+  functionType: string;
+  snapshotHash?: string;
+}) {
+  const icon = getFunctionTypeIcon(functionType);
+  const standalone = isStandaloneFunctionName(functionName);
+  const className = `${icon.iconBg} inline-flex rounded-sm p-0.5`;
+  const content = (
+    <span className={className} aria-label={`Function ${functionName}`}>
+      {icon.icon}
+    </span>
+  );
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        {standalone ? (
+          <span
+            className="inline-flex"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {content}
+          </span>
+        ) : (
+          <Link
+            to={toFunctionUrl(functionName, snapshotHash)}
+            className="inline-flex"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {content}
+          </Link>
+        )}
+      </TooltipTrigger>
+      <TooltipContent>
+        <div className="font-mono text-xs">{functionName}</div>
+        {icon.label && (
+          <div className="text-[10px] text-white/70">{icon.label}</div>
+        )}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function JumpIcon({
+  to,
+  label,
+  children,
+}: {
+  to: string;
+  label: string;
+  children: ReactNode;
+}) {
+  return (
+    <Button variant="ghost" size="iconSm" className="h-7 w-7" asChild>
+      <Link
+        to={to}
+        aria-label={label}
+        onClick={(event) => event.stopPropagation()}
+      >
+        {children}
+      </Link>
+    </Button>
+  );
+}
+
+function totalTokens(inference: InferenceListRow): number | undefined {
+  if (inference.input_tokens == null && inference.output_tokens == null) {
+    return undefined;
+  }
+  return (inference.input_tokens ?? 0) + (inference.output_tokens ?? 0);
 }
 
 function PaginationButtons({
   data,
   limit,
-  function_name,
-  variant_name,
-  episode_id,
-  search_query,
-  filters,
 }: {
   data: InferencesData;
   limit: number;
-  function_name?: string;
-  variant_name?: string;
-  episode_id?: string;
-  search_query?: string;
-  filters?: InferenceFilter;
 }) {
   const { inferences, hasNextPage, hasPreviousPage } = data;
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const topInference = inferences.at(0);
   const bottomInference = inferences.at(inferences.length - 1);
 
   const buildSearchParams = () => {
-    const params = new URLSearchParams();
+    const params = new URLSearchParams(searchParams);
     params.set("limit", String(limit));
-    if (function_name) params.set("function_name", function_name);
-    if (variant_name) params.set("variant_name", variant_name);
-    if (episode_id) params.set("episode_id", episode_id);
-    if (search_query) params.set("search_query", search_query);
-    if (filters) params.set("filters", JSON.stringify(filters));
+    params.delete("before");
+    params.delete("after");
     return params;
   };
 
@@ -197,128 +427,46 @@ function PaginationButtons({
 export default function InferencesTable({
   data,
   limit,
-  function_name,
-  variant_name,
-  episode_id,
-  search_query,
-  filters,
 }: {
   data: Promise<InferencesData>;
   limit: number;
-  function_name?: string;
-  variant_name?: string;
-  episode_id?: string;
-  search_query?: string;
-  filters?: InferenceFilter;
 }) {
-  const navigate = useNavigate();
   const location = useLocation();
-  const functions = useAllFunctionConfigs();
-
-  const [filterOpen, setFilterOpen] = useState(false);
-
-  // Local state for filter form
-  const [filterFunctionName, setFilterFunctionName] = useState<string | null>(
-    function_name ?? null,
-  );
-  const [filterVariantName, setFilterVariantName] = useState(
-    variant_name ?? "",
-  );
-  const [filterEpisodeId, setFilterEpisodeId] = useState(episode_id ?? "");
-  const [filterSearchQuery, setFilterSearchQuery] = useState(
-    search_query ?? "",
-  );
-  const [filterAdvanced, setFilterAdvanced] = useState<
-    InferenceFilter | undefined
-  >(filters);
-
-  // Form for the filter sheet (needed for FormLabel in InferenceFilterBuilder)
-  const filterForm = useForm();
-
-  // Sync local filter state with props when sheet opens
-  useEffect(() => {
-    if (filterOpen) {
-      setFilterFunctionName(function_name ?? null);
-      setFilterVariantName(variant_name ?? "");
-      setFilterEpisodeId(episode_id ?? "");
-      setFilterSearchQuery(search_query ?? "");
-      setFilterAdvanced(filters);
-    }
-  }, [
-    filterOpen,
-    function_name,
-    variant_name,
-    episode_id,
-    search_query,
-    filters,
-  ]);
-
-  const handleFilterSubmit = () => {
-    const searchParams = new URLSearchParams();
-
-    if (filterFunctionName) {
-      searchParams.set("function_name", filterFunctionName);
-    }
-
-    if (filterVariantName.length > 0) {
-      searchParams.set("variant_name", filterVariantName);
-    }
-
-    if (filterEpisodeId.length > 0) {
-      searchParams.set("episode_id", filterEpisodeId);
-    }
-
-    if (filterSearchQuery.length > 0) {
-      searchParams.set("search_query", filterSearchQuery);
-    }
-
-    if (filterAdvanced) {
-      searchParams.set("filters", JSON.stringify(filterAdvanced));
-    }
-
-    navigate(`?${searchParams.toString()}`, { preventScrollReset: true });
-    setFilterOpen(false);
-  };
-
-  const handleClearFunctionFilter = () => {
-    setFilterFunctionName(null);
-  };
-
-  const handleClearVariantFilter = () => {
-    setFilterVariantName("");
-  };
-
-  const handleClearEpisodeFilter = () => {
-    setFilterEpisodeId("");
-  };
-
-  const handleClearSearchFilter = () => {
-    setFilterSearchQuery("");
-  };
-
-  const hasActiveFilters =
-    function_name || variant_name || episode_id || search_query || filters;
 
   return (
     <div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Inference ID</TableHead>
-            <TableHead>Episode ID</TableHead>
-            <TableHead>Function</TableHead>
-            <TableHead>Variant</TableHead>
             <TableHead>Time</TableHead>
-            <TableHead className="w-[50px]">
-              <div className="flex justify-end">
-                <Button
-                  variant={hasActiveFilters ? "default" : "ghost"}
-                  size="iconSm"
-                  onClick={() => setFilterOpen(true)}
-                >
-                  <Filter className="h-4 w-4" />
-                </Button>
-              </div>
+            <TableHead>Provider</TableHead>
+            <TableHead>Model</TableHead>
+            <TableHead className="text-right">Tokens</TableHead>
+            <TableHead className="text-right">Cost</TableHead>
+            <TableHead className="text-right">Latency</TableHead>
+            <TableHead
+              className="text-right"
+              title="Time to first token (streaming only)"
+            >
+              TTFT
+            </TableHead>
+            <TableHead
+              className="text-right"
+              title="Output tokens per second, excluding TTFT"
+            >
+              Output tok/s
+            </TableHead>
+            <TableHead>Cache</TableHead>
+            <TableHead>Status</TableHead>
+            <TableHead>Tags</TableHead>
+            <TableHead className="w-[44px]">
+              <span className="sr-only">Function</span>
+            </TableHead>
+            <TableHead className="w-[36px]">
+              <span className="sr-only">Inference</span>
+            </TableHead>
+            <TableHead className="w-[36px]">
+              <span className="sr-only">Episode</span>
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -328,7 +476,7 @@ export default function InferencesTable({
               resolve={data}
               errorElement={
                 <TableAsyncErrorState
-                  colSpan={6}
+                  colSpan={COLUMN_COUNT}
                   defaultMessage="Failed to load inferences"
                 />
               }
@@ -342,152 +490,10 @@ export default function InferencesTable({
       <Suspense key={location.key} fallback={<PageButtons disabled />}>
         <Await resolve={data} errorElement={<PageButtons disabled />}>
           {(resolvedData) => (
-            <PaginationButtons
-              data={resolvedData}
-              limit={limit}
-              function_name={function_name}
-              variant_name={variant_name}
-              episode_id={episode_id}
-              search_query={search_query}
-              filters={filters}
-            />
+            <PaginationButtons data={resolvedData} limit={limit} />
           )}
         </Await>
       </Suspense>
-
-      <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
-        <SheetContent
-          side="right"
-          className="flex w-full flex-col md:w-5/6 xl:w-1/2"
-        >
-          <Form {...filterForm}>
-            <SheetHeader>
-              <SheetTitle>Filter</SheetTitle>
-            </SheetHeader>
-
-            <div className="mt-4 flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto">
-              <div>
-                <label className="text-sm font-medium">Function</label>
-                <div className="mt-1 flex items-center gap-2">
-                  <div className="flex-1">
-                    <FunctionSelector
-                      selected={filterFunctionName}
-                      onSelect={setFilterFunctionName}
-                      functions={functions}
-                      ariaLabel="Function filter"
-                    />
-                  </div>
-                  {filterFunctionName && (
-                    <Button
-                      variant="outline"
-                      onClick={handleClearFunctionFilter}
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label className="text-sm font-medium">Variant</label>
-                <div className="mt-1 flex items-center gap-2">
-                  <div className="flex-1">
-                    <VariantSelector
-                      functionName={filterFunctionName}
-                      value={filterVariantName}
-                      onChange={(value) =>
-                        setFilterVariantName(value === "__all__" ? "" : value)
-                      }
-                    />
-                  </div>
-                  {filterVariantName && (
-                    <Button
-                      variant="outline"
-                      onClick={handleClearVariantFilter}
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="episode-id-filter"
-                  className="text-sm font-medium"
-                >
-                  Episode ID
-                </label>
-                <div className="mt-1 flex items-center gap-2">
-                  <Input
-                    id="episode-id-filter"
-                    value={filterEpisodeId}
-                    onChange={(e) => setFilterEpisodeId(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleFilterSubmit();
-                      }
-                    }}
-                    placeholder="00000000-0000-0000-0000-000000000000"
-                  />
-                  {filterEpisodeId && (
-                    <Button
-                      variant="outline"
-                      onClick={handleClearEpisodeFilter}
-                    >
-                      Clear
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-center gap-2">
-                  <label
-                    htmlFor="search-query-filter"
-                    className="text-sm font-medium"
-                  >
-                    Search Query
-                  </label>
-                  <Badge variant="outline" className="text-xs">
-                    Experimental
-                  </Badge>
-                </div>
-                <div className="mt-1 flex items-center gap-2">
-                  <Input
-                    id="search-query-filter"
-                    value={filterSearchQuery}
-                    onChange={(e) => setFilterSearchQuery(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        handleFilterSubmit();
-                      }
-                    }}
-                    placeholder="Search in input and output"
-                  />
-                  {filterSearchQuery && (
-                    <Button variant="outline" onClick={handleClearSearchFilter}>
-                      Clear
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div>
-                <InferenceFilterBuilder
-                  inferenceFilter={filterAdvanced}
-                  setInferenceFilter={setFilterAdvanced}
-                  functionName={filterFunctionName}
-                />
-              </div>
-            </div>
-
-            <SheetFooter className="mt-4 shrink-0">
-              <Button onClick={handleFilterSubmit}>Apply Filters</Button>
-            </SheetFooter>
-          </Form>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }

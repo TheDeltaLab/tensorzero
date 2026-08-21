@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
 use std::time::Duration;
 
@@ -139,6 +140,7 @@ impl OpenAIResponsesUsage {
                 .and_then(|d| d.cached_tokens),
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         }
     }
 }
@@ -1477,6 +1479,7 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
                     provider_cache_read_input_tokens,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }
             });
             let raw_usage = usage_value.map(|usage| {
@@ -1583,6 +1586,7 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
                     provider_cache_read_input_tokens,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }
             });
 
@@ -2545,6 +2549,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             "expected usage to include provider raw_usage entries"
         );
@@ -2643,6 +2648,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             })
         );
         assert_eq!(result.finish_reason, Some(FinishReason::Stop));
@@ -2747,6 +2753,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             "expected usage to include provider raw_usage entries"
         );

@@ -8,7 +8,9 @@ use crate::cache::{
     embedding_cache_lookup, start_cache_write,
 };
 use crate::config::provider_types::ProviderTypesConfig;
-use crate::cost::{CostConfig, ResponseMode, compute_cost, load_unified_cost_config};
+use crate::cost::{
+    CostConfig, ResponseMode, apply_computed_cost, load_unified_cost_config_with_provider_defaults,
+};
 use crate::endpoints::inference::InferenceClients;
 use crate::http::TensorzeroHttpClient;
 use crate::inference::types::RequestMessagesOrBatch;
@@ -271,6 +273,8 @@ impl TryFrom<StoredEmbeddingProviderConfig> for UninitializedEmbeddingProviderCo
             extra_body: stored.extra_body.map(ExtraBodyConfig::from),
             extra_headers: stored.extra_headers.map(ExtraHeadersConfig::from),
             cost,
+            timezone: stored.timezone,
+            currency: stored.currency,
         })
     }
 }
@@ -312,6 +316,8 @@ impl From<&UninitializedEmbeddingProviderConfig> for StoredEmbeddingProviderConf
                 .as_ref()
                 .map(StoredExtraHeadersConfig::from),
             cost: provider.cost.as_ref().map(StoredUnifiedCostConfig::from),
+            timezone: provider.timezone.clone(),
+            currency: provider.currency.clone(),
         }
     }
 }
@@ -383,12 +389,12 @@ impl EmbeddingModelConfig {
                     Ok(mut response) => {
                         // Compute cost from raw response using the provider's cost config
                         if let Some(cost_config) = &provider_config.cost {
-                            response.usage.cost = compute_cost(
+                            apply_computed_cost(
+                                &mut response.usage,
                                 &response.raw_response,
                                 cost_config,
                                 ResponseMode::NonStreaming,
-                            )
-                            .ok();
+                            );
                         }
                         if clients.cache_options.enabled.write() && response.embeddings.len() == 1 {
                             let Some(first_embedding) = response.embeddings.first() else {
@@ -586,6 +592,7 @@ impl EmbeddingModelResponse {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: Duration::from_secs(0),
@@ -816,6 +823,12 @@ pub struct UninitializedEmbeddingProviderConfig {
     pub extra_headers: Option<ExtraHeadersConfig>,
     #[serde(default)]
     pub cost: Option<UninitializedUnifiedCostConfig>,
+    /// Default IANA timezone for `cost` peak windows that omit `timezone`.
+    #[serde(default)]
+    pub timezone: Option<String>,
+    /// ISO 4217 code for `cost` rates. Defaults to `USD`.
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 impl UninitializedEmbeddingProviderConfig {
@@ -837,7 +850,13 @@ impl UninitializedEmbeddingProviderConfig {
         let extra_headers = self.extra_headers;
         let cost = self
             .cost
-            .map(load_unified_cost_config)
+            .map(|c| {
+                load_unified_cost_config_with_provider_defaults(
+                    c,
+                    self.timezone.as_deref(),
+                    self.currency.as_deref(),
+                )
+            })
             .transpose()
             .map_err(|e| {
                 Error::new(ErrorDetails::Config {
@@ -1043,6 +1062,8 @@ mod tests {
             extra_body: Some(extra_body_config.clone()),
             extra_headers: None,
             cost: None,
+            timezone: None,
+            currency: None,
         };
 
         let provider_info = uninitialized_config
@@ -1091,6 +1112,8 @@ mod tests {
             extra_body: None,
             extra_headers: Some(extra_headers_config.clone()),
             cost: None,
+            timezone: None,
+            currency: None,
         };
 
         let provider_info = uninitialized_config
@@ -1131,6 +1154,8 @@ mod tests {
                     extra_headers: None,
                     timeout_ms: None,
                     cost: None,
+                    timezone: None,
+                    currency: None,
                 },
             )]),
             timeout_ms: Some(5000),

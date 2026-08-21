@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { ModelUsageTimePoint } from "~/types/tensorzero";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import {
@@ -169,43 +170,39 @@ export function ModelUsage({
                 {},
               );
 
-              // Compute cost coverage percentage using backend-provided count_with_cost,
-              // limited to the visible periods shown in the chart
-              let costCoveragePercent: number | null = null;
-              if (selectedMetric === "cost") {
-                const visibleRows = modelUsageData.filter(
-                  (row) =>
-                    row.count &&
-                    Number(row.count) > 0 &&
-                    visiblePeriods.has(row.period_start),
-                );
-                let totalCount = 0;
-                let countWithCost = 0;
-                for (const row of visibleRows) {
-                  totalCount += Number(row.count);
-                  countWithCost += Number(row.count_with_cost ?? 0);
-                }
-                if (totalCount > 0) {
-                  costCoveragePercent = Math.floor(
-                    (countWithCost / totalCount) * 100,
-                  );
-                }
-              }
+              const costCoverage =
+                selectedMetric === "cost"
+                  ? computeCostCoverage(
+                      modelUsageData,
+                      visiblePeriods,
+                      modelNames,
+                    )
+                  : null;
 
               return (
                 <>
                   {selectedMetric === "cost" &&
-                    costCoveragePercent != null &&
-                    costCoveragePercent < 100 && (
+                    costCoverage &&
+                    costCoverage.total > 0 &&
+                    costCoverage.percent < 100 && (
                       <div className="mb-4 flex items-center gap-2 rounded-md border border-yellow-500 bg-yellow-50 p-3 text-sm text-yellow-700 dark:bg-yellow-950 dark:text-yellow-200">
                         <AlertTriangle className="h-4 w-4 shrink-0 text-yellow-500" />
                         <span>
-                          Cost data only covers ~{costCoveragePercent}% of model
-                          inferences. Some models may not have cost tracking
-                          configured.
+                          Cost is stored for{" "}
+                          {formatDetailedNumber(costCoverage.withCost)} of{" "}
+                          {formatDetailedNumber(costCoverage.total)} inferences
+                          in this chart (~
+                          {formatCostCoveragePercent(costCoverage.percent)}
+                          %). Providers without a cost config are not billed.
                         </span>
                       </div>
                     )}
+                  {selectedMetric === "cost" && modelNames.length === 0 && (
+                    <div className="text-fg-muted mb-4 text-sm">
+                      No stored cost in this window. Add a cost array on the
+                      model provider to start tracking.
+                    </div>
+                  )}
                   <ChartContainer config={chartConfig}>
                     <BarChart accessibilityLayer data={data}>
                       <CartesianGrid vertical={false} />
@@ -322,6 +319,42 @@ type UsageDataGroupedByDate = {
     }
   >;
 }[];
+
+export function computeCostCoverage(
+  modelUsageData: ModelUsageTimePoint[],
+  visiblePeriods: Set<string>,
+  modelNames: string[],
+): { percent: number; withCost: number; total: number } {
+  const models = new Set(modelNames);
+  let total = 0;
+  let withCost = 0;
+  for (const row of modelUsageData) {
+    if (!models.has(row.model_name)) {
+      continue;
+    }
+    if (!visiblePeriods.has(row.period_start)) {
+      continue;
+    }
+    const count = Number(row.count ?? 0);
+    if (count <= 0) {
+      continue;
+    }
+    total += count;
+    withCost += Number(row.count_with_cost ?? 0);
+  }
+  return {
+    percent: total > 0 ? (withCost / total) * 100 : 0,
+    withCost,
+    total,
+  };
+}
+
+export function formatCostCoveragePercent(percent: number): string {
+  if (percent > 0 && percent < 1) {
+    return "<1";
+  }
+  return String(Math.round(percent));
+}
 
 export function transformModelUsageData(
   modelUsageData: ModelUsageTimePoint[],

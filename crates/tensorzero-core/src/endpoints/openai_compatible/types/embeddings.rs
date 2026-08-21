@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Embedding types for OpenAI-compatible API.
 //!
 //! This module provides request and response types for the embeddings endpoint,
@@ -78,6 +79,9 @@ impl TryFrom<OpenAICompatibleEmbeddingParams> for EmbeddingParams {
             dryrun: params.tensorzero_dryrun,
             cache_options: params.tensorzero_cache_options.unwrap_or_default(),
             include_raw_response: params.tensorzero_include_raw_response,
+            extra_internal_tags: HashMap::new(),
+            tags: HashMap::new(),
+            episode_id: None,
         })
     }
 }
@@ -111,6 +115,8 @@ pub struct OpenAIEmbeddingUsage {
     pub total_tokens: Option<u32>,
     #[serde(default, with = "rust_decimal::serde::float_option")]
     pub tensorzero_cost: Option<rust_decimal::Decimal>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tensorzero_currency: Option<tensorzero_types::Currency>,
 }
 
 impl From<EmbeddingResponse> for OpenAIEmbeddingResponse {
@@ -130,6 +136,7 @@ impl From<EmbeddingResponse> for OpenAIEmbeddingResponse {
                 prompt_tokens: response.usage.input_tokens,
                 total_tokens: response.usage.input_tokens, // there are no output tokens for embeddings
                 tensorzero_cost: response.usage.cost,
+                tensorzero_currency: response.usage.currency,
             }),
             tensorzero_raw_response: response.tensorzero_raw_response,
         }

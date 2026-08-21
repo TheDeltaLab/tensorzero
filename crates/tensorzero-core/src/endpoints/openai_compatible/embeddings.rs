@@ -17,8 +17,8 @@ use tensorzero_auth::middleware::RequestApiKeyExtension;
 
 use super::infer::error_response;
 use super::synapse::{
-    SynapseRequestContext, resolve_cache_options, resolve_openai_compatible_model,
-    run_with_request_timeout, served_by_from_model_name,
+    SynapseRequestContext, overlay_compat_headers, resolve_cache_options,
+    resolve_openai_compatible_model, run_with_request_timeout, served_by_from_model_name,
 };
 use super::types::embeddings::{OpenAICompatibleEmbeddingParams, OpenAIEmbeddingResponse};
 use super::{OpenAICompatibleError, OpenAIStructuredJson};
@@ -66,6 +66,14 @@ pub async fn embeddings_handler(
         Err(error) => return Ok(error_response(error, include_raw_response, &synapse)),
     };
     embedding_params.cache_options = resolve_cache_options(explicit_cache, synapse.cache_disabled);
+    embedding_params.extra_internal_tags = synapse.observability_tags(&headers);
+    if let Err(error) = overlay_compat_headers(
+        &headers,
+        &mut embedding_params.episode_id,
+        &mut embedding_params.tags,
+    ) {
+        return Ok(error_response(error, include_raw_response, &synapse));
+    }
     let session = RoutingSession::new(synapse.fallback_disabled);
     let mut response = match Box::pin(run_with_request_timeout(
         synapse.request_timeout,

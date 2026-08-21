@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Usage tracking types for OpenAI-compatible API.
 //!
 //! This module provides types for token usage reporting in OpenAI-compatible responses,
@@ -7,10 +8,11 @@
 //! - Standard OpenAI fields (e.g. `prompt_tokens`) keep their original names.
 //! - `prompt_tokens_details.cached_tokens` is the OpenAI-standard field for cache reads.
 //! - Non-standard TensorZero fields use a `tensorzero_` prefix (e.g. `tensorzero_cost`,
-//!   `tensorzero_provider_cache_write_input_tokens`).
+//!   `tensorzero_currency`, `tensorzero_provider_cache_write_input_tokens`).
 
 use rust_decimal::Decimal;
 use serde::Serialize;
+use tensorzero_types::Currency;
 
 use crate::inference::types::Usage;
 
@@ -34,6 +36,8 @@ pub struct OpenAICompatibleUsage {
     pub tensorzero_provider_cache_write_input_tokens: Option<u32>,
     #[serde(with = "rust_decimal::serde::float_option")]
     pub tensorzero_cost: Option<Decimal>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tensorzero_currency: Option<Currency>,
 }
 
 impl OpenAICompatibleUsage {
@@ -45,6 +49,7 @@ impl OpenAICompatibleUsage {
             prompt_tokens_details: None,
             tensorzero_provider_cache_write_input_tokens: None,
             tensorzero_cost: Some(Decimal::ZERO),
+            tensorzero_currency: None,
         }
     }
 
@@ -96,9 +101,32 @@ impl OpenAICompatibleUsage {
         };
 
         self.tensorzero_cost = match (self.tensorzero_cost, other.cost) {
-            (Some(a), Some(b)) => Some(a + b),
-            _ => None,
+            (Some(a), Some(b)) => {
+                match merge_usage_currency(self.tensorzero_currency, other.currency) {
+                    Some(currency) => {
+                        self.tensorzero_currency = Some(currency);
+                        Some(a + b)
+                    }
+                    None => {
+                        self.tensorzero_currency = None;
+                        None
+                    }
+                }
+            }
+            _ => {
+                self.tensorzero_currency = None;
+                None
+            }
         };
+    }
+}
+
+fn merge_usage_currency(left: Option<Currency>, right: Option<Currency>) -> Option<Currency> {
+    match (left, right) {
+        (None, None) => Some(Currency::USD),
+        (Some(value), None) | (None, Some(value)) => Some(value),
+        (Some(left), Some(right)) if left == right => Some(left),
+        (Some(_), Some(_)) => None,
     }
 }
 
@@ -115,6 +143,7 @@ impl From<Usage> for OpenAICompatibleUsage {
             }),
             tensorzero_provider_cache_write_input_tokens: usage.provider_cache_write_input_tokens,
             tensorzero_cost: usage.cost,
+            tensorzero_currency: usage.currency,
         }
     }
 }
@@ -133,6 +162,7 @@ mod tests {
             provider_cache_read_input_tokens: Some(5),
             provider_cache_write_input_tokens: Some(3),
             cost: Some(Decimal::new(1, 2)),
+            currency: None,
         };
         usage.sum_usage_strict(&other);
         expect_that!(usage.prompt_tokens, some(eq(10)));
@@ -157,6 +187,7 @@ mod tests {
             }),
             tensorzero_provider_cache_write_input_tokens: Some(20),
             tensorzero_cost: Some(Decimal::new(5, 2)),
+            tensorzero_currency: None,
         };
         let other = Usage {
             input_tokens: Some(10),
@@ -164,6 +195,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: Some(Decimal::new(1, 2)),
+            currency: None,
         };
         usage.sum_usage_strict(&other);
         expect_that!(usage.prompt_tokens, some(eq(110)));
@@ -189,6 +221,7 @@ mod tests {
             prompt_tokens_details: None,
             tensorzero_provider_cache_write_input_tokens: None,
             tensorzero_cost: Some(Decimal::ZERO),
+            tensorzero_currency: None,
         };
         let other = Usage {
             input_tokens: Some(10),
@@ -196,6 +229,7 @@ mod tests {
             provider_cache_read_input_tokens: Some(8),
             provider_cache_write_input_tokens: Some(2),
             cost: Some(Decimal::new(1, 2)),
+            currency: None,
         };
         usage.sum_usage_strict(&other);
         expect_that!(
@@ -219,6 +253,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         usage.sum_usage_strict(&other);
         expect_that!(usage.cached_tokens(), none());
@@ -233,6 +268,7 @@ mod tests {
             provider_cache_read_input_tokens: Some(80),
             provider_cache_write_input_tokens: Some(20),
             cost: Some(Decimal::new(5, 2)),
+            currency: None,
         };
         let compat: OpenAICompatibleUsage = usage.into();
         expect_that!(compat.prompt_tokens, some(eq(100)));
@@ -256,6 +292,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         usage.sum_usage_strict(&other);
         expect_that!(
@@ -264,5 +301,27 @@ mod tests {
             "None input_tokens should contaminate to None"
         );
         expect_that!(usage.completion_tokens, some(eq(5)));
+    }
+
+    #[gtest]
+    fn test_sum_usage_strict_mixed_currency_drops_cost() {
+        let mut usage = OpenAICompatibleUsage::from(Usage {
+            input_tokens: Some(1),
+            output_tokens: Some(1),
+            provider_cache_read_input_tokens: None,
+            provider_cache_write_input_tokens: None,
+            cost: Some(Decimal::ONE),
+            currency: Some(Currency::USD),
+        });
+        usage.sum_usage_strict(&Usage {
+            input_tokens: Some(1),
+            output_tokens: Some(1),
+            provider_cache_read_input_tokens: None,
+            provider_cache_write_input_tokens: None,
+            cost: Some(Decimal::ONE),
+            currency: Some(Currency::CNY),
+        });
+        expect_that!(usage.tensorzero_cost, none());
+        expect_that!(usage.tensorzero_currency, none());
     }
 }

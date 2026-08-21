@@ -13,12 +13,20 @@ use tracing::instrument;
 
 use crate::error::{Error, ErrorDetails};
 use crate::inference::types::ApiType;
+use crate::observability_tags::parse_csv_tags;
 use crate::utils::gateway::{AppState, AppStateData};
+use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct SynapseTimeRangeQuery {
     pub from: DateTime<Utc>,
     pub to: DateTime<Utc>,
+    /// Comma-separated `key=value` pairs, same as `x-tensorzero-tags`.
+    #[serde(default)]
+    pub tags: Option<String>,
+    /// Group analytics by this user-tag key (e.g. `env`).
+    #[serde(default)]
+    pub group_by_tag: Option<String>,
 }
 
 #[derive(Debug, sqlx::FromRow)]
@@ -34,6 +42,8 @@ struct UsageRow {
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 pub struct SynapseAnalyticsRow {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
     pub model_name: String,
     pub requests: i64,
     pub input_tokens: i64,
@@ -80,6 +90,30 @@ fn require_pool(app_state: &AppStateData) -> Result<&sqlx::PgPool, Error> {
                 message: "Postgres is disabled; Synapse usage export requires observability.backend = postgres".to_string(),
             })
         })
+}
+
+fn parse_query_tags(raw: Option<&str>) -> Result<HashMap<String, String>, Error> {
+    let Some(raw) = raw.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(HashMap::new());
+    };
+    parse_csv_tags(raw).map_err(|message| {
+        Error::new(ErrorDetails::InvalidRequest {
+            message: format!("Invalid `tags` query parameter: {message}"),
+        })
+    })
+}
+
+fn push_tag_contains_filters(
+    query_builder: &mut QueryBuilder<sqlx::Postgres>,
+    tags: &HashMap<String, String>,
+) {
+    for (key, value) in tags {
+        query_builder.push(" AND i.tags @> jsonb_build_object(");
+        query_builder.push_bind(key);
+        query_builder.push(", ");
+        query_builder.push_bind(value);
+        query_builder.push(")");
+    }
 }
 
 /// Handler for `GET /internal/synapse/usage_export`
@@ -159,25 +193,58 @@ pub async fn analytics_handler(
         }));
     }
     let pool = require_pool(&app_state)?;
-    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT model_name, \
+    let tag_filter = parse_query_tags(params.tags.as_deref())?;
+    let group_by_tag = params
+        .group_by_tag
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    let join_inferences = !tag_filter.is_empty() || group_by_tag.is_some();
+
+    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new("SELECT ");
+    if let Some(key) = &group_by_tag {
+        query_builder.push("i.tags ->> ");
+        query_builder.push_bind(key);
+        query_builder.push(" as tag, ");
+    } else {
+        query_builder.push("NULL::TEXT as tag, ");
+    }
+    query_builder.push(
+        "mi.model_name as model_name, \
                 COUNT(*)::BIGINT as requests, \
-                COALESCE(SUM(input_tokens), 0)::BIGINT as input_tokens, \
-                COALESCE(SUM(output_tokens), 0)::BIGINT as output_tokens, \
-                AVG(response_time_ms)::FLOAT8 as avg_latency_ms, \
-                AVG(ttft_ms)::FLOAT8 as avg_ttft_ms, \
-                CASE WHEN SUM(GREATEST(response_time_ms - COALESCE(ttft_ms, 0), 1)) > 0 \
-                     THEN (COALESCE(SUM(output_tokens), 0)::FLOAT8 * 1000.0) \
-                          / SUM(GREATEST(response_time_ms - COALESCE(ttft_ms, 0), 1))::FLOAT8 \
+                COALESCE(SUM(mi.input_tokens), 0)::BIGINT as input_tokens, \
+                COALESCE(SUM(mi.output_tokens), 0)::BIGINT as output_tokens, \
+                AVG(mi.response_time_ms)::FLOAT8 as avg_latency_ms, \
+                AVG(mi.ttft_ms)::FLOAT8 as avg_ttft_ms, \
+                CASE WHEN SUM(GREATEST(mi.response_time_ms - COALESCE(mi.ttft_ms, 0), 1)) > 0 \
+                     THEN (COALESCE(SUM(mi.output_tokens), 0)::FLOAT8 * 1000.0) \
+                          / SUM(GREATEST(mi.response_time_ms - COALESCE(mi.ttft_ms, 0), 1))::FLOAT8 \
                      ELSE 0 END as output_tps_excluding_ttft, \
-                CASE WHEN COALESCE(SUM(output_tokens), 0) = 0 THEN 'embedding' ELSE 'chat' END as kind \
-         FROM tensorzero.model_inferences \
-         WHERE created_at >= ",
+                CASE WHEN COALESCE(SUM(mi.output_tokens), 0) = 0 THEN 'embedding' ELSE 'chat' END as kind \
+         FROM tensorzero.model_inferences mi",
     );
+    if join_inferences {
+        query_builder.push(
+            " INNER JOIN ( \
+                SELECT id, tags FROM tensorzero.chat_inferences \
+                UNION ALL \
+                SELECT id, tags FROM tensorzero.json_inferences \
+              ) i ON mi.inference_id = i.id",
+        );
+    }
+    query_builder.push(" WHERE mi.created_at >= ");
     query_builder.push_bind(params.from);
-    query_builder.push(" AND created_at < ");
+    query_builder.push(" AND mi.created_at < ");
     query_builder.push_bind(params.to);
-    query_builder.push(" GROUP BY model_name ORDER BY model_name");
+    if join_inferences {
+        push_tag_contains_filters(&mut query_builder, &tag_filter);
+    }
+    if group_by_tag.is_some() {
+        query_builder.push(" GROUP BY 1, mi.model_name ORDER BY mi.model_name, 1");
+    } else {
+        query_builder.push(" GROUP BY mi.model_name ORDER BY mi.model_name");
+    }
     let data: Vec<SynapseAnalyticsRow> = query_builder
         .build_query_as()
         .fetch_all(pool)

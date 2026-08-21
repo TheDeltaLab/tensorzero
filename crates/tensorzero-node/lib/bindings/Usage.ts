@@ -6,4 +6,8 @@ export type Usage = {
   provider_cache_read_input_tokens?: number;
   provider_cache_write_input_tokens?: number;
   cost: number | null;
+  /**
+   * ISO 4217 code for `cost`. Present when cost was computed from a provider `cost` config.
+   */
+  currency?: string;
 };

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashMap;
 
 use crate::error::{Error, ErrorDetails};
@@ -22,6 +23,7 @@ pub mod namespace;
 pub mod object_storage;
 pub mod openai_compatible;
 pub mod shared_types;
+pub(crate) mod standalone_inference;
 pub mod status;
 pub mod stored_inferences;
 pub mod ui;

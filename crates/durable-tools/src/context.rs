@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::{DateTime, Utc};
 use durable::{
     Durable, HeartbeatHandle, Heartbeater, SpawnOptions, StepState, TaskContext, TaskHandle,
@@ -740,6 +741,9 @@ async fn embeddings_step<S: Send + Sync + 'static>(
         credentials: serializable.credentials,
         cache_options: serializable.cache_options,
         include_raw_response: serializable.include_raw_response,
+        extra_internal_tags: std::collections::HashMap::new(),
+        tags: std::collections::HashMap::new(),
+        episode_id: None,
     };
     step_state
         .state

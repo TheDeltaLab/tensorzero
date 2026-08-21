@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Integration tests for durable-tools (requires Postgres).
 //!
 //! These tests use `#[sqlx::test]` with the durable migrator to automatically
@@ -72,6 +73,7 @@ fn create_mock_chat_response(text: &str) -> InferenceResponse {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         },
         raw_usage: None,
         original_response: None,
@@ -888,6 +890,7 @@ fn mock_client_with_empty_chat_response() -> MockTensorZeroClient {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 raw_usage: None,
                 original_response: None,
@@ -921,6 +924,7 @@ fn mock_client_with_empty_json_response() -> MockTensorZeroClient {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 raw_usage: None,
                 original_response: None,

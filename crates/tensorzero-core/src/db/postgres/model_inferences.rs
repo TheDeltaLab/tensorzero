@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Model inference queries for Postgres.
 //!
 //! This module implements read and write operations for the model_inferences table in Postgres.
@@ -237,6 +238,7 @@ fn build_get_model_inferences_query(inference_id: Uuid) -> QueryBuilder<sqlx::Po
             i.ttft_ms,
             i.cached,
             i.cost,
+            i.currency,
             i.finish_reason,
             i.snapshot_hash,
             i.created_at
@@ -265,7 +267,7 @@ pub(super) fn build_insert_model_inferences_query(
             id, inference_id, function_name, variant_name, input_tokens, output_tokens,
             provider_cache_read_input_tokens, provider_cache_write_input_tokens,
             response_time_ms, model_name, model_provider_name,
-            ttft_ms, cached, finish_reason, snapshot_hash, cost, created_at
+            ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, created_at
         ) ",
     );
 
@@ -286,6 +288,7 @@ pub(super) fn build_insert_model_inferences_query(
             .push_bind(row.finish_reason)
             .push_bind(row.snapshot_hash.as_ref())
             .push_bind(row.cost)
+            .push_bind(row.currency.as_deref())
             .push_bind(created_at);
     });
 
@@ -349,6 +352,8 @@ async fn get_model_usage_timeseries_impl(
     time_window: TimeWindow,
     max_periods: u32,
 ) -> Result<Vec<ModelUsageTimePoint>, Error> {
+    refresh_model_provider_statistics(pool).await;
+
     // For cumulative, we aggregate everything into a single period at epoch
     if time_window == TimeWindow::Cumulative {
         return get_model_usage_cumulative(pool).await;
@@ -358,6 +363,20 @@ async fn get_model_usage_timeseries_impl(
     let rows: Vec<ModelUsageTimePoint> = query_builder.build_query_as().fetch_all(pool).await?;
 
     Ok(rows)
+}
+
+async fn refresh_model_provider_statistics(pool: &PgPool) {
+    if let Err(error) = sqlx::query(
+        "SELECT tensorzero.refresh_model_provider_statistics_incremental(INTERVAL '10 minutes')",
+    )
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            %error,
+            "Failed to refresh model_provider_statistics before usage query"
+        );
+    }
 }
 
 /// Builds the query for model usage timeseries (non-cumulative).
@@ -1000,6 +1019,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredModelInference {
         let ttft_ms: Option<i32> = row.try_get("ttft_ms")?;
         let cached: bool = row.try_get("cached")?;
         let cost: Option<Decimal> = row.try_get("cost")?;
+        let currency: Option<String> = row.try_get("currency")?;
         let finish_reason: Option<FinishReason> = row.try_get("finish_reason")?;
         let snapshot_hash: Option<SnapshotHash> = row.try_get("snapshot_hash")?;
         let created_at: DateTime<Utc> = row.try_get("created_at")?;
@@ -1024,6 +1044,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredModelInference {
             ttft_ms: ttft_ms.map(|v| v as u32),
             cached,
             cost,
+            currency,
             finish_reason,
             snapshot_hash,
             timestamp: Some(created_at.to_rfc3339()),
@@ -1577,6 +1598,7 @@ mod tests {
                 i.ttft_ms,
                 i.cached,
                 i.cost,
+                i.currency,
                 i.finish_reason,
                 i.snapshot_hash,
                 i.created_at
@@ -1609,6 +1631,7 @@ mod tests {
             ttft_ms: Some(50),
             cached: false,
             cost: None,
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -1622,8 +1645,8 @@ mod tests {
                 id, inference_id, function_name, variant_name, input_tokens, output_tokens,
                 provider_cache_read_input_tokens, provider_cache_write_input_tokens,
                 response_time_ms, model_name, model_provider_name,
-                ttft_ms, cached, finish_reason, snapshot_hash, cost, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+                ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
             ",
         );
 
@@ -1662,6 +1685,7 @@ mod tests {
                 ttft_ms: None,
                 cached: false,
                 cost: None,
+                currency: None,
                 finish_reason: None,
                 snapshot_hash: None,
                 timestamp: None,
@@ -1686,6 +1710,7 @@ mod tests {
                 ttft_ms: Some(25),
                 cached: true,
                 cost: None,
+                currency: None,
                 finish_reason: Some(FinishReason::ToolCall),
                 snapshot_hash: None,
                 timestamp: None,
@@ -1700,9 +1725,9 @@ mod tests {
                 id, inference_id, function_name, variant_name, input_tokens, output_tokens,
                 provider_cache_read_input_tokens, provider_cache_write_input_tokens,
                 response_time_ms, model_name, model_provider_name,
-                ttft_ms, cached, finish_reason, snapshot_hash, cost, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17),
-            ($18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34)
+                ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18),
+            ($19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
             ",
         );
 

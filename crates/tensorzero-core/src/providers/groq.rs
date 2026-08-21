@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use futures::future::try_join_all;
 use futures::{Stream, StreamExt, TryStreamExt};
 use reqwest::StatusCode;
@@ -1248,6 +1249,7 @@ fn groq_usage_to_tensorzero_usage(usage: GroqUsage) -> Usage {
         provider_cache_read_input_tokens: usage.prompt_tokens_details.and_then(|d| d.cached_tokens),
         provider_cache_write_input_tokens: None,
         cost: None,
+        currency: None,
     }
 }
 
@@ -2565,6 +2567,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             "expected usage to include provider raw_usage entries"
         );

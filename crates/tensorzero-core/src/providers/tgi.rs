@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::http::TensorzeroHttpClient;
 use async_trait::async_trait;
 /// TGI integration for TensorZero
@@ -697,6 +698,7 @@ impl TGIUsage {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         }
     }
 }

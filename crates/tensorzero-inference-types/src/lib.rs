@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Shared types for the TensorZero provider interface.
 //!
 //! This crate contains types that form the boundary between provider implementations
@@ -1249,6 +1250,7 @@ mod tests {
             input_tokens: Some(100),
             output_tokens: Some(50),
             cost: Some(Decimal::new(15, 4)), // 0.0015
+            currency: None,
             ..Default::default()
         };
         let json = serde_json::to_value(usage).expect("should serialize");

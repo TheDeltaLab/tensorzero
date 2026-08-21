@@ -8,6 +8,7 @@ use axum::Extension;
 use serde::{Deserialize, Serialize};
 use tokio_util::task::TaskTracker;
 use tracing::instrument;
+use uuid::Uuid;
 
 use metrics::counter;
 
@@ -17,6 +18,10 @@ use crate::{
     db::{clickhouse::ClickHouseConnectionInfo, postgres::PostgresConnectionInfo},
     embeddings::{Embedding, EmbeddingEncodingFormat, EmbeddingInput, EmbeddingRequest},
     endpoints::inference::InferenceClients,
+    endpoints::standalone_inference::{
+        EMBEDDINGS_ENDPOINT, StandaloneInferenceRecord, StandaloneInput, embedding_input_to_texts,
+        embedding_output_payload, maybe_write_standalone_inference,
+    },
     error::{Error, ErrorDetails},
     http::TensorzeroHttpClient,
     inference::types::{
@@ -47,6 +52,15 @@ pub struct EmbeddingsParams {
     pub cache_options: CacheParamsOptions,
     #[serde(default, rename = "tensorzero::include_raw_response")]
     pub include_raw_response: bool,
+    /// Gateway-injected Synapse request headers / ids. Not part of the JSON body.
+    #[serde(skip)]
+    pub extra_internal_tags: HashMap<String, String>,
+    /// Client tags from `x-tensorzero-tags` (and later JSON). Not part of the OpenAI body.
+    #[serde(default, skip)]
+    pub tags: HashMap<String, String>,
+    /// Episode id from `x-tensorzero-episode-id`. Not part of the OpenAI body.
+    #[serde(default, skip)]
+    pub episode_id: Option<Uuid>,
 }
 
 #[instrument(name = "embeddings", skip_all, fields(model, num_inputs))]
@@ -96,9 +110,10 @@ pub async fn embeddings(
         encoding_format: params.encoding_format,
     };
 
-    // NOTE: we do not support tags for embeddings yet
-    // we should fix this once the tags are implemented
-    let tags = Arc::new(HashMap::default());
+    // Client tags come from `x-tensorzero-tags` (and extra_internal_tags for gateway headers).
+    let mut rate_limit_tags = params.tags.clone();
+    rate_limit_tags.extend(params.extra_internal_tags.clone());
+    let tags = Arc::new(rate_limit_tags);
     let dryrun = params.dryrun.unwrap_or(false);
 
     // Increment the request and inference counts if we're not in dryrun mode
@@ -117,6 +132,7 @@ pub async fn embeddings(
         .increment(num_inputs as u64);
         TENSORZERO_INFERENCES_TOTAL.fetch_add(num_inputs as u64, Ordering::Relaxed);
     }
+    let deferred_tasks_for_write = deferred_tasks.clone();
     let clients = InferenceClients {
         http_client: http_client.clone(),
         credentials: Arc::new(params.credentials.clone()),
@@ -138,6 +154,33 @@ pub async fn embeddings(
         .embed(&request, &params.model_name, &clients)
         .await?;
     let usage = response.usage_considering_cached();
+    maybe_write_standalone_inference(
+        config.clone(),
+        clickhouse_connection_info,
+        postgres_connection_info,
+        deferred_tasks_for_write,
+        dryrun,
+        StandaloneInferenceRecord {
+            endpoint: EMBEDDINGS_ENDPOINT,
+            variant_name: params.model_name.clone(),
+            model_name: params.model_name.clone(),
+            model_provider_name: response.embedding_provider_name.to_string(),
+            provider_type: response.provider_type.to_string(),
+            input: StandaloneInput::Embeddings {
+                texts: embedding_input_to_texts(&response.input),
+            },
+            output_text: embedding_output_payload(&response.embeddings),
+            raw_request: response.raw_request.clone(),
+            raw_response: response.raw_response.clone(),
+            usage: response.usage,
+            latency: response.latency,
+            cached: response.cached,
+            extra_internal_tags: params.extra_internal_tags,
+            tags: params.tags,
+            episode_id: params.episode_id,
+        },
+    )
+    .await;
     let tensorzero_raw_response = if params.include_raw_response && !response.cached {
         let mut entries = response.failed_raw_response.clone();
         entries.push(RawResponseEntry {
@@ -233,6 +276,9 @@ mod tests {
             credentials: InferenceCredentials::default(),
             cache_options: CacheParamsOptions::default(),
             include_raw_response: false,
+            extra_internal_tags: HashMap::new(),
+            tags: HashMap::new(),
+            episode_id: None,
         };
 
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
@@ -272,6 +318,9 @@ mod tests {
             credentials: InferenceCredentials::default(),
             cache_options: CacheParamsOptions::default(),
             include_raw_response: false,
+            extra_internal_tags: HashMap::new(),
+            tags: HashMap::new(),
+            episode_id: None,
         };
 
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();

@@ -23,6 +23,13 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tensorzero::ClientExt;
 use tensorzero_core::cache::CacheEnabledMode;
+use tensorzero_core::db::clickhouse::query_builder::{
+    InferenceFilter, TagComparisonOperator, TagFilter,
+};
+use tensorzero_core::db::delegating_connection::DelegatingDatabaseConnection;
+use tensorzero_core::db::inferences::{InferenceQueries, ListInferencesParams};
+use tensorzero_core::db::model_inferences::ModelInferenceQueries;
+use tensorzero_core::db::test_helpers::TestDatabaseHelpers;
 use tensorzero_core::endpoints::internal::synapse::{
     SynapseTimeRangeQuery, analytics_handler, balances_handler, usage_export_handler,
 };
@@ -39,6 +46,9 @@ use tensorzero_core::endpoints::openai_compatible::synapse::{
 };
 use tensorzero_core::endpoints::openai_compatible::types::chat_completions::OpenAICompatibleParams;
 use tensorzero_core::model::SHORTHAND_MODEL_PREFIXES;
+use tensorzero_core::stored_inference::StoredInferenceDatabase;
+use tensorzero_core::test_helpers::get_e2e_config;
+use uuid::Uuid;
 
 use crate::common::get_gateway_endpoint;
 
@@ -254,6 +264,181 @@ async fn synapse_bare_model_and_provider_header() {
 
 #[gtest]
 #[tokio::test(flavor = "multi_thread")]
+async fn tensorzero_headers_activate_synapse_compat_and_echo_both_prefixes() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-tensorzero-provider", "dummy".parse().unwrap());
+    headers.insert("x-tensorzero-request-id", "tz-trace-a".parse().unwrap());
+    let (status, headers, _) = json_of(
+        chat_completions_handler(State(state), None, headers, chat_body("good"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_that!(status, eq(StatusCode::OK));
+    expect_that!(served_by(&headers), eq("dummy/good"));
+    expect_that!(
+        headers
+            .get("x-tensorzero-served-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("dummy/good")
+    );
+    expect_that!(
+        headers
+            .get("x-tensorzero-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("tz-trace-a")
+    );
+    expect_that!(
+        headers
+            .get("x-synapse-request-id")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("tz-trace-a")
+    );
+}
+
+#[gtest]
+#[tokio::test(flavor = "multi_thread")]
+async fn tensorzero_episode_and_tags_headers_persist() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let episode_id = Uuid::now_v7();
+    let mut headers = HeaderMap::new();
+    headers.insert("x-tensorzero-provider", "dummy".parse().unwrap());
+    headers.insert(
+        "x-tensorzero-episodes-id",
+        episode_id.to_string().parse().unwrap(),
+    );
+    headers.insert(
+        "x-tensorzero-tags",
+        "env=prod,team=ml,canary".parse().unwrap(),
+    );
+    let (status, _, body) = json_of(
+        chat_completions_handler(State(state), None, headers, chat_body("good"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_that!(status, eq(StatusCode::OK));
+    expect_that!(
+        body["episode_id"].as_str().unwrap(),
+        eq(episode_id.to_string().as_str())
+    );
+
+    let conn = DelegatingDatabaseConnection::new_for_e2e_test().await;
+    conn.flush_pending_writes().await;
+    conn.sleep_for_writes_to_be_visible().await;
+    let config = get_e2e_config().await;
+    let inferences = conn
+        .list_inferences(
+            &config,
+            &ListInferencesParams {
+                episode_id: Some(&episode_id),
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list inferences by episode header");
+    let chat = inferences.iter().find_map(|inference| match inference {
+        StoredInferenceDatabase::Chat(chat) => Some(chat),
+        StoredInferenceDatabase::Json(_) => None,
+    });
+    let chat = chat.expect("expected chat inference for episode header");
+    expect_that!(chat.episode_id, eq(episode_id));
+    expect_that!(chat.tags.get("env").map(String::as_str), eq(Some("prod")));
+    expect_that!(chat.tags.get("team").map(String::as_str), eq(Some("ml")));
+    expect_that!(
+        chat.tags.get("canary").map(String::as_str),
+        eq(Some("true"))
+    );
+}
+
+#[gtest]
+#[tokio::test(flavor = "multi_thread")]
+async fn synapse_chat_persists_request_headers_and_filters_by_request_id() {
+    let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+    let request_id = format!("e2e-obs-{}", Uuid::now_v7());
+    let mut headers = HeaderMap::new();
+    headers.insert("x-synapse-provider", "dummy".parse().unwrap());
+    headers.insert("x-synapse-request-id", request_id.parse().unwrap());
+    let (status, _, _) = json_of(
+        chat_completions_handler(State(state), None, headers, chat_body("good"))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_that!(status, eq(StatusCode::OK));
+
+    let conn = DelegatingDatabaseConnection::new_for_e2e_test().await;
+    conn.flush_pending_writes().await;
+    conn.sleep_for_writes_to_be_visible().await;
+    let config = get_e2e_config().await;
+    let inferences = conn
+        .list_inferences(
+            &config,
+            &ListInferencesParams {
+                filters: Some(&InferenceFilter::Or {
+                    children: vec![
+                        InferenceFilter::Tag(TagFilter {
+                            key: "tensorzero::synapse_request_id".to_string(),
+                            value: request_id.clone(),
+                            comparison_operator: TagComparisonOperator::Equal,
+                        }),
+                        InferenceFilter::Tag(TagFilter {
+                            key: "tensorzero::provider_request_id".to_string(),
+                            value: request_id.clone(),
+                            comparison_operator: TagComparisonOperator::Equal,
+                        }),
+                    ],
+                }),
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list inferences by request id");
+    let chat = inferences.iter().find_map(|inference| match inference {
+        StoredInferenceDatabase::Chat(chat) => Some(chat),
+        StoredInferenceDatabase::Json(_) => None,
+    });
+    let chat = chat.unwrap_or_else(|| panic!("expected chat inference for {request_id}"));
+    expect_that!(
+        chat.tags
+            .get("tensorzero::synapse_request_id")
+            .map(String::as_str),
+        eq(Some(request_id.as_str()))
+    );
+    expect_that!(
+        chat.tags.get("tensorzero::provider").map(String::as_str),
+        eq(Some("dummy"))
+    );
+    expect_that!(
+        chat.tags
+            .get("tensorzero::header::x-tensorzero-request-id")
+            .map(String::as_str),
+        eq(Some(request_id.as_str()))
+    );
+    expect_that!(
+        chat.tags
+            .get("tensorzero::request_headers")
+            .map(String::as_str)
+            .unwrap_or("")
+            .contains(&request_id),
+        eq(true)
+    );
+}
+
+#[gtest]
+#[tokio::test(flavor = "multi_thread")]
 async fn synapse_completions_and_responses() {
     let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
     let state = client.get_app_state_data().unwrap().load_latest();
@@ -413,6 +598,7 @@ targets = [{ provider = "dummy", model = "good" }]
 #[tokio::test(flavor = "multi_thread")]
 async fn synapse_rerank_dummy() {
     let client = tensorzero::test_helpers::make_embedded_gateway_no_config().await;
+    let marker = format!("obs-rerank-{}", Uuid::now_v7());
     let mut headers = HeaderMap::new();
     headers.insert("x-synapse-provider", "dummy".parse().unwrap());
     let (status, headers, body) = json_of(
@@ -422,7 +608,7 @@ async fn synapse_rerank_dummy() {
             OpenAIStructuredJson(
                 serde_json::from_value(json!({
                     "model": "qwen3-rerank",
-                    "query": "capital",
+                    "query": marker,
                     "documents": [
                         "Paris is the capital of France.",
                         "London is the capital of England."
@@ -440,6 +626,8 @@ async fn synapse_rerank_dummy() {
     expect_that!(served_by(&headers), eq("dummy/qwen3-rerank"));
     expect_that!(body["results"][0]["index"].as_u64().unwrap(), eq(0));
     expect_that!(body["results"].as_array().unwrap().len(), eq(1));
+    assert_standalone_inference_recorded(&marker, "dummy::qwen3-rerank", "rerank", "Reranked")
+        .await;
 }
 
 #[gtest]
@@ -757,6 +945,7 @@ type = "dummy"
 model_name = "test-embeddings"
 "#;
     let client = tensorzero::test_helpers::make_embedded_gateway_with_config(config).await;
+    let marker = format!("obs-embed-{}", Uuid::now_v7());
     let (status, _, body) = json_of(
         embeddings_handler(
             State(client.get_app_state_data().unwrap().load_latest()),
@@ -765,7 +954,7 @@ model_name = "test-embeddings"
             OpenAIStructuredJson(
                 serde_json::from_value(json!({
                     "model": "qwen3-embedding-4b",
-                    "input": ["hello", "world"],
+                    "input": [marker, "world"],
                 }))
                 .unwrap(),
             ),
@@ -781,6 +970,73 @@ model_name = "test-embeddings"
         body["data"][0]["embedding"].as_array().unwrap().len(),
         eq(1536)
     );
+    assert_standalone_inference_recorded(
+        &marker,
+        "qwen3-embedding-4b",
+        "embeddings",
+        "Generated 2 embeddings",
+    )
+    .await;
+}
+
+async fn assert_standalone_inference_recorded(
+    marker: &str,
+    variant_name: &str,
+    endpoint: &str,
+    output_contains: &str,
+) {
+    let function_name = match endpoint {
+        "embeddings" => "tensorzero::embedding",
+        "rerank" => "tensorzero::rerank",
+        _ => "tensorzero::default",
+    };
+    let conn = DelegatingDatabaseConnection::new_for_e2e_test().await;
+    conn.flush_pending_writes().await;
+    conn.sleep_for_writes_to_be_visible().await;
+    let config = get_e2e_config().await;
+    let inferences = conn
+        .list_inferences(
+            &config,
+            &ListInferencesParams {
+                function_name: Some(function_name),
+                variant_name: Some(variant_name),
+                limit: 50,
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("list inferences");
+    let chat = inferences
+        .iter()
+        .find_map(|inference| match inference {
+            StoredInferenceDatabase::Chat(chat)
+                if serde_json::to_string(&chat.input)
+                    .unwrap_or_default()
+                    .contains(marker) =>
+            {
+                Some(chat)
+            }
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("expected chat inference containing {marker}"));
+    expect_that!(chat.function_name.as_str(), eq(function_name));
+    expect_that!(
+        chat.tags.get("tensorzero::endpoint").map(String::as_str),
+        eq(Some(endpoint))
+    );
+    let output = serde_json::to_string(&chat.output).unwrap_or_default();
+    expect_that!(output.contains(output_contains), eq(true));
+    expect_that!(output.contains("0.1,"), eq(false));
+    let model_inferences = conn
+        .get_model_inferences_by_inference_id(chat.inference_id)
+        .await
+        .expect("model inferences");
+    expect_that!(model_inferences.len(), eq(1));
+    let raw_request = model_inferences[0]
+        .raw_request
+        .as_deref()
+        .expect("model inference raw_request");
+    expect_that!(raw_request, not(eq("")));
 }
 
 #[gtest]
@@ -792,12 +1048,22 @@ async fn synapse_usage_analytics_and_balances() {
     let to = Utc.with_ymd_and_hms(2026, 1, 8, 0, 0, 0).unwrap();
     let csv = usage_export_handler(
         State(state.clone()),
-        Query(SynapseTimeRangeQuery { from, to }),
+        Query(SynapseTimeRangeQuery {
+            from,
+            to,
+            tags: None,
+            group_by_tag: None,
+        }),
     )
     .await;
     let analytics = analytics_handler(
         State(state.clone()),
-        Query(SynapseTimeRangeQuery { from, to }),
+        Query(SynapseTimeRangeQuery {
+            from,
+            to,
+            tags: None,
+            group_by_tag: None,
+        }),
     )
     .await;
     let balances = balances_handler(State(state)).await;

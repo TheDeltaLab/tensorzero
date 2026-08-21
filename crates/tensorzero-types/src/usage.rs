@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -5,6 +6,7 @@ use uuid::Uuid;
 
 pub use tensorzero_http::ApiType;
 
+use crate::cost::Currency;
 use crate::serde_utils::decimal_float_option;
 
 /// A single entry in the raw response array, representing raw response data from one model inference.
@@ -36,6 +38,10 @@ pub struct Usage {
     #[serde(default, with = "decimal_float_option")]
     #[ts(type = "number | null")]
     pub cost: Option<Decimal>,
+    /// ISO 4217 code for `cost`. Present when cost was computed from a provider `cost` config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "string")]
+    pub currency: Option<Currency>,
 }
 
 impl Usage {
@@ -52,6 +58,7 @@ impl Usage {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: Some(Decimal::ZERO),
+            currency: None,
         }
     }
 
@@ -90,6 +97,7 @@ impl From<OpenAIUsage> for Usage {
                 .and_then(|d| d.cached_tokens),
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         }
     }
 }

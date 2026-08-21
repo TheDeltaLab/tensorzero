@@ -39,6 +39,10 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
             get(endpoints::internal::inference_count::list_functions_with_inference_count_handler),
         )
         .route(
+            "/internal/inference_api_keys",
+            get(endpoints::internal::inference_api_keys::list_inference_api_keys_handler),
+        )
+        .route(
             "/internal/functions/{function_name}/inference_count",
             get(endpoints::internal::inference_count::get_inference_count_handler),
         )
@@ -312,6 +316,10 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
         .route(
             "/internal/synapse/analytics",
             get(endpoints::internal::synapse::analytics_handler),
+        )
+        .route(
+            "/internal/synapse/analysis",
+            get(endpoints::internal::synapse_analysis::analysis_handler),
         )
         .route(
             "/internal/synapse/balances",

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import FeedbackTable from "./FeedbackTable";
 import { ConfigProvider } from "~/context/config";
@@ -32,6 +33,10 @@ const config: UiConfig = {
   tools: {},
   evaluations: {},
   model_names: [],
+  embedding_model_names: [],
+  model_providers: {},
+  embedding_model_providers: {},
+  model_aliases: [],
   config_hash: "test-config-hash",
   config_in_database: false,
   auth_enabled: false,

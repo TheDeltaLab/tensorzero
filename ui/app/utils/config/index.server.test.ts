@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { describe, expect, test, beforeEach, vi, afterEach } from "vitest";
 import type { UiConfig, StatusResponse } from "~/types/tensorzero";
 
@@ -78,6 +79,10 @@ function createMockConfig(hash: string): UiConfig {
     tools: {},
     evaluations: {},
     model_names: [],
+    embedding_model_names: [],
+    model_providers: {},
+    embedding_model_providers: {},
+    model_aliases: [],
     config_hash: hash,
     config_in_database: false,
     auth_enabled: false,

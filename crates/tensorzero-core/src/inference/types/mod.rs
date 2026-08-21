@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Main TensorZero types for inference requests and responses
 //!
 //! During inference processing, we transform between several different input types:
@@ -1362,6 +1363,9 @@ pub struct StoredModelInference {
     pub cached: bool,
     #[serde(default, with = "rust_decimal::serde::float_option")]
     pub cost: Option<Decimal>,
+    /// ISO 4217 code for `cost`. Omitted from ClickHouse JSON when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
     pub finish_reason: Option<FinishReason>,
     pub snapshot_hash: Option<SnapshotHash>,
     /// Materialized column in ClickHouse - only present when reading from the database.
@@ -1435,6 +1439,7 @@ impl ModelInferenceResponse {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             provider_latency: Latency::NonStreaming {
                 response_time: Duration::from_secs(0),
@@ -1556,6 +1561,7 @@ impl StoredModelInference {
             model_name: result.model_name.to_string(),
             cached: result.cached,
             cost,
+            currency: result.usage.currency.map(|value| value.to_string()),
             finish_reason: result.finish_reason,
             input_messages: Some(stored_input_messages),
             snapshot_hash: Some(snapshot_hash),
@@ -1963,6 +1969,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let raw_request = "raw request".to_string();
         let model_inference_responses = vec![ModelInferenceResponseWithMetadata {
@@ -2803,6 +2810,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2813,6 +2821,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2841,6 +2850,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2851,6 +2861,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2879,6 +2890,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2889,6 +2901,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2917,6 +2930,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2927,6 +2941,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -2956,6 +2971,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 true,
             ), // This will be treated as 0/0 due to cached=true
@@ -2966,6 +2982,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 },
                 false,
             ),
@@ -3043,6 +3060,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
 
         // Create responses with different finish reasons and IDs

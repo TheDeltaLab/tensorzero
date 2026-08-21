@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ToolDetails } from "./ToolDetails";
 import type { UiConfig } from "~/types/tensorzero";
@@ -51,6 +52,10 @@ const mockConfig: UiConfig = {
   },
   evaluations: {},
   model_names: [],
+  embedding_model_names: [],
+  model_providers: {},
+  embedding_model_providers: {},
+  model_aliases: [],
   config_hash: "test-config-hash",
   config_in_database: false,
   auth_enabled: false,

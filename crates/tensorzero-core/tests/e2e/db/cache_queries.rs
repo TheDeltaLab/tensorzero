@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -128,6 +129,7 @@ async fn test_cache_write_and_read(conn: impl CacheQueries + Clone + 'static) {
             input_tokens: Some(10),
             output_tokens: Some(16),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         }
@@ -149,6 +151,7 @@ async fn test_cache_write_and_read(conn: impl CacheQueries + Clone + 'static) {
             input_tokens: Some(10),
             output_tokens: Some(16),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         }
@@ -241,6 +244,7 @@ async fn test_cache_stream_write_and_read(conn: impl CacheQueries + Clone + 'sta
                 input_tokens: Some(20),
                 output_tokens: Some(40),
                 cost: None,
+                currency: None,
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
             }),
@@ -258,6 +262,7 @@ async fn test_cache_stream_write_and_read(conn: impl CacheQueries + Clone + 'sta
                 input_tokens: Some(100),
                 output_tokens: Some(200),
                 cost: None,
+                currency: None,
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
             }),
@@ -278,6 +283,7 @@ async fn test_cache_stream_write_and_read(conn: impl CacheQueries + Clone + 'sta
             input_tokens: Some(1),
             output_tokens: Some(2),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },
@@ -316,6 +322,7 @@ async fn test_cache_stream_write_and_read(conn: impl CacheQueries + Clone + 'sta
                     input_tokens: Some(20),
                     output_tokens: Some(40),
                     cost: None,
+                    currency: None,
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                 })
@@ -327,6 +334,7 @@ async fn test_cache_stream_write_and_read(conn: impl CacheQueries + Clone + 'sta
                     input_tokens: Some(100),
                     output_tokens: Some(200),
                     cost: None,
+                    currency: None,
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                 })

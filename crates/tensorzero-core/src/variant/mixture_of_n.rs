@@ -1253,6 +1253,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: std::time::Duration::from_millis(500),
@@ -1293,6 +1294,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: std::time::Duration::from_millis(550),
@@ -1352,6 +1354,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: std::time::Duration::from_millis(500),
@@ -1395,6 +1398,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: std::time::Duration::from_millis(550),
@@ -1480,6 +1484,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: std::time::Duration::from_millis(500),
@@ -1520,6 +1525,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             latency: Latency::NonStreaming {
                 response_time: std::time::Duration::from_millis(550),
@@ -1649,6 +1655,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let expected_content = InternalJsonInferenceOutput {
             raw: Some("{\"answer\":\"Hello\"}".to_string()),
@@ -1933,6 +1940,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             None, // raw_usage_entries
         )
@@ -1986,6 +1994,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_response: None,

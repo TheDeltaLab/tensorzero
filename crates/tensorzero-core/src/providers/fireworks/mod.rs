@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
 
 use crate::error::warn_discarded_thought_block;
@@ -1552,6 +1553,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             "expected usage to include provider raw_usage entries"
         );

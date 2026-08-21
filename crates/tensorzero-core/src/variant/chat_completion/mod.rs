@@ -1747,6 +1747,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match result {
@@ -1835,6 +1836,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match result {
@@ -1936,6 +1938,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match result {
@@ -2044,6 +2047,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match result {
@@ -2180,6 +2184,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match result {
@@ -2309,6 +2314,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match result {
@@ -2654,6 +2660,7 @@ mod tests {
                         provider_cache_read_input_tokens: None,
                         provider_cache_write_input_tokens: None,
                         cost: None,
+                        currency: None,
                     })
                 );
                 break;

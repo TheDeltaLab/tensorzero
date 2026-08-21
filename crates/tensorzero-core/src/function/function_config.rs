@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::config::Namespace;
 use crate::config::SchemaData;
 use crate::config::gateway::GatewayConfig;
@@ -49,6 +50,10 @@ use crate::variant::{InferenceConfig, JsonMode, Variant, VariantInfo};
 use tensorzero_inference_types::tool::DynamicToolParams;
 
 pub const DEFAULT_FUNCTION_NAME: &str = "tensorzero::default";
+/// Observability-only function names for standalone `/v1/embeddings` calls.
+pub const EMBEDDING_FUNCTION_NAME: &str = "tensorzero::embedding";
+/// Observability-only function names for standalone `/v1/rerank` calls.
+pub const RERANK_FUNCTION_NAME: &str = "tensorzero::rerank";
 
 #[derive(ts_rs::TS, Debug, Serialize)]
 #[ts(export)]
@@ -2055,6 +2060,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),
@@ -2128,6 +2134,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),
@@ -2187,6 +2194,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),
@@ -2249,6 +2257,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let model_response = ModelInferenceResponseWithMetadata {
             id: Uuid::now_v7(),
@@ -2308,6 +2317,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let model_response = ModelInferenceResponseWithMetadata {
             id: Uuid::now_v7(),
@@ -2367,6 +2377,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let model_response = ModelInferenceResponseWithMetadata {
             id: Uuid::now_v7(),
@@ -2444,6 +2455,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),
@@ -2497,6 +2509,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),
@@ -2558,6 +2571,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let model_response = ModelInferenceResponseWithMetadata {
             id: Uuid::now_v7(),
@@ -2616,6 +2630,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let model_response = ModelInferenceResponseWithMetadata {
             id: Uuid::now_v7(),
@@ -2681,6 +2696,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),

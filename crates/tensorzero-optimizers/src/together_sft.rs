@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Together Supervised Fine-Tuning (SFT) optimizer implementation
 
 use std::{borrow::Cow, collections::HashMap, fmt::Display, io::Write};
@@ -352,6 +353,8 @@ impl JobHandle for TogetherSFTJobHandle {
                     discard_unknown_chunks: false,
                     cost: None,
                     batch_cost: None,
+                    timezone: None,
+                    currency: None,
                 };
                 Ok(OptimizationJobInfo::Completed {
                     output: OptimizerOutput::Model(UninitializedModelConfig {

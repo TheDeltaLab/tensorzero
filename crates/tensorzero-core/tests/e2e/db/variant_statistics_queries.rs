@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for variant statistics aggregation (ClickHouse and Postgres).
 //!
 //! Verifies that the `VariantStatistics` rollup (ClickHouse) and
@@ -304,6 +305,7 @@ fn make_model_inference(
         ttft_ms: None,
         cached: false,
         cost,
+        currency: None,
         provider_cache_read_input_tokens: None,
         provider_cache_write_input_tokens: None,
         finish_reason: Some(FinishReason::Stop),

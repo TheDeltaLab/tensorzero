@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use futures::StreamExt;
 use futures::future::try_join_all;
 use lazy_static::lazy_static;
@@ -1305,6 +1306,7 @@ impl AnthropicUsage {
             provider_cache_read_input_tokens: self.cache_read_input_tokens,
             provider_cache_write_input_tokens: self.cache_creation_input_tokens,
             cost: None,
+            currency: None,
         }
     }
 }

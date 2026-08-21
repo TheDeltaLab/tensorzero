@@ -1,8 +1,18 @@
+// Modified by Delta-AI under Apache 2.0
 import { Suspense } from "react";
 import { Await } from "react-router";
 import type { StoredInference } from "~/types/tensorzero";
 import type { ParsedModelInferenceRow } from "~/utils/clickhouse/inference";
 import { getTotalInferenceUsage } from "~/utils/clickhouse/helpers";
+import {
+  mergeUsage,
+  usageFromTags,
+} from "~/routes/observability/inferences/inferenceQuery";
+import {
+  firstFiniteMs,
+  formatOutputTps,
+  outputTpsExcludingTtft,
+} from "~/utils/observability/usageDetails";
 import {
   BasicInfoLayout,
   BasicInfoLayoutSkeleton,
@@ -26,6 +36,10 @@ import { TimestampTooltip } from "~/components/ui/TimestampTooltip";
 import { getFunctionTypeIcon } from "~/utils/icon";
 import { InlineAsyncError } from "~/components/ui/error/ErrorContentPrimitives";
 import type { ModelInferencesData } from "./inference-data.server";
+import {
+  inferenceKindFromStored,
+  isStandaloneInferenceKind,
+} from "~/utils/observability/standaloneInference";
 
 interface BasicInfoStreamingProps {
   inference: StoredInference;
@@ -72,9 +86,28 @@ export function BasicInfo({
   modelInferences = [],
 }: BasicInfoProps) {
   const snapshotHash = inference.snapshot_hash;
-  const inferenceUsage = getTotalInferenceUsage(modelInferences);
+  const fromModels =
+    modelInferences.length > 0
+      ? getTotalInferenceUsage(modelInferences)
+      : undefined;
+  const inferenceUsage = mergeUsage(usageFromTags(inference.tags), fromModels);
+  const ttftMs = firstFiniteMs([
+    inference.ttft_ms,
+    ...modelInferences.map((row) => row.ttft_ms),
+  ]);
+  const durationMs = firstFiniteMs([
+    ...modelInferences.map((row) => row.response_time_ms),
+    inference.processing_time_ms,
+  ]);
+  const outputTps = outputTpsExcludingTtft({
+    outputTokens: inferenceUsage.output_tokens,
+    durationMs,
+    ttftMs,
+  });
+  const kind = inferenceKindFromStored(inference);
+  const standalone = isStandaloneInferenceKind(kind);
 
-  const functionIconConfig = getFunctionTypeIcon(inference.type);
+  const functionIconConfig = getFunctionTypeIcon(kind);
   const hasCachedInferences = modelInferences.some((mi) => mi.cached);
   const allCached =
     modelInferences.length > 0 && modelInferences.every((mi) => mi.cached);
@@ -93,8 +126,12 @@ export function BasicInfo({
             icon={functionIconConfig.icon}
             iconBg={functionIconConfig.iconBg}
             label={inference.function_name}
-            secondaryLabel={`· ${inference.type}`}
-            link={toFunctionUrl(inference.function_name, snapshotHash)}
+            secondaryLabel={`· ${kind}`}
+            link={
+              standalone
+                ? undefined
+                : toFunctionUrl(inference.function_name, snapshotHash)
+            }
             font="mono"
           />
         </BasicInfoItemContent>
@@ -106,11 +143,15 @@ export function BasicInfo({
           <Chip
             label={inference.variant_name}
             secondaryLabel={`· ${variantType}`}
-            link={toVariantUrl(
-              inference.function_name,
-              inference.variant_name,
-              snapshotHash,
-            )}
+            link={
+              standalone
+                ? undefined
+                : toVariantUrl(
+                    inference.function_name,
+                    inference.variant_name,
+                    snapshotHash,
+                  )
+            }
             font="mono"
           />
         </BasicInfoItemContent>
@@ -129,29 +170,68 @@ export function BasicInfo({
 
       <BasicInfoItem>
         <BasicInfoItemTitle>Usage</BasicInfoItemTitle>
-        <BasicInfoItemContent>
-          <Chip
-            icon={<InputIcon className="text-fg-tertiary" />}
-            label={`${inferenceUsage?.input_tokens ?? ""} tok`}
-            tooltip="Input Tokens"
-          />
-          <Chip
-            icon={<Output className="text-fg-tertiary" />}
-            label={`${inferenceUsage?.output_tokens ?? ""} tok`}
-            tooltip="Output Tokens"
-          />
-          {inferenceUsage?.cost != null && (
+        <BasicInfoItemContent wrap>
+          {inferenceUsage.input_tokens != null && (
+            <Chip
+              icon={<InputIcon className="text-fg-tertiary" />}
+              label={`${inferenceUsage.input_tokens} in`}
+              tooltip="Input tokens"
+            />
+          )}
+          {inferenceUsage.output_tokens != null && (
+            <Chip
+              icon={<Output className="text-fg-tertiary" />}
+              label={`${inferenceUsage.output_tokens} out`}
+              tooltip="Output tokens"
+            />
+          )}
+          {fromModels?.provider_cache_read_input_tokens != null &&
+            fromModels.provider_cache_read_input_tokens > 0 && (
+              <Chip
+                icon={<Cached className="text-fg-tertiary" />}
+                label={`${fromModels.provider_cache_read_input_tokens} cache read`}
+                tooltip="Provider cache read tokens"
+              />
+            )}
+          {fromModels?.provider_cache_write_input_tokens != null &&
+            fromModels.provider_cache_write_input_tokens > 0 && (
+              <Chip
+                icon={<Cached className="text-fg-tertiary" />}
+                label={`${fromModels.provider_cache_write_input_tokens} cache write`}
+                tooltip="Provider cache write tokens"
+              />
+            )}
+          {inferenceUsage.cost != null && (
             <Chip
               icon={<Cost className="text-fg-tertiary" />}
-              label={formatCost(inferenceUsage.cost)}
+              label={formatCost(
+                inferenceUsage.cost,
+                inferenceUsage.currency ?? undefined,
+              )}
               tooltip="Cost"
             />
           )}
-          <Chip
-            icon={<Timer className="text-fg-tertiary" />}
-            label={`${inference.processing_time_ms} ms`}
-            tooltip="Processing Time"
-          />
+          {inference.processing_time_ms != null && (
+            <Chip
+              icon={<Timer className="text-fg-tertiary" />}
+              label={`${inference.processing_time_ms} ms`}
+              tooltip="Processing time"
+            />
+          )}
+          {ttftMs != null && (
+            <Chip
+              icon={<Timer className="text-fg-tertiary" />}
+              label={`${ttftMs} ms TTFT`}
+              tooltip="Time to first token"
+            />
+          )}
+          {outputTps != null && (
+            <Chip
+              icon={<Output className="text-fg-tertiary" />}
+              label={formatOutputTps(outputTps)}
+              tooltip="Output tokens per second, excluding TTFT"
+            />
+          )}
           {(cacheStatus === "FULL" || cacheStatus === "PARTIAL") && (
             <Chip
               icon={<Cached className="text-fg-tertiary" />}

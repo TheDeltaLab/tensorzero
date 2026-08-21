@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { describe, it, expect } from "vitest";
 import { getTotalInferenceUsage, uuidv7ToTimestamp } from "./helpers";
 import type { ParsedModelInferenceRow } from "./inference";
@@ -33,6 +34,26 @@ describe("getTotalInferenceUsage", () => {
     expect(result.input_tokens).toBe(40);
     expect(result.output_tokens).toBe(60);
     expect(result.cost).toBeCloseTo(0.003);
+    expect(result.currency).toBe("USD");
+  });
+
+  it("returns null cost when currencies differ", () => {
+    const result = getTotalInferenceUsage([
+      makeModelInference({
+        input_tokens: 10,
+        output_tokens: 20,
+        cost: 1,
+        currency: "USD",
+      }),
+      makeModelInference({
+        input_tokens: 30,
+        output_tokens: 40,
+        cost: 2,
+        currency: "CNY",
+      }),
+    ]);
+    expect(result.cost).toBeNull();
+    expect(result.currency).toBeUndefined();
   });
 
   it("returns null cost when any inference has undefined cost", () => {
@@ -68,6 +89,30 @@ describe("getTotalInferenceUsage", () => {
     expect(result.input_tokens).toBe(10);
     expect(result.output_tokens).toBe(40);
     expect(result.cost).toBeCloseTo(0.003);
+  });
+
+  it("sums cache tokens when any row reports them", () => {
+    const result = getTotalInferenceUsage([
+      makeModelInference({
+        input_tokens: 10,
+        provider_cache_read_input_tokens: 4,
+        provider_cache_write_input_tokens: 2,
+      }),
+      makeModelInference({
+        input_tokens: 5,
+        provider_cache_read_input_tokens: 1,
+      }),
+    ]);
+    expect(result.provider_cache_read_input_tokens).toBe(5);
+    expect(result.provider_cache_write_input_tokens).toBe(2);
+  });
+
+  it("leaves cache tokens undefined when no row reports them", () => {
+    const result = getTotalInferenceUsage([
+      makeModelInference({ input_tokens: 10, output_tokens: 2 }),
+    ]);
+    expect(result.provider_cache_read_input_tokens).toBeUndefined();
+    expect(result.provider_cache_write_input_tokens).toBeUndefined();
   });
 });
 

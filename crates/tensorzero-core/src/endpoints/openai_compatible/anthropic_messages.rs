@@ -38,8 +38,8 @@ use crate::utils::gateway::{AppState, AppStateData};
 use super::infer::error_response;
 use super::stream_aggregator::{StreamAggregateRule, StreamAggregator};
 use super::synapse::{
-    SynapseRequestContext, resolve_cache_options, resolve_openai_compatible_model,
-    run_with_request_timeout,
+    SynapseRequestContext, apply_compat_to_params, resolve_cache_options,
+    resolve_openai_compatible_model, run_with_request_timeout,
 };
 use super::{OpenAICompatibleError, OpenAIStructuredJson};
 
@@ -210,10 +210,14 @@ pub(super) async fn handle_anthropic_messages(
             ));
         }
     };
-    let tz_params = match params_from_anthropic(params, &synapse) {
+    let mut tz_params = match params_from_anthropic(params, &synapse) {
         Ok(params) => params,
         Err(error) => return Ok(error_response(error, false, &synapse)),
     };
+    tz_params.extra_internal_tags = synapse.observability_tags(headers);
+    if let Err(error) = apply_compat_to_params(headers, &mut tz_params) {
+        return Ok(error_response(error, false, &synapse));
+    }
     synapse = synapse.with_served_by_from_params(&tz_params);
     let response_model = tz_params
         .model_name
