@@ -1,9 +1,10 @@
+// Modified by Delta-AI under Apache 2.0
 import { test, expect } from "@playwright/test";
 
 test("playground should work for a chat function that sets 2 variants", async ({
   page,
 }) => {
-  await page.goto("/playground?limit=2");
+  await page.goto("/playground/functions?limit=2");
   await expect(page.getByPlaceholder("Select function")).toBeVisible();
 
   // Select function 'write_haiku' by typing in the combobox
@@ -55,7 +56,7 @@ test("playground should work for a chat function that sets 2 variants", async ({
 test("playground should work for extract_entities JSON function with 2 variants", async ({
   page,
 }) => {
-  await page.goto("/playground?limit=2");
+  await page.goto("/playground/functions?limit=2");
   await expect(page.getByPlaceholder("Select function")).toBeVisible();
 
   // Select function 'extract_entities' by typing in the combobox
@@ -105,7 +106,7 @@ test("playground should work for extract_entities JSON function with 2 variants"
 test("playground should work for image_judger function with images in input", async ({
   page,
 }) => {
-  await page.goto("/playground?limit=1");
+  await page.goto("/playground/functions?limit=1");
   await expect(page.getByPlaceholder("Select function")).toBeVisible();
 
   // Select function 'image_judger' by typing in the combobox
@@ -151,7 +152,7 @@ test("playground should work for image_judger function with images in input", as
 
 test("playground should work for data with tools", async ({ page }) => {
   await page.goto(
-    '/playground?functionName=multi_hop_rag_agent&datasetName=tool_call_examples&variants=%5B%7B"type"%3A"builtin"%2C"name"%3A"baseline"%7D%5D',
+    '/playground/functions?functionName=multi_hop_rag_agent&datasetName=tool_call_examples&variants=%5B%7B"type"%3A"builtin"%2C"name"%3A"baseline"%7D%5D',
   );
 
   // Verify the selections are visible
@@ -241,7 +242,7 @@ test("playground should work for data with tools", async ({ page }) => {
 
 test("editing variants works @credentials", async ({ page }) => {
   await page.goto(
-    '/playground?functionName=write_haiku&datasetName=foo&variants=%5B%7B"type"%3A"builtin"%2C"name"%3A"initial_prompt_gpt4o_mini"%7D%5D',
+    '/playground/functions?functionName=write_haiku&datasetName=foo&variants=%5B%7B"type"%3A"builtin"%2C"name"%3A"initial_prompt_gpt4o_mini"%7D%5D',
   );
 
   // Verify the selections are visible
@@ -301,7 +302,7 @@ test("playground should work with tool config ID different from display name @cr
   // configured with config ID 'answer_question' but display name 'submit_answer'.
   // Before the fix, the tool filtering logic would incorrectly compare these values
   // directly, causing tools not to be filtered properly.
-  await page.goto("/playground?limit=1");
+  await page.goto("/playground/functions?limit=1");
   await expect(page.getByPlaceholder("Select function")).toBeVisible();
 
   // Select function 'multi_hop_rag_agent'

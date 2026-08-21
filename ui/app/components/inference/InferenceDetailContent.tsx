@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { ParsedModelInferenceRow } from "~/utils/clickhouse/inference";
 import type {
   FeedbackRow,
@@ -14,7 +15,8 @@ import { JsonOutputElement } from "~/components/input_output/JsonOutputElement";
 import FeedbackTable from "~/components/feedback/FeedbackTable";
 import { ParameterCard } from "~/routes/observability/inferences/$inference_id/ParameterCard";
 import { ToolParametersSection } from "~/components/inference/ToolParametersSection";
-import { TagsTable } from "~/components/tags/TagsTable";
+import { InferenceMetadataSections } from "~/components/inference/InferenceMetadataSections";
+import { InferenceUsageDetails } from "~/components/inference/UsageDetails";
 import { ModelInferencesContent } from "~/routes/observability/inferences/$inference_id/ModelInferencesSection";
 import {
   SectionHeader,
@@ -42,6 +44,15 @@ import { CopyMessagesButton } from "~/components/inference/CopyMessagesButton";
 import { VariantResponseModal } from "~/components/inference/VariantResponseModal";
 import { InputElement } from "../input_output/InputElement";
 import type { Input } from "~/types/tensorzero";
+import {
+  StandaloneInputElement,
+  StandaloneOutputElement,
+} from "~/components/inference/StandaloneInferencePanels";
+import {
+  inferenceKindFromStored,
+  isStandaloneInferenceKind,
+  variantTypeForKind,
+} from "~/utils/observability/standaloneInference";
 
 export interface InferenceDetailData {
   inference: StoredInference;
@@ -270,6 +281,8 @@ export function InferenceDetailContent({
   const config = useConfig();
 
   const isDefault = inference.function_name === DEFAULT_FUNCTION;
+  const kind = inferenceKindFromStored(inference);
+  const standalone = isStandaloneInferenceKind(kind);
 
   const modelsSet = new Set<string>([...usedVariants, ...config.model_names]);
   const models = [...modelsSet].sort();
@@ -277,11 +290,11 @@ export function InferenceDetailContent({
   const options = isDefault ? models : variants;
   const onSelect = isDefault ? onModelSelect : onVariantSelect;
 
-  const variantType =
-    functionConfig?.variants[inference.variant_name]?.inner.type ??
-    (inference.function_name === "tensorzero::default"
-      ? "chat_completion"
-      : "unknown");
+  const variantType = variantTypeForKind(
+    kind,
+    inference.function_name,
+    functionConfig?.variants[inference.variant_name]?.inner.type,
+  );
 
   // Build the header components
   const basicInfoElement = (
@@ -294,19 +307,23 @@ export function InferenceDetailContent({
 
   const actionBarElement = (
     <ActionBar>
-      <TryWithSelect
-        options={options}
-        onSelect={onSelect}
-        isLoading={variantInferenceIsLoading}
-        isDefaultFunction={isDefault}
-      />
-      <AddToDatasetButton
-        inferenceId={inference.inference_id}
-        functionName={inference.function_name}
-        variantName={inference.variant_name}
-        episodeId={inference.episode_id}
-        hasDemonstration={hasDemonstration}
-      />
+      {!standalone && (
+        <TryWithSelect
+          options={options}
+          onSelect={onSelect}
+          isLoading={variantInferenceIsLoading}
+          isDefaultFunction={isDefault}
+        />
+      )}
+      {!standalone && (
+        <AddToDatasetButton
+          inferenceId={inference.inference_id}
+          functionName={inference.function_name}
+          variantName={inference.variant_name}
+          episodeId={inference.episode_id}
+          hasDemonstration={hasDemonstration}
+        />
+      )}
       <HumanFeedbackModal
         onOpenChange={(isOpen) => {
           if (humanFeedbackState !== "idle") {
@@ -336,8 +353,9 @@ export function InferenceDetailContent({
       <AskAutopilotButton
         message={`Inference ID: ${inference.inference_id}\n\n`}
       />
-      {/* Keep at end of row — conditionally hidden, so trailing position avoids jitter */}
-      <CopyMessagesButton input={input} output={inference.output} />
+      {!standalone && (
+        <CopyMessagesButton input={input} output={inference.output} />
+      )}
     </ActionBar>
   );
 
@@ -357,13 +375,27 @@ export function InferenceDetailContent({
 
       <SectionsGroup>
         <SectionLayout>
+          <SectionHeader heading="Usage details" />
+          <InferenceUsageDetails
+            inference={inference}
+            modelInferences={model_inferences}
+          />
+        </SectionLayout>
+
+        <SectionLayout>
           <SectionHeader heading="Input" />
-          {input && <InputElement input={input} />}
+          {standalone ? (
+            <StandaloneInputElement kind={kind} input={input} />
+          ) : (
+            input && <InputElement input={input} />
+          )}
         </SectionLayout>
 
         <SectionLayout>
           <SectionHeader heading="Output" />
-          {inference.type === "json" ? (
+          {standalone ? (
+            <StandaloneOutputElement kind={kind} inference={inference} />
+          ) : inference.type === "json" ? (
             <JsonOutputElement
               output={inference.output}
               outputSchema={inference.output_schema}
@@ -394,20 +426,22 @@ export function InferenceDetailContent({
           {feedbackFooter}
         </SectionLayout>
 
-        <SectionLayout>
-          <SectionHeader heading="Inference Parameters" />
-          {inference.inference_params ? (
-            <ParameterCard
-              parameters={JSON.stringify(inference.inference_params, null, 2)}
-            />
-          ) : (
-            <div className="text-fg-muted flex items-center justify-center py-12 text-sm">
-              Parameters missing
-            </div>
-          )}
-        </SectionLayout>
+        {!standalone && (
+          <SectionLayout>
+            <SectionHeader heading="Inference Parameters" />
+            {inference.inference_params ? (
+              <ParameterCard
+                parameters={JSON.stringify(inference.inference_params, null, 2)}
+              />
+            ) : (
+              <div className="text-fg-muted flex items-center justify-center py-12 text-sm">
+                Parameters missing
+              </div>
+            )}
+          </SectionLayout>
+        )}
 
-        {inference.type === "chat" && (
+        {inference.type === "chat" && !standalone && (
           <SectionLayout>
             <SectionHeader heading="Tool Parameters" />
             <ToolParametersSection
@@ -420,17 +454,7 @@ export function InferenceDetailContent({
           </SectionLayout>
         )}
 
-        <SectionLayout>
-          <SectionHeader heading="Tags" />
-          <TagsTable
-            tags={Object.fromEntries(
-              Object.entries(inference.tags).filter(
-                (entry): entry is [string, string] => entry[1] !== undefined,
-              ),
-            )}
-            isEditing={false}
-          />
-        </SectionLayout>
+        <InferenceMetadataSections tags={inference.tags} />
 
         <SectionLayout>
           <SectionHeader heading="Model Inferences" />

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::{collections::HashMap, ops::Deref};
 
 use crate::{
@@ -158,6 +159,7 @@ impl TryFrom<ClientInferenceParams> for Params {
             extra_body: this.extra_body,
             extra_headers: this.extra_headers,
             internal_dynamic_variant_config: this.internal_dynamic_variant_config,
+            extra_internal_tags: HashMap::new(),
         })
     }
 }
@@ -217,6 +219,7 @@ fn assert_params_match(client_params: ClientInferenceParams) {
         include_aggregated_response,
         extra_body,
         extra_headers,
+        extra_internal_tags: HashMap::new(),
         internal_dynamic_variant_config,
     };
 }

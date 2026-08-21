@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use futures::StreamExt;
 use itertools::izip;
 #[cfg(feature = "pyo3")]
@@ -1552,6 +1553,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match inference_result {
@@ -1671,6 +1673,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match inference_result {
@@ -1906,6 +1909,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match inference_result {

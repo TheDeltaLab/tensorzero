@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import {
   TypeChat,
   TypeJson,
@@ -5,6 +6,7 @@ import {
   CircleSmallFill,
   QuestionMark,
 } from "~/components/icons/Icons";
+import { Binary, ListOrdered } from "lucide-react";
 import type { ReactNode } from "react";
 
 export type IconConfig = {
@@ -31,6 +33,19 @@ export function getFunctionTypeIcon(functionType: string): IconConfig {
         icon: <TypeJson className="text-fg-type-json" />,
         iconBg: "bg-bg-type-json",
         label: "Function type: JSON",
+      };
+    case "embedding":
+    case "embeddings":
+      return {
+        icon: <Binary className="text-fg-type-embedding h-4 w-4" />,
+        iconBg: "bg-bg-type-embedding",
+        label: "Function type: Embedding",
+      };
+    case "rerank":
+      return {
+        icon: <ListOrdered className="text-fg-type-rerank h-4 w-4" />,
+        iconBg: "bg-bg-type-rerank",
+        label: "Function type: Rerank",
       };
     default:
       return {

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Contains the main logic for 'relay' mode
 //! When enabled, we redirect requests made to *any* model, and instead forward them to a downstream gateway
 //! The providers in the initial ('edge') gateway are ignored entirely
@@ -281,6 +282,7 @@ impl TensorzeroRelay {
                         provider_cache_read_input_tokens: None,
                         provider_cache_write_input_tokens: None,
                         cost: usage.tensorzero_cost,
+                        currency: None,
                     })
                     .unwrap_or_default(),
                 model,

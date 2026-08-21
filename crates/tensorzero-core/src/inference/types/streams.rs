@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Types and utilities for streaming inference responses
 
 use crate::endpoints::inference::{InferenceIds, InferenceParams};
@@ -1020,6 +1021,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_response: None,
@@ -1058,6 +1060,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             finish_reason: Some(FinishReason::Stop),
         };
@@ -1116,6 +1119,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let usage2 = Usage {
             input_tokens: Some(5),
@@ -1123,6 +1127,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let chunks = vec![
             InferenceResultChunk::Json(JsonInferenceResultChunk {
@@ -1193,6 +1198,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             finish_reason: Some(FinishReason::Stop),
         };
@@ -1205,6 +1211,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match response {
@@ -1240,6 +1247,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let chunks = vec![
             InferenceResultChunk::Json(JsonInferenceResultChunk {
@@ -1339,6 +1347,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let chunks = vec![
             InferenceResultChunk::Json(JsonInferenceResultChunk {
@@ -1483,6 +1492,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let usage2 = Usage {
             input_tokens: Some(5),
@@ -1490,6 +1500,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let chunks = vec![
             InferenceResultChunk::Json(JsonInferenceResultChunk {
@@ -1560,6 +1571,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             finish_reason: Some(FinishReason::Stop),
         };
@@ -1572,6 +1584,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match response {
@@ -1624,6 +1637,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let usage2 = Usage {
             input_tokens: Some(5),
@@ -1631,6 +1645,7 @@ mod tests {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let dynamic_output_schema = JSONSchema::compile_background(serde_json::json!({
             "type": "object",
@@ -1710,6 +1725,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             finish_reason: Some(FinishReason::ToolCall),
         };
@@ -1722,6 +1738,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         match response {
@@ -1860,6 +1877,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_response: None,
@@ -1916,6 +1934,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             finish_reason: Some(FinishReason::Stop),
         };
@@ -1928,6 +1947,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         let chat_result = match result {
@@ -2031,6 +2051,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_chunk: "chunk2".to_string(),
@@ -2129,6 +2150,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_chunk: "chunk2".to_string(),
@@ -2218,6 +2240,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_chunk: "chunk2".to_string(),
@@ -2311,6 +2334,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_chunk: "chunk2".to_string(),
@@ -2387,6 +2411,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: None,
             raw_response: None,
@@ -2517,6 +2542,7 @@ mod tests {
                     provider_cache_read_input_tokens: None,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 }),
                 raw_usage: None,
                 raw_response: None,
@@ -2604,6 +2630,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }),
             raw_usage: None,
             raw_response: "raw response".to_string(),
@@ -2625,6 +2652,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             })
         );
         assert_eq!(result.finish_reason, Some(FinishReason::ToolCall));

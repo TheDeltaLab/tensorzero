@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for ModelInferenceQueries implementations (ClickHouse and Postgres).
 //!
 //! Tests verify read and write operations for model inferences work correctly with both backends.
@@ -227,6 +228,7 @@ async fn test_insert_and_read_model_inference(conn: impl ModelInferenceQueries) 
         ttft_ms: Some(200),
         cached: false,
         cost: None,
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         timestamp: None, // Computed from UUID on insert
@@ -308,6 +310,7 @@ async fn test_insert_and_read_model_inference_zero_cache_tokens(conn: impl Model
         ttft_ms: None,
         cached: false,
         cost: None,
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         timestamp: None,
@@ -364,6 +367,7 @@ async fn test_insert_multiple_model_inferences_for_same_inference(
             ttft_ms: None,
             cached: false,
             cost: None,
+            currency: None,
             finish_reason: None, // Failed, no finish reason
             snapshot_hash: None,
             timestamp: None,
@@ -388,6 +392,7 @@ async fn test_insert_multiple_model_inferences_for_same_inference(
             ttft_ms: Some(150),
             cached: false,
             cost: None,
+            currency: None,
             finish_reason: Some(FinishReason::Stop),
             snapshot_hash: None,
             timestamp: None,
@@ -456,6 +461,7 @@ async fn test_insert_model_inference_with_all_finish_reasons(conn: impl ModelInf
             ttft_ms: None,
             cached: false,
             cost: None,
+            currency: None,
             finish_reason: Some(finish_reason),
             snapshot_hash: None,
             timestamp: None,
@@ -502,6 +508,7 @@ async fn test_insert_model_inference_with_null_finish_reason(conn: impl ModelInf
         ttft_ms: None,
         cached: false,
         cost: None,
+        currency: None,
         finish_reason: None,
         snapshot_hash: None,
         timestamp: None,
@@ -547,6 +554,7 @@ async fn test_insert_model_inference_cached_flag(conn: impl ModelInferenceQuerie
         ttft_ms: None,
         cached: true,
         cost: None,
+        currency: None,
         finish_reason: None,
         snapshot_hash: None,
         timestamp: None,
@@ -586,6 +594,7 @@ async fn test_insert_model_inference_cached_flag(conn: impl ModelInferenceQuerie
         ttft_ms: None,
         cached: false,
         cost: None,
+        currency: None,
         finish_reason: None,
         snapshot_hash: None,
         timestamp: None,
@@ -633,6 +642,7 @@ async fn test_insert_model_inference_cost_non_cached(conn: impl ModelInferenceQu
         ttft_ms: None,
         cached: false,
         cost: Some(Decimal::new(18, 5)), // 0.00018
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         timestamp: None,
@@ -682,6 +692,7 @@ async fn test_insert_model_inference_cost_cached(conn: impl ModelInferenceQuerie
         ttft_ms: None,
         cached: true,
         cost: Some(Decimal::ZERO),
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         timestamp: None,
@@ -728,6 +739,7 @@ async fn test_insert_model_inference_cost_null(conn: impl ModelInferenceQueries)
         ttft_ms: None,
         cached: false,
         cost: None,
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         timestamp: None,
@@ -775,6 +787,7 @@ async fn test_insert_model_inference_cost_high_precision(conn: impl ModelInferen
         ttft_ms: None,
         cached: false,
         cost: Some(cost),
+        currency: None,
         finish_reason: Some(FinishReason::Stop),
         snapshot_hash: None,
         timestamp: None,

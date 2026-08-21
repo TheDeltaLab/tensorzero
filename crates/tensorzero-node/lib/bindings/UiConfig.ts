@@ -3,6 +3,7 @@ import type { EvaluationConfig } from "./EvaluationConfig";
 import type { FunctionConfig } from "./FunctionConfig";
 import type { MetricConfig } from "./MetricConfig";
 import type { StaticToolConfig } from "./StaticToolConfig";
+import type { UiModelAlias } from "./UiModelAlias";
 
 /**
  * Response type for GET /internal/ui_config
@@ -16,6 +17,16 @@ export type UiConfig = {
   tools: { [key in string]: StaticToolConfig };
   evaluations: { [key in string]: EvaluationConfig };
   model_names: Array<string>;
+  embedding_model_names: Array<string>;
+  /**
+   * Configured chat model name => routing provider names (no credentials).
+   */
+  model_providers: { [key in string]: Array<string> };
+  /**
+   * Configured embedding model name => routing provider names (no credentials).
+   */
+  embedding_model_providers: { [key in string]: Array<string> };
+  model_aliases: Array<UiModelAlias>;
   config_hash: string;
   /**
    * Whether the gateway config was loaded from the database (as opposed to a file on disk).

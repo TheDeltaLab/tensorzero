@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![cfg_attr(
     test,
     allow(clippy::expect_used, clippy::unwrap_used, clippy::print_stdout)
@@ -1850,6 +1851,7 @@ async fn test_run_llm_judge_evaluator_chat() {
             input_tokens: Some(0),
             output_tokens: Some(0),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },
@@ -2051,6 +2053,7 @@ async fn test_run_llm_judge_evaluator_json() {
             input_tokens: Some(0),
             output_tokens: Some(0),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },

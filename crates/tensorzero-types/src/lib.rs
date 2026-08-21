@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Wire format types for the TensorZero API.
 //!
 //! This crate contains the shared types used in API requests and responses.
@@ -32,8 +33,10 @@ pub use content::{
     Arguments, RawText, System, Template, Text, Thought, ThoughtSummaryBlock, Unknown,
 };
 pub use cost::{
-    CostPointerConfig, UnifiedCostPointerConfig, UninitializedCostConfig,
-    UninitializedCostConfigEntry, UninitializedCostRate, UninitializedUnifiedCostConfig,
+    CostPointerConfig, Currency, PointerList, TierMode, UnifiedCostPointerConfig,
+    UninitializedCostConfig, UninitializedCostConfigEntry, UninitializedCostRate,
+    UninitializedCostTier, UninitializedPeakWindow, UninitializedPeakWindows,
+    UninitializedTierWhen, UninitializedUnifiedCostConfig, UsageField,
 };
 pub use error::TypeError;
 pub use file::{

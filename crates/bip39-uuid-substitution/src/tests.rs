@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use super::*;
 
 use proptest::prelude::*;
@@ -425,6 +426,7 @@ fn test_postprocess_json_response() {
             input_tokens: Some(0),
             output_tokens: Some(0),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },

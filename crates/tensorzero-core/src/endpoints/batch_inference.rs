@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::response::{IntoResponse, Response};
@@ -25,7 +26,8 @@ use super::inference::{
 use crate::cache::{CacheEnabledMode, CacheOptions};
 use crate::config::Config;
 use crate::cost::{
-    CostConfig, ResponseMode, compute_cost, load_cost_config, load_unified_cost_config,
+    CostConfig, ResponseMode, apply_computed_cost, load_cost_config_with_timezone,
+    load_unified_cost_config_with_timezone,
 };
 use crate::db::ConfigQueries;
 use crate::db::batch_inference::{BatchInferenceQueries, CompletedBatchInferenceRow};
@@ -1006,11 +1008,17 @@ async fn resolve_batch_cost_config(
                     .get(batch_request.model_provider_name.as_ref())
             })
             .and_then(|provider| {
+                let timezone = provider.timezone.as_deref();
                 provider
                     .batch_cost
                     .clone()
-                    .and_then(|bc| load_unified_cost_config(bc).ok())
-                    .or_else(|| provider.cost.clone().and_then(|c| load_cost_config(c).ok()))
+                    .and_then(|bc| load_unified_cost_config_with_timezone(bc, timezone).ok())
+                    .or_else(|| {
+                        provider
+                            .cost
+                            .clone()
+                            .and_then(|c| load_cost_config_with_timezone(c, timezone).ok())
+                    })
             });
         if result.is_some() {
             return result;
@@ -1117,7 +1125,12 @@ pub async fn write_completed_batch_inference<'a>(
             }
         };
         if let Some(ref cost_config) = batch_cost_config {
-            usage.cost = compute_cost(&raw_response, cost_config, ResponseMode::NonStreaming).ok();
+            apply_computed_cost(
+                &mut usage,
+                &raw_response,
+                cost_config,
+                ResponseMode::NonStreaming,
+            );
         }
         let model_inference_response = ModelInferenceResponseWithMetadata {
             id: Uuid::now_v7(),
@@ -1332,6 +1345,7 @@ fn convert_row_to_inference_response(
         provider_cache_read_input_tokens: None,
         provider_cache_write_input_tokens: None,
         cost: row.cost,
+        currency: None,
     };
 
     match function {

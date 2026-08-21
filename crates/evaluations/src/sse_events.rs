@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! SSE event types for evaluation streaming.
 //!
 //! These types are used both by the gateway (for serializing SSE events) and by

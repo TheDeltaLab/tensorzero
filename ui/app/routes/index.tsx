@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { Link, type RouteHandle, Await, useAsyncError } from "react-router";
 import { LayoutErrorBoundary } from "~/components/ui/error";
 import * as React from "react";
@@ -8,11 +9,7 @@ import {
   Episodes,
   Functions,
   SupervisedFineTuning,
-  Blog,
-  Discord,
-  Slack,
   GitHub,
-  Globe,
   Documentation,
   Dataset,
   GridCheck,
@@ -20,7 +17,7 @@ import {
   Playground,
   Model,
 } from "~/components/icons/Icons";
-import { KeyRound } from "lucide-react";
+import { BarChart3, KeyRound } from "lucide-react";
 import {
   Tooltip,
   TooltipContent,
@@ -252,6 +249,12 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 title="Models"
                 description={numModelsUsedDesc}
               />
+              <DirectoryCard
+                source="/observability/analysis"
+                icon={BarChart3}
+                title="Analysis"
+                description="Usage, latency, TTFT, and output speed"
+              />
             </div>
           </div>
 
@@ -321,57 +324,23 @@ export default function Home({ loaderData }: Route.ComponentProps) {
 
         <div className="border-border my-4 w-full border-t"></div>
 
-        <div className="grid w-full grid-cols-1 gap-x-6 gap-y-12 md:grid-cols-2 lg:grid-cols-3">
-          <div className="w-full">
-            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
-              Learn more
-            </h3>
-            <div className="flex flex-col gap-3">
-              <FooterLink
-                source="https://www.tensorzero.com/docs"
-                icon={Documentation}
-              >
-                Docs
-              </FooterLink>
-              <FooterLink
-                source="https://github.com/tensorzero/tensorzero"
-                icon={GitHub}
-              >
-                GitHub
-              </FooterLink>
-            </div>
-          </div>
-          <div className="w-full">
-            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
-              Ask a question
-            </h3>
-            <div className="flex flex-col gap-3">
-              <FooterLink
-                source="https://www.tensorzero.com/slack"
-                icon={Slack}
-              >
-                Slack
-              </FooterLink>
-              <FooterLink
-                source="https://www.tensorzero.com/discord"
-                icon={Discord}
-              >
-                Discord
-              </FooterLink>
-            </div>
-          </div>
-          <div className="w-full">
-            <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
-              Explore TensorZero
-            </h3>
-            <div className="flex flex-col gap-3">
-              <FooterLink source="https://www.tensorzero.com/" icon={Globe}>
-                Website
-              </FooterLink>
-              <FooterLink source="https://www.tensorzero.com/blog" icon={Blog}>
-                Blog
-              </FooterLink>
-            </div>
+        <div className="w-full">
+          <h3 className="text-fg-tertiary mb-4 text-sm font-medium">
+            Learn more
+          </h3>
+          <div className="flex flex-col gap-3">
+            <FooterLink
+              source="https://github.com/TheDeltaLab/tensorzero/tree/main/docs"
+              icon={Documentation}
+            >
+              Docs
+            </FooterLink>
+            <FooterLink
+              source="https://github.com/TheDeltaLab/tensorzero"
+              icon={GitHub}
+            >
+              GitHub
+            </FooterLink>
           </div>
         </div>
       </div>

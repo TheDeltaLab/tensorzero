@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! ClickHouse queries for model inferences.
 
 use std::collections::HashMap;
@@ -43,6 +44,7 @@ impl ModelInferenceQueries for ClickHouseConnectionInfo {
                 ttft_ms,
                 cached,
                 cost,
+                currency,
                 finish_reason,
                 snapshot_hash,
                 formatDateTime(timestamp, '%Y-%m-%dT%H:%i:%SZ') as timestamp
@@ -508,6 +510,7 @@ mod tests {
                     ttft_ms,
                     cached,
                     cost,
+                    currency,
                     finish_reason,
                     snapshot_hash,
                     formatDateTime(timestamp, '%Y-%m-%dT%H:%i:%SZ') as timestamp

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Model inferences endpoint for getting model inference details by inference ID.
 
 use axum::Json;
@@ -96,6 +97,9 @@ pub struct ModelInference {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(type = "number | undefined")]
     pub cost: Option<Decimal>,
+    /// ISO 4217 code for `cost`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<String>,
 }
 
 /// HTTP handler for getting model inferences by inference ID
@@ -165,6 +169,7 @@ async fn get_model_inferences(
                 output: row.output,
                 cached: row.cached,
                 cost: row.cost,
+                currency: row.currency,
             })
         })
         .collect()

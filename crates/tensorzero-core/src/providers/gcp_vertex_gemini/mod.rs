@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Write;
@@ -814,6 +815,7 @@ fn make_provider_batch_inference_output(
         provider_cache_read_input_tokens: usage_metadata.cached_content_token_count,
         provider_cache_write_input_tokens: None,
         cost: None,
+        currency: None,
     };
 
     let (output, finish_reason) = get_response_content(
@@ -3059,6 +3061,7 @@ impl<'a> TryFrom<GCPVertexGeminiResponseWithMetadata<'a>> for ProviderInferenceR
             provider_cache_read_input_tokens: usage_metadata.cached_content_token_count,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
 
         let system = generic_request.system.clone();
@@ -3156,6 +3159,7 @@ fn convert_stream_response_with_metadata_to_chunk(
                     provider_cache_read_input_tokens: metadata.cached_content_token_count,
                     provider_cache_write_input_tokens: None,
                     cost: None,
+                    currency: None,
                 })
             } else {
                 None
@@ -3843,6 +3847,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(model_inference_response.provider_latency, latency);
@@ -3962,6 +3967,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(model_inference_response.provider_latency, latency);
@@ -4095,6 +4101,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(model_inference_response.provider_latency, latency);
@@ -5749,6 +5756,7 @@ mod tests {
             provider_cache_read_input_tokens: usage_metadata.cached_content_token_count,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
 
         expect_that!(usage.input_tokens, eq(Some(200)));

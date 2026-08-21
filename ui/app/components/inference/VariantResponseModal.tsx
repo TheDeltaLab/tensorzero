@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { useEffect, useState } from "react";
 import {
   Dialog,
@@ -100,7 +101,11 @@ function ResponseColumn({
                   </p>
                   {response.usage.cost != null && (
                     <p className="text-xs">
-                      Cost: {formatCost(response.usage.cost)}
+                      Cost:{" "}
+                      {formatCost(
+                        response.usage.cost,
+                        response.usage.currency ?? undefined,
+                      )}
                     </p>
                   )}
                 </div>

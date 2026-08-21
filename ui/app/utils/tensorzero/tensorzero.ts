@@ -99,8 +99,10 @@ import type {
   InferenceResponse,
   ResolveUuidResponse,
 } from "~/types/tensorzero";
+import type { AnalysisResponse } from "~/routes/observability/analysis/analysisQuery";
 
 export interface SynapseAnalyticsRow {
+  tag?: string | null;
   model_name: string;
   requests: number;
   input_tokens: number;
@@ -114,6 +116,12 @@ export interface SynapseAnalyticsRow {
 export interface SynapseBalances {
   deepseek: unknown | null;
   openrouter: unknown | null;
+}
+
+export interface InferenceApiKeyOption {
+  public_id: string;
+  description?: string | null;
+  disabled: boolean;
 }
 
 /**
@@ -209,11 +217,38 @@ export class TensorZeroClient extends BaseTensorZeroClient {
     return response.json();
   }
 
+  async chatCompletions(request: {
+    model: string;
+    messages: Array<{ role: string; content: string }>;
+    temperature?: number;
+    max_tokens?: number;
+  }): Promise<unknown> {
+    const response = await this.fetch("/v1/chat/completions", {
+      method: "POST",
+      body: JSON.stringify({
+        ...request,
+        stream: false,
+      }),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return response.json();
+  }
+
   async getSynapseAnalytics(
     from: string,
     to: string,
+    options: { tags?: string; groupByTag?: string } = {},
   ): Promise<{ data: SynapseAnalyticsRow[] }> {
     const params = new URLSearchParams({ from, to });
+    if (options.tags?.trim()) {
+      params.set("tags", options.tags.trim());
+    }
+    if (options.groupByTag?.trim()) {
+      params.set("group_by_tag", options.groupByTag.trim());
+    }
     const response = await this.fetch(
       `/internal/synapse/analytics?${params.toString()}`,
       { method: "GET" },
@@ -223,6 +258,55 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       this.handleHttpError({ message, response });
     }
     return (await response.json()) as { data: SynapseAnalyticsRow[] };
+  }
+
+  async getSynapseAnalysis(options: {
+    range: string;
+    kind: string;
+    apiKey?: string;
+    model?: string;
+    cacheMissOnly?: boolean;
+  }): Promise<AnalysisResponse> {
+    const params = new URLSearchParams({
+      range: options.range,
+      kind: options.kind,
+    });
+    if (options.apiKey?.trim()) {
+      params.set("api_key", options.apiKey.trim());
+    }
+    if (options.model?.trim()) {
+      params.set("model", options.model.trim());
+    }
+    if (options.cacheMissOnly) {
+      params.set("cache_miss_only", "true");
+    }
+    const response = await this.fetch(
+      `/internal/synapse/analysis?${params.toString()}`,
+      { method: "GET" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as AnalysisResponse;
+  }
+
+  /**
+   * API keys for the Inferences filter dropdown: native keys, imported Synapse
+   * keys, and public ids already stored on inference tags.
+   */
+  async listInferenceApiKeys(): Promise<InferenceApiKeyOption[]> {
+    const response = await this.fetch("/internal/inference_api_keys", {
+      method: "GET",
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const body = (await response.json()) as {
+      api_keys: InferenceApiKeyOption[];
+    };
+    return body.api_keys ?? [];
   }
 
   async getSynapseUsageExport(from: string, to: string): Promise<string> {

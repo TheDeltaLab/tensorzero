@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Shared test utilities for autopilot-tools integration tests.
 
 // Allow dead code at module level since different test binaries use different subsets of these utilities
@@ -220,6 +221,7 @@ pub fn create_mock_chat_response(text: &str) -> InferenceResponse {
             input_tokens: Some(10),
             output_tokens: Some(5),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },

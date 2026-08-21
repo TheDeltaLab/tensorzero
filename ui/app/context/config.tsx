@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /**
  * Configuration Context Provider
  *
@@ -21,6 +22,10 @@ export const EMPTY_CONFIG: UiConfig = {
   tools: {},
   evaluations: {},
   model_names: [],
+  embedding_model_names: [],
+  model_providers: {},
+  embedding_model_providers: {},
+  model_aliases: [],
   config_hash: "",
   config_in_database: false,
   auth_enabled: false,

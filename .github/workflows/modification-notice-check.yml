@@ -50,6 +50,7 @@ jobs:
             "NOTICE"
             "MODIFICATIONS.md"
             ".github/workflows/modification-notice-check.yml"
+            "crates/tensorzero-node/lib/bindings/"
           )
 
           # Build exclusion patterns

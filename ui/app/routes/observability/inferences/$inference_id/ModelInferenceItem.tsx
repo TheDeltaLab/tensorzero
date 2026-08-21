@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { ParsedModelInferenceRow } from "~/utils/clickhouse/inference";
 import { InputElement } from "~/components/input_output/InputElement";
 import {
@@ -23,6 +24,11 @@ import {
 } from "~/components/icons/Icons";
 import Chip from "~/components/ui/Chip";
 import { formatCost } from "~/utils/cost";
+import {
+  formatOutputTps,
+  outputTpsExcludingTtft,
+  toFiniteMs,
+} from "~/utils/observability/usageDetails";
 import { formatDateWithSeconds } from "~/utils/date";
 import { TimestampTooltip } from "~/components/ui/TimestampTooltip";
 import {
@@ -31,12 +37,19 @@ import {
 } from "~/components/layout/SnippetLayout";
 import { CodeEditor } from "~/components/ui/code-editor";
 import ModelInferenceOutput from "~/components/input_output/ModelInferenceOutput";
+import { ModelInferenceUsageDetails } from "~/components/inference/UsageDetails";
 
 interface ModelInferenceItemProps {
   inference: ParsedModelInferenceRow;
 }
 
 export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
+  const ttftMs = toFiniteMs(inference.ttft_ms);
+  const outputTps = outputTpsExcludingTtft({
+    outputTokens: inference.output_tokens,
+    durationMs: inference.response_time_ms,
+    ttftMs,
+  });
   return (
     <PageLayout>
       <PageHeader eyebrow="Model Inference" name={inference.id}>
@@ -57,22 +70,38 @@ export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
 
           <BasicInfoItem>
             <BasicInfoItemTitle>Usage</BasicInfoItemTitle>
-            <BasicInfoItemContent>
-              <div className="flex flex-row gap-1">
+            <BasicInfoItemContent wrap>
+              <div className="flex flex-row flex-wrap gap-1">
                 <Chip
                   icon={<InputIcon className="text-fg-tertiary" />}
-                  label={`${inference.input_tokens === undefined ? "null" : inference.input_tokens} tok`}
-                  tooltip="Input Tokens"
+                  label={`${inference.input_tokens === undefined ? "—" : inference.input_tokens} in`}
+                  tooltip="Input tokens"
                 />
                 <Chip
                   icon={<Output className="text-fg-tertiary" />}
-                  label={`${inference.output_tokens === undefined ? "null" : inference.output_tokens} tok`}
-                  tooltip="Output Tokens"
+                  label={`${inference.output_tokens === undefined ? "—" : inference.output_tokens} out`}
+                  tooltip="Output tokens"
                 />
+                {inference.provider_cache_read_input_tokens != null &&
+                  inference.provider_cache_read_input_tokens > 0 && (
+                    <Chip
+                      icon={<Cached className="text-fg-tertiary" />}
+                      label={`${inference.provider_cache_read_input_tokens} cache read`}
+                      tooltip="Provider cache read tokens"
+                    />
+                  )}
+                {inference.provider_cache_write_input_tokens != null &&
+                  inference.provider_cache_write_input_tokens > 0 && (
+                    <Chip
+                      icon={<Cached className="text-fg-tertiary" />}
+                      label={`${inference.provider_cache_write_input_tokens} cache write`}
+                      tooltip="Provider cache write tokens"
+                    />
+                  )}
                 {inference.cost !== undefined && (
                   <Chip
                     icon={<Cost className="text-fg-tertiary" />}
-                    label={formatCost(inference.cost)}
+                    label={formatCost(inference.cost, inference.currency)}
                     tooltip="Cost"
                   />
                 )}
@@ -80,7 +109,21 @@ export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
                   <Chip
                     icon={<Timer className="text-fg-tertiary" />}
                     label={`${inference.response_time_ms} ms`}
-                    tooltip="Response Time"
+                    tooltip="Response time"
+                  />
+                )}
+                {ttftMs != null && (
+                  <Chip
+                    icon={<Timer className="text-fg-tertiary" />}
+                    label={`${ttftMs} ms TTFT`}
+                    tooltip="Time to first token"
+                  />
+                )}
+                {outputTps != null && (
+                  <Chip
+                    icon={<Output className="text-fg-tertiary" />}
+                    label={formatOutputTps(outputTps)}
+                    tooltip="Output tokens per second, excluding TTFT"
                   />
                 )}
                 {inference.cached && (
@@ -93,19 +136,6 @@ export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
               </div>
             </BasicInfoItemContent>
           </BasicInfoItem>
-
-          {inference.ttft_ms && (
-            <BasicInfoItem>
-              <BasicInfoItemTitle>TTFT</BasicInfoItemTitle>
-              <BasicInfoItemContent>
-                <Chip
-                  icon={<Timer className="text-fg-tertiary" />}
-                  label={`${inference.ttft_ms} ms`}
-                  tooltip="Time To First Token"
-                />
-              </BasicInfoItemContent>
-            </BasicInfoItem>
-          )}
 
           <BasicInfoItem>
             <BasicInfoItemTitle>Timestamp</BasicInfoItemTitle>
@@ -121,6 +151,11 @@ export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
       </PageHeader>
 
       <SectionsGroup>
+        <SectionLayout>
+          <SectionHeader heading="Usage details" />
+          <ModelInferenceUsageDetails inference={inference} />
+        </SectionLayout>
+
         <SectionLayout>
           <SectionHeader heading="Input" />
           <InputElement

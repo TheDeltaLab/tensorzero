@@ -6,6 +6,7 @@ import {
   type ActionFunctionArgs,
   type RouteHandle,
 } from "react-router";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { PageHeader, PageLayout } from "~/components/layout/PageLayout";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -13,7 +14,14 @@ import { Label } from "~/components/ui/label";
 import { Textarea } from "~/components/ui/textarea";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import { logger } from "~/utils/logger";
+import {
+  ProviderModelSelect,
+  useProviderModelSelection,
+} from "./ProviderModelSelect";
 import { PlaygroundNav } from "./PlaygroundNav";
+import { TextItemList } from "./TextItemList";
+import { nonEmptyItems } from "./models";
+import { extractRerankResults } from "./openai";
 
 export const handle: RouteHandle = {
   crumb: () => ["Playground", "Rerank"],
@@ -23,10 +31,9 @@ export async function action({ request }: ActionFunctionArgs) {
   const form = await request.formData();
   const model = form.get("model")?.toString() ?? "";
   const query = form.get("query")?.toString() ?? "";
-  const documents = (form.get("documents")?.toString() ?? "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const documents = nonEmptyItems(
+    form.getAll("document").map((value) => value.toString()),
+  );
   const topNRaw = form.get("top_n")?.toString();
   const top_n = topNRaw ? Number(topNRaw) : undefined;
   try {
@@ -36,7 +43,7 @@ export async function action({ request }: ActionFunctionArgs) {
       documents,
       top_n: Number.isFinite(top_n) ? top_n : undefined,
     });
-    return { ok: true as const, result };
+    return { ok: true as const, result, documents };
   } catch (error) {
     logger.error(error);
     return {
@@ -47,38 +54,112 @@ export async function action({ request }: ActionFunctionArgs) {
 }
 
 export default function RerankPlayground() {
+  const {
+    providers,
+    models,
+    provider,
+    model,
+    requestModel,
+    setProvider,
+    setModel,
+  } = useProviderModelSelection("rerank");
+  const [documents, setDocuments] = useState<string[]>([""]);
   const actionData = useActionData<typeof action>();
   const navigation = useNavigation();
+  const formRef = useRef<HTMLFormElement>(null);
   const busy = navigation.state !== "idle";
+  const ranked =
+    actionData?.ok === true
+      ? extractRerankResults(actionData.result, actionData.documents)
+      : [];
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+      event.preventDefault();
+      formRef.current?.requestSubmit();
+    }
+  };
+
   return (
     <PageLayout>
       <PageHeader heading="Playground" />
       <PlaygroundNav current="/playground/rerank" />
-      <Form method="post" className="flex max-w-180 flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <Label htmlFor="model">Model alias</Label>
-          <Input id="model" name="model" required placeholder="qwen3-rerank" />
-        </div>
+      <Form
+        method="post"
+        ref={formRef}
+        className="flex max-w-180 flex-col gap-4"
+      >
+        <input type="hidden" name="model" value={requestModel} />
+        <ProviderModelSelect
+          providers={providers}
+          models={models}
+          provider={provider}
+          model={model}
+          onProviderChange={setProvider}
+          onModelChange={setModel}
+        />
         <div className="flex flex-col gap-2">
           <Label htmlFor="query">Query</Label>
-          <Input id="query" name="query" required />
+          <Textarea
+            id="query"
+            name="query"
+            required
+            rows={2}
+            className="resize-y"
+            onKeyDown={handleKeyDown}
+            placeholder="Enter your search query…"
+          />
         </div>
         <div className="flex flex-col gap-2">
-          <Label htmlFor="documents">Documents (one per line)</Label>
-          <Textarea id="documents" name="documents" required rows={8} />
+          <div className="flex items-center justify-between">
+            <Label>Documents</Label>
+            <span className="text-muted-foreground text-xs">
+              {nonEmptyItems(documents).length} / {documents.length} filled
+            </span>
+          </div>
+          <TextItemList
+            name="document"
+            items={documents}
+            onChange={setDocuments}
+            placeholder={(index) => `Document ${index + 1}`}
+            onKeyDown={handleKeyDown}
+          />
+          <p className="text-muted-foreground text-xs">
+            Each box is one document, so newlines stay inside that item. Press
+            Ctrl/Cmd+Enter to rerank.
+          </p>
         </div>
         <div className="flex flex-col gap-2">
           <Label htmlFor="top_n">top_n (optional)</Label>
           <Input id="top_n" name="top_n" type="number" min={1} />
         </div>
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy || !provider || !model}>
           Rerank
         </Button>
       </Form>
       {actionData?.ok ? (
-        <pre className="bg-bg-hover overflow-auto rounded-md p-4 text-sm">
-          {JSON.stringify(actionData.result, null, 2)}
-        </pre>
+        <div className="space-y-3">
+          {ranked.map((item, rank) => (
+            <div
+              key={`${item.index}-${rank}`}
+              className="rounded-lg border p-4"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  #{rank + 1} · original #{item.index + 1}
+                </p>
+                <p className="font-mono text-sm">
+                  {(item.relevanceScore * 100).toFixed(1)}%
+                </p>
+              </div>
+              {item.document ? (
+                <p className="mt-2 whitespace-pre-wrap text-sm">
+                  {item.document}
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
       ) : null}
       {actionData && !actionData.ok ? (
         <p className="text-red-600">{actionData.error}</p>

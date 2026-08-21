@@ -15,10 +15,7 @@ import {
   SectionHeader,
 } from "~/components/layout/PageLayout";
 import { logger } from "~/utils/logger";
-import type {
-  SynapseAnalyticsRow,
-  SynapseBalances,
-} from "~/utils/tensorzero/tensorzero";
+import type { SynapseBalances } from "~/utils/tensorzero/tensorzero";
 import { Button } from "~/components/ui/button";
 
 export const handle: RouteHandle = {
@@ -63,20 +60,6 @@ export async function loader({ request }: Route.LoaderArgs) {
   const modelLatencyQuantilesPromise = client.getModelLatencyQuantiles(
     latencyTimeGranularity,
   );
-  const synapseAnalyticsPromise = (async () => {
-    const to = new Date();
-    const from = new Date(to.getTime() - 7 * 24 * 60 * 60 * 1000);
-    try {
-      const response = await client.getSynapseAnalytics(
-        from.toISOString(),
-        to.toISOString(),
-      );
-      return response.data;
-    } catch (error) {
-      logger.error(error);
-      return [] as SynapseAnalyticsRow[];
-    }
-  })();
   const synapseBalancesPromise = client.getSynapseBalances().catch((error) => {
     logger.error(error);
     return { deepseek: null, openrouter: null } as SynapseBalances;
@@ -86,7 +69,6 @@ export async function loader({ request }: Route.LoaderArgs) {
     usageTimeGranularity,
     latencyTimeGranularity,
     modelLatencyQuantilesPromise,
-    synapseAnalyticsPromise,
     synapseBalancesPromise,
   };
 }
@@ -122,7 +104,6 @@ export default function ModelsPage({ loaderData }: Route.ComponentProps) {
   const {
     modelUsageTimeseriesPromise,
     modelLatencyQuantilesPromise,
-    synapseAnalyticsPromise,
     synapseBalancesPromise,
   } = loaderData;
 
@@ -143,6 +124,10 @@ export default function ModelsPage({ loaderData }: Route.ComponentProps) {
         </SectionLayout>
         <SectionLayout>
           <SectionHeader heading="Provider balances" />
+          <Form method="post" reloadDocument className="mb-3">
+            <input type="hidden" name="intent" value="usage_csv" />
+            <Button type="submit">Download DeepSeek CNY CSV</Button>
+          </Form>
           <Suspense fallback={<p>Loading balances…</p>}>
             <Await resolve={synapseBalancesPromise}>
               {(balances: SynapseBalances) => (
@@ -161,62 +146,6 @@ export default function ModelsPage({ loaderData }: Route.ComponentProps) {
                   </pre>
                 </div>
               )}
-            </Await>
-          </Suspense>
-        </SectionLayout>
-        <SectionLayout>
-          <SectionHeader heading="Request mix (last 7 days)" />
-          <Form method="post" reloadDocument className="mb-3">
-            <input type="hidden" name="intent" value="usage_csv" />
-            <Button type="submit">Download DeepSeek CNY CSV</Button>
-          </Form>
-          <Suspense fallback={<p>Loading analytics…</p>}>
-            <Await resolve={synapseAnalyticsPromise}>
-              {(rows: SynapseAnalyticsRow[]) =>
-                rows.length === 0 ? (
-                  <p className="text-sm">
-                    No Postgres analytics yet. Point observability at Postgres
-                    and send traffic.
-                  </p>
-                ) : (
-                  <div className="overflow-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead>
-                        <tr>
-                          <th className="p-2">Model</th>
-                          <th className="p-2">Kind</th>
-                          <th className="p-2">Requests</th>
-                          <th className="p-2">Input tokens</th>
-                          <th className="p-2">Output tokens</th>
-                          <th className="p-2">Avg latency ms</th>
-                          <th className="p-2">Avg TTFT ms</th>
-                          <th className="p-2">Output TPS (ex-TTFT)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {rows.map((row) => (
-                          <tr key={`${row.kind}:${row.model_name}`}>
-                            <td className="p-2">{row.model_name}</td>
-                            <td className="p-2">{row.kind}</td>
-                            <td className="p-2">{row.requests}</td>
-                            <td className="p-2">{row.input_tokens}</td>
-                            <td className="p-2">{row.output_tokens}</td>
-                            <td className="p-2">
-                              {row.avg_latency_ms?.toFixed(1) ?? "—"}
-                            </td>
-                            <td className="p-2">
-                              {row.avg_ttft_ms?.toFixed(1) ?? "—"}
-                            </td>
-                            <td className="p-2">
-                              {row.output_tps_excluding_ttft?.toFixed(2) ?? "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              }
             </Await>
           </Suspense>
         </SectionLayout>

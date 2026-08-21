@@ -510,11 +510,14 @@ Since batch inference responses are always non-streaming, `batch_cost` only supp
 
 Each entry has the following fields:
 
-- `pointer` (string) — a [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901) into the provider's batch response.
-- Rate (exactly one of the following):
-  - `cost_per_million` (number) — cost in dollars per million units of the extracted value.
-  - `cost_per_unit` (number) — cost in dollars per unit of the extracted value.
+- `pointer` (string or array) — a [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901) into the provider's batch response (or an ordered list; first present wins).
+- Rate (exactly one of the following, unless `tiers` is set):
+  - `cost_per_million` (number) — cost per million units of the extracted value.
+  - `cost_per_unit` (number) — cost per unit of the extracted value.
+- `tiers` / `tier_mode` / `tier_by` / `skip_if_pointer` — same meaning as on `cost`.
 - `required` (boolean, default: `false`) — if `true` and the field is missing from the response, the cost for the entire request is reported as `null`. If `false`, missing fields contribute $0 to the total.
+- `usage` (string, optional) — when set, also write the extracted value onto `input`, `output`, `cache_read`, or `cache_write`.
+- `peak` (object or array, optional) — peak-hours rate (`start`/`end` as `HH:MM`, optional `days`, optional `timezone`, and a `cost_per_*` rate). Outside every window the base rate or `tiers` schedule is used.
 
 The total cost is computed as the sum of `extracted_value * rate` across all entries.
 
@@ -550,12 +553,16 @@ Each entry in the array specifies a [JSON Pointer](https://datatracker.ietf.org/
 Each entry has the following fields:
 
 - Pointer (exactly one of the following):
-  - `pointer` — a single JSON Pointer used for both streaming and non-streaming responses.
-  - `pointer_nonstreaming` and `pointer_streaming` — separate JSON Pointers for non-streaming and streaming responses respectively. Both must be provided together.
-- Rate (exactly one of the following):
-  - `cost_per_million` (number) — cost in dollars per million units of the extracted value. This is the most common option for token-based pricing.
-  - `cost_per_unit` (number) — cost in dollars per unit of the extracted value. This is useful for features billed per unit (e.g. web search calls), or when the provider response contains a cost value directly (set to `1.0`).
+  - `pointer` — a JSON Pointer, or an ordered list of pointers (first present wins), used for both streaming and non-streaming responses.
+  - `pointer_nonstreaming` and `pointer_streaming` — separate JSON Pointers (or lists) for non-streaming and streaming responses respectively. Both must be provided together.
+- Rate (exactly one of the following, unless `tiers` is set):
+  - `cost_per_million` (number) — cost per million units of the extracted value. This is the most common option for token-based pricing.
+  - `cost_per_unit` (number) — cost per unit of the extracted value. This is useful for features billed per unit (e.g. web search calls), or when the provider response contains a cost value directly (set to `1.0`).
+- `tiers` (array, optional) — token-length schedule. Each band has a `cost_per_*` rate and optional exclusive `up_to`. `tier_mode` is `bucket` (default; whole request uses one band) or `progressive`. `tier_by` selects the `bucket` key (defaults to this entry's billed value). Band `when` adds extra exclusive upper bounds on other pointers.
+- `skip_if_pointer` (string or array, optional) — skip this entry when any listed pointer is a number `> 0`.
 - `required` (boolean, default: `false`) — if `true` and the field is missing from the response, the cost for the entire request is reported as `null`. If `false`, missing fields contribute $0 to the total.
+- `usage` (string, optional) — when set, also write the extracted value onto `input`, `output`, `cache_read`, or `cache_write`.
+- `peak` (object or array, optional) — peak-hours rate(s). `start` is inclusive, `end` is exclusive (`HH:MM`). If `start` is later than `end`, the window wraps midnight. `days` accepts `mon`…`sun`, `weekday`, and `weekend` (empty means every day). `timezone` is an IANA name and defaults to the provider `timezone`, then `UTC`. Peak windows use a flat rate (not `tiers`).
 
 The total cost is computed as the sum of `extracted_value * rate` across all entries.
 Rates can be negative, which is useful when a provider double-counts cached tokens in its base token field (e.g. OpenAI includes cached tokens in `prompt_tokens`).
@@ -642,6 +649,49 @@ This is useful when a model provider introduces new chunk types that TensorZero 
 discard_unknown_chunks = true
 # ...
 ```
+
+### `timezone`
+
+- **Type:** string (IANA timezone, e.g. `Asia/Shanghai`)
+- **Required:** no (default: `UTC`)
+
+Default timezone for `cost` / `batch_cost` peak windows that omit `timezone`.
+Each model provider can set its own value so peak vs off-peak rates follow that provider's local clock.
+
+```toml title="tensorzero.toml"
+[models.qwen-plus.providers.dashscope]
+type = "openai"
+model_name = "qwen-plus"
+timezone = "Asia/Shanghai"
+cost = [
+  { pointer = "/usage/prompt_tokens", cost_per_million = 0.8, usage = "input", required = true,
+    peak = { start = "08:00", end = "22:00", days = ["weekday"], cost_per_million = 2.0 } },
+]
+```
+
+See [Track usage and cost](/operations/track-usage-and-cost) for more information.
+
+### `currency`
+
+- **Type:** string (ISO 4217 alphabetic code, e.g. `USD`, `CNY`)
+- **Required:** no (default: `USD`)
+
+Currency for `cost` / `batch_cost` rates on this provider. `RMB` is accepted as an alias for `CNY`.
+The gateway stamps this code onto computed `usage.currency` (OpenAI-compatible responses use `tensorzero_currency`).
+It does not convert between currencies. Aggregating inferences that use different currencies reports `cost` as `null`.
+
+```toml title="tensorzero.toml"
+[models.glm-5.1.providers.zhipu]
+type = "openai"
+model_name = "glm-5.1"
+currency = "CNY"
+cost = [
+  { pointer = "/usage/prompt_tokens", usage = "input", required = true,
+    tiers = [{ up_to = 32000, cost_per_million = 6 }, { cost_per_million = 8 }] },
+]
+```
+
+See [Track usage and cost](/operations/track-usage-and-cost) for more information.
 
 ### `extra_body`
 
@@ -2302,11 +2352,14 @@ Each entry in the array specifies a [JSON Pointer](https://datatracker.ietf.org/
 
 Each entry has the following fields:
 
-- `pointer` (string) — a [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901) into the provider's response.
-- Rate (exactly one of the following):
-  - `cost_per_million` (number) — cost in dollars per million units of the extracted value. This is the most common option for token-based pricing.
-  - `cost_per_unit` (number) — cost in dollars per unit of the extracted value. This is useful for features billed per unit, or when the provider response contains a cost value directly (set to `1.0`).
+- `pointer` (string or array) — a [JSON Pointer](https://datatracker.ietf.org/doc/html/rfc6901) into the provider's response.
+- Rate (exactly one of the following, unless `tiers` is set):
+  - `cost_per_million` (number) — cost per million units of the extracted value. This is the most common option for token-based pricing.
+  - `cost_per_unit` (number) — cost per unit of the extracted value. This is useful for features billed per unit, or when the provider response contains a cost value directly (set to `1.0`).
+- `tiers` / `tier_mode` / `tier_by` / `skip_if_pointer` — same meaning as model-provider `cost`.
 - `required` (boolean, default: `false`) — if `true` and the field is missing from the response, the cost for the entire request is reported as `null`. If `false`, missing fields contribute $0 to the total.
+- `usage` (string, optional) — when set, also write the extracted value onto `input`, `output`, `cache_read`, or `cache_write`.
+- `peak` (object or array, optional) — peak-hours rate (`start`/`end`, optional `days`/`timezone`, and a `cost_per_*` rate). Embedding providers also accept a provider-level `timezone` and `currency`.
 
 The total cost is computed as the sum of `extracted_value * rate` across all entries.
 

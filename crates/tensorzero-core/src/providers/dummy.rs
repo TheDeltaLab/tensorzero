@@ -90,6 +90,7 @@ impl DummyProvider {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             "output_tokens_zero" => Usage {
                 input_tokens: Some(10),
@@ -97,6 +98,7 @@ impl DummyProvider {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             "input_tokens_output_tokens_zero" => Usage {
                 input_tokens: Some(0),
@@ -104,6 +106,7 @@ impl DummyProvider {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             "input_five_output_six" => Usage {
                 input_tokens: Some(5),
@@ -111,6 +114,7 @@ impl DummyProvider {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             "cache_read" => Usage {
                 input_tokens: Some(10),
@@ -118,6 +122,7 @@ impl DummyProvider {
                 provider_cache_read_input_tokens: Some(7),
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
             _ => Usage {
                 input_tokens: Some(10),
@@ -125,6 +130,7 @@ impl DummyProvider {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             },
         }
     }
@@ -1148,6 +1154,7 @@ impl EmbeddingProvider for DummyProvider {
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         };
         let latency = Latency::NonStreaming {
             response_time: Duration::from_millis(100),

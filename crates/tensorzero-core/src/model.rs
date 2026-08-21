@@ -34,7 +34,8 @@ use crate::config::{
     Namespace, OtlpConfig, OtlpTracesFormat, TimeoutsConfig, provider_types::ProviderTypesConfig,
 };
 use crate::cost::{
-    CostConfig, ResponseMode, compute_cost, load_cost_config, load_unified_cost_config,
+    CostConfig, ResponseMode, apply_computed_cost, load_cost_config_with_provider_defaults,
+    load_unified_cost_config_with_provider_defaults,
 };
 use crate::endpoints::inference::InferenceClients;
 use crate::http::TensorzeroHttpClient;
@@ -170,9 +171,17 @@ impl UninitializedModelConfig {
                 } else {
                     load_future.await
                 };
+                let default_timezone = provider.timezone.clone();
+                let currency = provider.currency.as_deref();
                 let cost = provider
                     .cost
-                    .map(load_cost_config)
+                    .map(|c| {
+                        load_cost_config_with_provider_defaults(
+                            c,
+                            default_timezone.as_deref(),
+                            currency,
+                        )
+                    })
                     .transpose()
                     .map_err(|e| {
                         Error::new(ErrorDetails::Config {
@@ -181,7 +190,13 @@ impl UninitializedModelConfig {
                     })?;
                 let batch_cost = provider
                     .batch_cost
-                    .map(load_unified_cost_config)
+                    .map(|c| {
+                        load_unified_cost_config_with_provider_defaults(
+                            c,
+                            default_timezone.as_deref(),
+                            currency,
+                        )
+                    })
                     .transpose()
                     .map_err(|e| {
                         Error::new(ErrorDetails::Config {
@@ -265,6 +280,8 @@ impl TryFrom<StoredModelProvider> for UninitializedModelProvider {
             discard_unknown_chunks: stored.discard_unknown_chunks.unwrap_or_default(),
             cost,
             batch_cost,
+            timezone: stored.timezone,
+            currency: stored.currency,
         })
     }
 }
@@ -945,12 +962,12 @@ impl ModelConfig {
                         if !response.cached
                             && let Some(cost_config) = &provider.cost
                         {
-                            response.usage.cost = compute_cost(
+                            apply_computed_cost(
+                                &mut response.usage,
                                 &response.raw_response,
                                 cost_config,
                                 ResponseMode::NonStreaming,
-                            )
-                            .ok();
+                            );
                         }
 
                         // Perform the cache write outside of the `non_streaming_total_timeout` timeout future,
@@ -1454,6 +1471,14 @@ pub struct UninitializedModelProvider {
     #[serde(default)]
     #[ts(skip)]
     pub batch_cost: Option<UninitializedUnifiedCostConfig>,
+    /// Default IANA timezone for `cost` peak windows that omit `timezone`.
+    #[serde(default)]
+    #[ts(skip)]
+    pub timezone: Option<String>,
+    /// ISO 4217 code for `cost` / `batch_cost` rates. Defaults to `USD`.
+    #[serde(default)]
+    #[ts(skip)]
+    pub currency: Option<String>,
 }
 
 impl From<&UninitializedModelProvider> for StoredModelProvider {
@@ -1475,6 +1500,8 @@ impl From<&UninitializedModelProvider> for StoredModelProvider {
                 .batch_cost
                 .as_ref()
                 .map(StoredUnifiedCostConfig::from),
+            timezone: provider.timezone.clone(),
+            currency: provider.currency.clone(),
         }
     }
 }
@@ -4025,6 +4052,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(&*response.model_provider_name, "good_provider");
@@ -4311,6 +4339,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(&*response.model_provider_name, "good_provider");
@@ -5413,22 +5442,22 @@ mod tests {
 
         let cost_config: CostConfig = vec![CostConfigEntry {
             pointer: NormalizedCostPointerConfig::Unified {
-                pointer: "/usage/input_tokens".to_string(),
+                pointers: vec!["/usage/input_tokens".to_string()],
             },
-            rate: CostRate {
+            rate: Some(CostRate {
                 cost_per_unit: Decimal::from(3) / Decimal::from(1_000_000),
-            },
-            required: false,
+            }),
+            ..Default::default()
         }];
 
         let batch_cost_config: CostConfig = vec![CostConfigEntry {
             pointer: NormalizedCostPointerConfig::Unified {
-                pointer: "/usage/input_tokens".to_string(),
+                pointers: vec!["/usage/input_tokens".to_string()],
             },
-            rate: CostRate {
+            rate: Some(CostRate {
                 cost_per_unit: Decimal::from(1) / Decimal::from(1_000_000),
-            },
-            required: false,
+            }),
+            ..Default::default()
         }];
 
         let provider = ModelProvider {
@@ -5449,7 +5478,11 @@ mod tests {
             .effective_batch_cost_config()
             .expect("should return batch_cost when present");
         assert_eq!(
-            effective[0].rate.cost_per_unit,
+            effective[0]
+                .rate
+                .as_ref()
+                .expect("batch cost should have a flat rate")
+                .cost_per_unit,
             Decimal::from(1) / Decimal::from(1_000_000),
             "should return batch_cost rate, not regular cost rate"
         );
@@ -5462,12 +5495,12 @@ mod tests {
 
         let cost_config: CostConfig = vec![CostConfigEntry {
             pointer: NormalizedCostPointerConfig::Unified {
-                pointer: "/usage/input_tokens".to_string(),
+                pointers: vec!["/usage/input_tokens".to_string()],
             },
-            rate: CostRate {
+            rate: Some(CostRate {
                 cost_per_unit: Decimal::from(3) / Decimal::from(1_000_000),
-            },
-            required: false,
+            }),
+            ..Default::default()
         }];
 
         let provider = ModelProvider {
@@ -5488,7 +5521,11 @@ mod tests {
             .effective_batch_cost_config()
             .expect("should fall back to cost when batch_cost is None");
         assert_eq!(
-            effective[0].rate.cost_per_unit,
+            effective[0]
+                .rate
+                .as_ref()
+                .expect("cost should have a flat rate")
+                .cost_per_unit,
             Decimal::from(3) / Decimal::from(1_000_000),
             "should return regular cost rate as fallback"
         );
@@ -5529,8 +5566,10 @@ mod tests {
             StoredUnifiedCostConfig,
         };
         use tensorzero_types::{
-            CostPointerConfig, UnifiedCostPointerConfig, UninitializedCostConfig,
-            UninitializedCostConfigEntry, UninitializedCostRate, UninitializedUnifiedCostConfig,
+            CostPointerConfig, PointerList, TierMode, UnifiedCostPointerConfig,
+            UninitializedCostConfig, UninitializedCostConfigEntry, UninitializedCostRate,
+            UninitializedCostTier, UninitializedPeakWindow, UninitializedPeakWindows,
+            UninitializedUnifiedCostConfig,
         };
 
         use crate::config::{Namespace, NonStreamingTimeouts, TimeoutsConfig};
@@ -5644,7 +5683,7 @@ mod tests {
                 discard_unknown_chunks: true,
                 cost: Some(vec![UninitializedCostConfigEntry {
                     pointer: CostPointerConfig {
-                        pointer: Some("/usage/input_tokens".to_string()),
+                        pointer: Some(PointerList::one("/usage/input_tokens")),
                         pointer_nonstreaming: None,
                         pointer_streaming: None,
                     },
@@ -5653,8 +5692,13 @@ mod tests {
                         cost_per_unit: None,
                     },
                     required: false,
+                    usage: None,
+                    peak: None,
+                    ..Default::default()
                 }]),
                 batch_cost: None,
+                timezone: None,
+                currency: None,
             };
             let stored = StoredModelProvider::from(&original);
             let restored: UninitializedModelProvider =
@@ -5684,6 +5728,8 @@ mod tests {
                         discard_unknown_chunks: false,
                         cost: None,
                         batch_cost: None,
+                        timezone: None,
+                        currency: None,
                     },
                 )]),
                 timeouts: TimeoutsConfig::default(),
@@ -5703,20 +5749,23 @@ mod tests {
             let original: UninitializedCostConfig = vec![
                 UninitializedCostConfigEntry {
                     pointer: CostPointerConfig {
-                        pointer: Some("/usage/input_tokens".to_string()),
+                        pointer: Some(PointerList::one("/usage/input_tokens")),
                         pointer_nonstreaming: None,
-                        pointer_streaming: Some("/usage/streaming_tokens".to_string()),
+                        pointer_streaming: Some(PointerList::one("/usage/streaming_tokens")),
                     },
                     rate: UninitializedCostRate {
                         cost_per_million: Some(Decimal::new(150, 2)),
                         cost_per_unit: None,
                     },
                     required: false,
+                    usage: None,
+                    peak: None,
+                    ..Default::default()
                 },
                 UninitializedCostConfigEntry {
                     pointer: CostPointerConfig {
                         pointer: None,
-                        pointer_nonstreaming: Some("/usage/nonstream".to_string()),
+                        pointer_nonstreaming: Some(PointerList::one("/usage/nonstream")),
                         pointer_streaming: None,
                     },
                     rate: UninitializedCostRate {
@@ -5724,8 +5773,76 @@ mod tests {
                         cost_per_unit: Some(Decimal::new(1, 6)),
                     },
                     required: true,
+                    usage: None,
+                    peak: None,
+                    ..Default::default()
                 },
             ];
+            let stored = StoredCostConfig::from(&original);
+            let restored: UninitializedCostConfig = stored.into();
+            expect_that!(restored, eq(&original));
+        }
+
+        #[gtest]
+        fn test_cost_config_tiers_and_multi_peak_round_trip() {
+            let original: UninitializedCostConfig = vec![UninitializedCostConfigEntry {
+                pointer: CostPointerConfig {
+                    pointer: Some(PointerList::Many(vec![
+                        "/usage/prompt_tokens".to_string(),
+                        "/usage/input_tokens".to_string(),
+                    ])),
+                    pointer_nonstreaming: None,
+                    pointer_streaming: None,
+                },
+                required: true,
+                usage: Some(tensorzero_types::UsageField::Input),
+                peak: Some(UninitializedPeakWindows::Many(vec![
+                    UninitializedPeakWindow {
+                        start: "09:00".to_string(),
+                        end: "12:00".to_string(),
+                        days: vec!["weekday".to_string()],
+                        timezone: Some("Asia/Shanghai".to_string()),
+                        rate: UninitializedCostRate {
+                            cost_per_million: Some(Decimal::from(3)),
+                            cost_per_unit: None,
+                        },
+                    },
+                    UninitializedPeakWindow {
+                        start: "14:00".to_string(),
+                        end: "18:00".to_string(),
+                        days: vec![],
+                        timezone: None,
+                        rate: UninitializedCostRate {
+                            cost_per_million: Some(Decimal::from(3)),
+                            cost_per_unit: None,
+                        },
+                    },
+                ])),
+                skip_if_pointer: Some(PointerList::one(
+                    "/usage/completion_tokens_details/audio_tokens",
+                )),
+                tiers: vec![
+                    UninitializedCostTier {
+                        up_to: Some(32_000),
+                        when: vec![],
+                        rate: UninitializedCostRate {
+                            cost_per_million: Some(Decimal::from(6)),
+                            cost_per_unit: None,
+                        },
+                    },
+                    UninitializedCostTier {
+                        up_to: None,
+                        when: vec![],
+                        rate: UninitializedCostRate {
+                            cost_per_million: Some(Decimal::from(8)),
+                            cost_per_unit: None,
+                        },
+                    },
+                ],
+                tier_mode: TierMode::Progressive,
+                tier_by: Some(PointerList::one("/usage/prompt_tokens")),
+                ..Default::default()
+            }];
             let stored = StoredCostConfig::from(&original);
             let restored: UninitializedCostConfig = stored.into();
             expect_that!(restored, eq(&original));
@@ -5736,23 +5853,29 @@ mod tests {
             let original: UninitializedUnifiedCostConfig = vec![
                 UninitializedCostConfigEntry {
                     pointer: UnifiedCostPointerConfig {
-                        pointer: "/usage/input_tokens".to_string(),
+                        pointer: PointerList::one("/usage/input_tokens"),
                     },
                     rate: UninitializedCostRate {
                         cost_per_million: Some(Decimal::new(150, 2)),
                         cost_per_unit: None,
                     },
                     required: true,
+                    usage: None,
+                    peak: None,
+                    ..Default::default()
                 },
                 UninitializedCostConfigEntry {
                     pointer: UnifiedCostPointerConfig {
-                        pointer: "/usage/output_tokens".to_string(),
+                        pointer: PointerList::one("/usage/output_tokens"),
                     },
                     rate: UninitializedCostRate {
                         cost_per_million: None,
                         cost_per_unit: Some(Decimal::new(6, 6)),
                     },
                     required: false,
+                    usage: None,
+                    peak: None,
+                    ..Default::default()
                 },
             ];
             let stored = StoredUnifiedCostConfig::from(&original);

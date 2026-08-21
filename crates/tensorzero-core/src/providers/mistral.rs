@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::{borrow::Cow, time::Duration};
 
 use crate::{
@@ -812,6 +813,7 @@ fn mistral_usage_to_tensorzero_usage(usage: MistralUsage) -> Usage {
         provider_cache_read_input_tokens: usage.prompt_tokens_details.and_then(|d| d.cached_tokens),
         provider_cache_write_input_tokens: None,
         cost: None,
+        currency: None,
     }
 }
 

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
 use std::time::Duration;
 
@@ -1028,6 +1029,7 @@ impl GeminiUsageMetadata {
             provider_cache_read_input_tokens: self.cached_content_token_count,
             provider_cache_write_input_tokens: None,
             cost: None,
+            currency: None,
         }
     }
 }
@@ -1782,6 +1784,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(model_inference_response.provider_latency, latency);
@@ -1901,6 +1904,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(model_inference_response.provider_latency, latency);
@@ -2033,6 +2037,7 @@ mod tests {
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
                 cost: None,
+                currency: None,
             }
         );
         assert_eq!(model_inference_response.provider_latency, latency);

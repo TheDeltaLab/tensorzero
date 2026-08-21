@@ -209,7 +209,7 @@ fn fixture_chat_function_unversioned() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "4fe2de718ce1be2c0b5e7be8a7bef79aff00dd1d5449e4e8dd7f0f350684b5b1",
+        "b73790f51ecbb96e4d958288dfade5a2a7b3fb6b90d1cf105d14573293f9d17e",
     );
 }
 
@@ -233,7 +233,7 @@ fn fixture_multi_variant_types() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "bf5987fd14a9079107ea3af37b034626055de9eaf6777f404717d1dae3de4f9d",
+        "434e834942b3aadfe8bd4c2bf7f1783d126e957c114914eda432612f9d2531a6",
     );
 }
 
@@ -254,7 +254,7 @@ fn fixture_models_multi_provider() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "40a1d723a6259c93d75bba4734e25e76ea1321d914dc1adcd5d8a0f1540068b9",
+        "2f4ea5b54e885752c821ac7c07b7a51f23e32ad2bdf8e9ed343f4fca55ac40e6",
     );
 }
 
@@ -274,7 +274,7 @@ fn fixture_tools_and_metrics() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "2a7f61f9c80dbca62e5a2a1acf6287fe53ef823478222fbaebd9da19fbc2b7da",
+        "ffff7125a34f7e56fbe0d7ec670da5b996862e249a29d04437f403d34f7287cf",
     );
 }
 
@@ -297,7 +297,7 @@ fn fixture_kitchen_sink() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "82a0341daf13843fdc74b0715fcb7c08199dc7348657b92ea86272178b07a624",
+        "6a88877a443e6eb222213e0dc4624e4f3a9c9c58fad72c300e392dba851abaca",
     );
 }
 

@@ -12,8 +12,8 @@ use crate::utils::gateway::AppStateData;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
 
 use super::synapse::{
-    SynapseRequestContext, resolve_cache_options, resolve_openai_compatible_model,
-    run_with_request_timeout,
+    SynapseRequestContext, apply_compat_to_params, resolve_cache_options,
+    resolve_openai_compatible_model, run_with_request_timeout,
 };
 use super::types::chat_completions::OpenAICompatibleParams;
 
@@ -132,7 +132,11 @@ pub async fn infer_openai_compatible(
         Ok(params) => params,
         Err(error) => return Err(error_response(error, include_raw_response, &synapse)),
     };
+    if let Err(error) = apply_compat_to_params(headers, &mut params) {
+        return Err(error_response(error, include_raw_response, &synapse));
+    }
     params.cache_options = resolve_cache_options(explicit_cache, synapse.cache_disabled);
+    params.extra_internal_tags = synapse.observability_tags(headers);
 
     synapse = synapse.with_served_by_from_params(&params);
 

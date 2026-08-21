@@ -12,14 +12,36 @@ use serde::Serialize;
 
 use crate::{
     config::snapshot::{ConfigSnapshot, SnapshotHash},
-    config::{Config, MetricConfig, UninitializedConfig},
+    config::{Config, MetricConfig, UninitializedConfig, UninitializedModelAlias},
     db::ConfigQueries,
+    embeddings::{EmbeddingModelConfig, UninitializedEmbeddingModelConfig},
     error::{Error, ErrorDetails},
     evaluations::EvaluationConfig,
     function::FunctionConfig,
+    model::{ModelConfig, UninitializedModelConfig},
+    model_alias::{ModelAlias, ModelAliasTable},
     tool::StaticToolConfig,
     utils::gateway::AppState,
 };
+
+/// UI-safe alias target: provider + model the alias routes to.
+#[derive(ts_rs::TS, Clone, Debug, PartialEq, Eq, Serialize)]
+#[ts(export)]
+pub struct UiModelAliasTarget {
+    pub provider: String,
+    pub model: String,
+}
+
+/// UI-safe model alias: name plus optional task filter (`chat`, `embedding`, `rerank`).
+#[derive(ts_rs::TS, Clone, Debug, PartialEq, Eq, Serialize)]
+#[ts(export, optional_fields)]
+pub struct UiModelAlias {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<UiModelAliasTarget>>,
+}
 
 /// Response type for GET /internal/ui_config
 ///
@@ -33,6 +55,12 @@ pub struct UiConfig {
     pub tools: HashMap<String, Arc<StaticToolConfig>>,
     pub evaluations: HashMap<String, Arc<EvaluationConfig>>,
     pub model_names: Vec<String>,
+    pub embedding_model_names: Vec<String>,
+    /// Configured chat model name => routing provider names (no credentials).
+    pub model_providers: HashMap<String, Vec<String>>,
+    /// Configured embedding model name => routing provider names (no credentials).
+    pub embedding_model_providers: HashMap<String, Vec<String>>,
+    pub model_aliases: Vec<UiModelAlias>,
     pub config_hash: String,
     /// Whether the gateway config was loaded from the database (as opposed to a file on disk).
     /// Used by the UI to decide whether to show the config editor.
@@ -41,6 +69,139 @@ pub struct UiConfig {
     /// Used by the UI to decide whether routes that bypass the gateway (e.g. the API keys page)
     /// must validate the caller's key themselves.
     pub auth_enabled: bool,
+}
+
+fn ui_alias_from_model_alias(alias: &ModelAlias) -> UiModelAlias {
+    let targets: Vec<UiModelAliasTarget> = alias
+        .targets
+        .iter()
+        .map(|target| UiModelAliasTarget {
+            provider: target.provider_type.to_string(),
+            model: target.model_name.to_string(),
+        })
+        .collect();
+    UiModelAlias {
+        name: alias.name.to_string(),
+        task: alias.task.as_ref().map(std::string::ToString::to_string),
+        targets: if targets.is_empty() {
+            None
+        } else {
+            Some(targets)
+        },
+    }
+}
+
+fn ui_aliases_from_table(table: &ModelAliasTable) -> Vec<UiModelAlias> {
+    let mut aliases: Vec<UiModelAlias> = table
+        .aliases
+        .iter()
+        .map(ui_alias_from_model_alias)
+        .collect();
+    aliases.sort_by(|left, right| left.name.cmp(&right.name));
+    aliases
+}
+
+fn ui_aliases_from_uninit(map: HashMap<String, UninitializedModelAlias>) -> Vec<UiModelAlias> {
+    let mut aliases: Vec<UiModelAlias> = map
+        .into_iter()
+        .map(|(name, alias)| {
+            let targets: Vec<UiModelAliasTarget> = alias
+                .targets
+                .into_iter()
+                .map(|target| UiModelAliasTarget {
+                    provider: target.provider,
+                    model: target.model,
+                })
+                .collect();
+            UiModelAlias {
+                name,
+                task: alias.task,
+                targets: if targets.is_empty() {
+                    None
+                } else {
+                    Some(targets)
+                },
+            }
+        })
+        .collect();
+    aliases.sort_by(|left, right| left.name.cmp(&right.name));
+    aliases
+}
+
+fn sorted_provider_names(mut names: Vec<String>) -> Vec<String> {
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn ui_providers_from_chat_models(
+    table: &HashMap<Arc<str>, ModelConfig>,
+) -> HashMap<String, Vec<String>> {
+    table
+        .iter()
+        .map(|(name, config)| {
+            let providers: Vec<String> = if config.routing.is_empty() {
+                config.providers.keys().map(|key| key.to_string()).collect()
+            } else {
+                config.routing.iter().map(|key| key.to_string()).collect()
+            };
+            (name.to_string(), sorted_provider_names(providers))
+        })
+        .collect()
+}
+
+fn ui_providers_from_embedding_models(
+    table: &HashMap<Arc<str>, EmbeddingModelConfig>,
+) -> HashMap<String, Vec<String>> {
+    table
+        .iter()
+        .map(|(name, config)| {
+            let providers: Vec<String> = if config.routing.is_empty() {
+                config.providers.keys().map(|key| key.to_string()).collect()
+            } else {
+                config.routing.iter().map(|key| key.to_string()).collect()
+            };
+            (name.to_string(), sorted_provider_names(providers))
+        })
+        .collect()
+}
+
+fn ui_providers_from_uninit_chat_models(
+    models: &HashMap<Arc<str>, UninitializedModelConfig>,
+) -> HashMap<String, Vec<String>> {
+    models
+        .iter()
+        .map(|(name, config)| {
+            let providers: Vec<String> = if config.routing.is_empty() {
+                config.providers.keys().map(|key| key.to_string()).collect()
+            } else {
+                config.routing.iter().map(|key| key.to_string()).collect()
+            };
+            (name.to_string(), sorted_provider_names(providers))
+        })
+        .collect()
+}
+
+fn ui_providers_from_uninit_embedding_models(
+    models: &HashMap<Arc<str>, UninitializedEmbeddingModelConfig>,
+) -> HashMap<String, Vec<String>> {
+    models
+        .iter()
+        .map(|(name, config)| {
+            let providers: Vec<String> = if config.routing.is_empty() {
+                config.providers.keys().map(|key| key.to_string()).collect()
+            } else {
+                config.routing.iter().map(|key| key.to_string()).collect()
+            };
+            (name.to_string(), sorted_provider_names(providers))
+        })
+        .collect()
+}
+
+fn sorted_names<K: ToString>(keys: impl IntoIterator<Item = K>) -> Vec<String> {
+    let mut names: Vec<String> = keys.into_iter().map(|key| key.to_string()).collect();
+    names.sort();
+    names
 }
 
 impl UiConfig {
@@ -63,6 +224,12 @@ impl UiConfig {
                 .map(|(k, v)| (k.clone(), Arc::clone(v)))
                 .collect(),
             model_names: config.models.table.keys().map(|s| s.to_string()).collect(),
+            embedding_model_names: sorted_names(config.embedding_models.table.keys()),
+            model_providers: ui_providers_from_chat_models(&config.models.table),
+            embedding_model_providers: ui_providers_from_embedding_models(
+                &config.embedding_models.table,
+            ),
+            model_aliases: ui_aliases_from_table(&config.models.model_aliases),
             config_hash: config.hash.to_string(),
             config_in_database,
             auth_enabled: config.gateway.auth.enabled,
@@ -88,8 +255,8 @@ impl UiConfig {
 
         let UninitializedConfig {
             models,
-            embedding_models: _,
-            model_aliases: _,
+            embedding_models,
+            model_aliases,
             functions,
             metrics,
             tools,
@@ -134,11 +301,14 @@ impl UiConfig {
         }
 
         // Model names — just keys, no initialization (only inference models, matching from_config)
-        let model_names: Vec<String> = models
-            .unwrap_or_default()
-            .keys()
-            .map(|s| s.to_string())
-            .collect();
+        let uninit_models = models.unwrap_or_default();
+        let uninit_embedding_models = embedding_models.unwrap_or_default();
+        let model_providers = ui_providers_from_uninit_chat_models(&uninit_models);
+        let embedding_model_providers =
+            ui_providers_from_uninit_embedding_models(&uninit_embedding_models);
+        let model_names: Vec<String> = uninit_models.keys().map(|s| s.to_string()).collect();
+        let embedding_model_names = sorted_names(uninit_embedding_models.keys());
+        let model_aliases = ui_aliases_from_uninit(model_aliases.unwrap_or_default());
 
         Ok(Self {
             functions: all_functions,
@@ -146,6 +316,10 @@ impl UiConfig {
             tools: loaded_tools,
             evaluations: loaded_evaluations,
             model_names,
+            embedding_model_names,
+            model_providers,
+            embedding_model_providers,
+            model_aliases,
             config_hash: hash,
             config_in_database: false,
             auth_enabled,
@@ -247,6 +421,10 @@ mod tests {
         assert_eq!(returned_metric.level, MetricConfigLevel::Inference);
 
         assert!(ui_config.model_names.is_empty());
+        assert!(ui_config.embedding_model_names.is_empty());
+        assert!(ui_config.model_providers.is_empty());
+        assert!(ui_config.embedding_model_providers.is_empty());
+        assert!(ui_config.model_aliases.is_empty());
         assert!(ui_config.tools.is_empty());
         assert!(ui_config.evaluations.is_empty());
         assert!(!ui_config.config_hash.is_empty());
@@ -313,5 +491,51 @@ mod tests {
 
         // Verify config_hash is present
         assert!(!ui_config.config_hash.is_empty());
+    }
+
+    #[test]
+    fn test_ui_aliases_from_uninit_sorts_by_name() {
+        let mut map = HashMap::new();
+        map.insert(
+            "zeta".to_string(),
+            crate::config::UninitializedModelAlias {
+                task: Some("chat".to_string()),
+                targets: vec![crate::config::UninitializedModelAliasTarget {
+                    provider: "synapse".to_string(),
+                    model: "deepseek-v4-flash".to_string(),
+                }],
+                min_tokens_per_sec: None,
+            },
+        );
+        map.insert(
+            "alpha".to_string(),
+            crate::config::UninitializedModelAlias {
+                task: Some("rerank".to_string()),
+                targets: vec![],
+                min_tokens_per_sec: None,
+            },
+        );
+
+        let aliases = ui_aliases_from_uninit(map);
+        assert_eq!(aliases.len(), 2);
+        assert_eq!(aliases[0].name, "alpha");
+        assert_eq!(aliases[0].task.as_deref(), Some("rerank"));
+        assert_eq!(aliases[1].name, "zeta");
+        assert_eq!(aliases[1].task.as_deref(), Some("chat"));
+        assert_eq!(aliases[1].targets.as_ref().map(Vec::len), Some(1));
+        assert_eq!(
+            aliases[1]
+                .targets
+                .as_ref()
+                .map(|targets| targets[0].provider.as_str()),
+            Some("synapse")
+        );
+        assert_eq!(
+            aliases[1]
+                .targets
+                .as_ref()
+                .map(|targets| targets[0].model.as_str()),
+            Some("deepseek-v4-flash")
+        );
     }
 }

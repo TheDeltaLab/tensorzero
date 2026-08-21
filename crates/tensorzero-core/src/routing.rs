@@ -6,12 +6,17 @@
 //! candidates via the throughput tracker, and records the winner for
 //! `x-synapse-served-by` / `x-synapse-fallback-count`.
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use crate::error::Error;
 use crate::inference::types::Latency;
 use crate::inference::types::usage::Usage;
+use crate::observability_tags::{
+    CACHED_TAG, FALLBACK_COUNT_TAG, PROVIDER_DEBUG_TAG, PROVIDER_REQUEST_ID_TAG, PROVIDER_TAG,
+    SERVED_BY_TAG, UpstreamMetadata,
+};
 use crate::throughput_tracker::{ThroughputTracker, throughput_key};
 
 tokio::task_local! {
@@ -22,6 +27,8 @@ tokio::task_local! {
 pub struct RoutingOutcome {
     pub served_by: String,
     pub fallback_count: u32,
+    pub provider_request_id: Option<String>,
+    pub provider_debug: HashMap<String, String>,
 }
 
 #[derive(Debug)]
@@ -76,16 +83,92 @@ impl RoutingSession {
             served_by_from_provider_name(provider_name)
         };
         if let Ok(mut slot) = self.outcome.lock() {
+            let previous = slot.take();
             *slot = Some(RoutingOutcome {
                 served_by,
                 fallback_count,
+                provider_request_id: previous
+                    .as_ref()
+                    .and_then(|outcome| outcome.provider_request_id.clone()),
+                provider_debug: previous
+                    .map(|outcome| outcome.provider_debug)
+                    .unwrap_or_default(),
             });
         }
+    }
+
+    pub fn record_upstream_metadata(&self, metadata: UpstreamMetadata) {
+        if metadata.provider_request_id.is_none() && metadata.provider_debug.is_empty() {
+            return;
+        }
+        let Ok(mut slot) = self.outcome.lock() else {
+            return;
+        };
+        if let Some(outcome) = slot.as_mut() {
+            if metadata.provider_request_id.is_some() {
+                outcome.provider_request_id = metadata.provider_request_id;
+            }
+            outcome.provider_debug.extend(metadata.provider_debug);
+            return;
+        }
+        *slot = Some(RoutingOutcome {
+            served_by: String::new(),
+            fallback_count: 0,
+            provider_request_id: metadata.provider_request_id,
+            provider_debug: metadata.provider_debug,
+        });
     }
 
     pub fn take_outcome(&self) -> Option<RoutingOutcome> {
         self.outcome.lock().ok().and_then(|mut slot| slot.take())
     }
+
+    /// Copy routing / vendor ids onto inference tags. Safe to call more than
+    /// once; does not consume the session (HTTP handlers still `take_outcome`).
+    pub fn apply_observability_tags(tags: &mut HashMap<String, String>) {
+        let Some(session) = Self::current() else {
+            return;
+        };
+        let Ok(slot) = session.outcome.lock() else {
+            return;
+        };
+        let Some(outcome) = slot.as_ref() else {
+            return;
+        };
+        if !outcome.served_by.is_empty() {
+            tags.insert(SERVED_BY_TAG.to_string(), outcome.served_by.clone());
+            let provider = outcome
+                .served_by
+                .split_once('/')
+                .map(|(provider, _)| provider)
+                .unwrap_or(outcome.served_by.as_str());
+            tags.insert(PROVIDER_TAG.to_string(), provider.to_string());
+        }
+        if outcome.fallback_count > 0 {
+            tags.insert(
+                FALLBACK_COUNT_TAG.to_string(),
+                outcome.fallback_count.to_string(),
+            );
+        }
+        if let Some(provider_request_id) = &outcome.provider_request_id {
+            tags.insert(
+                PROVIDER_REQUEST_ID_TAG.to_string(),
+                provider_request_id.clone(),
+            );
+        }
+        if !outcome.provider_debug.is_empty()
+            && let Ok(json) = serde_json::to_string(&outcome.provider_debug)
+        {
+            tags.insert(PROVIDER_DEBUG_TAG.to_string(), json);
+        }
+    }
+}
+
+pub fn apply_cached_observability_tag(tags: &mut HashMap<String, String>, cached: bool) {
+    tags.insert(
+        CACHED_TAG.to_string(),
+        if cached { "true" } else { "false" }.to_string(),
+    );
 }
 
 fn served_by_from_provider_name(provider_name: &str) -> String {
@@ -245,5 +328,25 @@ mod tests {
         let outcome = session.take_outcome().unwrap();
         assert_eq!(outcome.served_by, "dummy/good");
         assert_eq!(outcome.fallback_count, 1);
+    }
+
+    #[test]
+    fn record_upstream_metadata_survives_record_provider() {
+        let session = RoutingSession::new(false);
+        session.record_upstream_metadata(UpstreamMetadata {
+            provider_request_id: Some("req_vendor".into()),
+            provider_debug: HashMap::from([("x-request-id".into(), "req_vendor".into())]),
+        });
+        session.record_provider(&[Arc::<str>::from("dummy")], "dummy", "dummy::good");
+        let outcome = session.take_outcome().unwrap();
+        assert_eq!(outcome.served_by, "dummy/good");
+        assert_eq!(outcome.provider_request_id.as_deref(), Some("req_vendor"));
+        assert_eq!(
+            outcome
+                .provider_debug
+                .get("x-request-id")
+                .map(String::as_str),
+            Some("req_vendor")
+        );
     }
 }

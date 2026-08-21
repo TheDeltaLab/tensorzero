@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for batch inference endpoint internal helper functions.
 //!
 //! These tests verify the batch inference endpoint orchestration functions
@@ -551,6 +552,7 @@ async fn test_write_read_completed_batch_inference_chat(
             input_tokens: Some(10),
             output_tokens: Some(20),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },
@@ -565,6 +567,7 @@ async fn test_write_read_completed_batch_inference_chat(
             input_tokens: Some(20),
             output_tokens: Some(30),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },
@@ -865,6 +868,7 @@ async fn test_write_read_completed_batch_inference_json(
             input_tokens: Some(10),
             output_tokens: Some(20),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },
@@ -879,6 +883,7 @@ async fn test_write_read_completed_batch_inference_json(
             input_tokens: Some(20),
             output_tokens: Some(30),
             cost: None,
+            currency: None,
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
         },

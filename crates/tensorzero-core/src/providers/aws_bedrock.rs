@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! AWS Bedrock model provider using direct HTTP calls to the Converse API.
 
 use aws_smithy_eventstream::frame::{DecodedFrame, MessageFrameDecoder};
@@ -909,6 +910,7 @@ fn convert_converse_response(
             .cache_write_input_tokens
             .map(|v| v as u32),
         cost: None,
+        currency: None,
     };
 
     // Extract raw usage from response
@@ -1288,6 +1290,7 @@ fn process_stream_event(
                     .cache_write_input_tokens
                     .map(|v| v as u32),
                 cost: None,
+                currency: None,
             });
 
             Ok(Some(ProviderInferenceResponseChunk::new_with_raw_usage(
@@ -1415,6 +1418,7 @@ mod tests {
                 .cache_write_input_tokens
                 .map(|v| v as u32),
             cost: None,
+            currency: None,
         };
 
         expect_that!(usage.input_tokens, eq(Some(100)));

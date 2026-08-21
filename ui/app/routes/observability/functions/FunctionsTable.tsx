@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import {
   Table,
   TableBody,
@@ -26,12 +27,17 @@ import { useMemo, useState } from "react";
 import { ChevronUp, ChevronDown, Search } from "lucide-react";
 import { Checkbox } from "~/components/ui/checkbox";
 import { Input } from "~/components/ui/input";
+import { DEFAULT_FUNCTION } from "~/utils/constants";
+import {
+  isStandaloneFunctionName,
+  observabilityInferenceKind,
+} from "~/utils/observability/standaloneInference";
 
 interface MergedFunctionData {
   function_name: string;
   inference_count: number;
   last_inference_timestamp: string;
-  type: "chat" | "json" | "?";
+  type: string;
   variantsCount: number;
 }
 
@@ -65,14 +71,12 @@ export default function FunctionsTable({
         (info) => info.function_name === function_name,
       );
       const function_config = functions[function_name] || null;
-
-      // Special handling: if the function name is 'tensorzero::default', type is 'chat'
-      let type: "chat" | "json" | "?";
-      if (function_config) {
-        type = function_config.type;
-      } else {
-        type = "?";
-      }
+      const type = function_config
+        ? function_config.type
+        : isStandaloneFunctionName(function_name) ||
+            function_name === DEFAULT_FUNCTION
+          ? observabilityInferenceKind({ functionName: function_name })
+          : "?";
 
       const variantsCount = function_config?.variants
         ? Object.keys(function_config.variants).length
@@ -98,7 +102,11 @@ export default function FunctionsTable({
           <TableItemFunction
             functionName={info.getValue()}
             functionType={info.row.original.type}
-            link={toFunctionUrl(info.getValue())}
+            link={
+              isStandaloneFunctionName(info.getValue())
+                ? undefined
+                : toFunctionUrl(info.getValue())
+            }
           />
         ),
       }),

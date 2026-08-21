@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -24,4 +25,8 @@ pub struct StoredEmbeddingProviderConfig {
     pub extra_body: Option<StoredExtraBodyConfig>,
     pub extra_headers: Option<StoredExtraHeadersConfig>,
     pub cost: Option<StoredUnifiedCostConfig>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub currency: Option<String>,
 }

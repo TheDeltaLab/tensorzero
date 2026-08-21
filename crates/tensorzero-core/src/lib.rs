@@ -2,6 +2,7 @@
 // This is an internal crate, so we're the only consumers of
 // traits with async fns for now.
 #![expect(async_fn_in_trait)]
+#![recursion_limit = "256"]
 
 pub mod cache;
 pub mod client; // Rust client for TensorZero
@@ -24,6 +25,7 @@ pub mod model; // types and methods for working with TensorZero-supported models
 pub mod model_alias;
 pub mod model_table;
 pub mod observability; // utilities for observability (logs, metrics, etc.)
+pub mod observability_tags; // inference tags for Synapse request / vendor ids
 pub mod optimization;
 pub mod providers; // providers for the inference and / or optimization services TensorZero integrates
 pub mod rate_limiting; // utilities for rate limiting

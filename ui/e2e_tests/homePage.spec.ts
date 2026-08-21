@@ -1,8 +1,9 @@
+// Modified by Delta-AI under Apache 2.0
 import { test, expect } from "@playwright/test";
 
 test("should show the home page", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("Ask a question")).toBeVisible();
+  await expect(page.getByText("Learn more")).toBeVisible();
 
   // Assert that "error" is not in the page
   await expect(page.getByText("error", { exact: false })).not.toBeVisible();
@@ -37,4 +38,12 @@ test("should show the models badge", async ({ page }) => {
   });
 
   await expect(modelsCard).toBeVisible();
+});
+
+test("should show the analysis card", async ({ page }) => {
+  await page.goto("/");
+  const analysisCard = page.locator(".block").filter({
+    has: page.locator('h3:has-text("Analysis")'),
+  });
+  await expect(analysisCard).toBeVisible();
 });

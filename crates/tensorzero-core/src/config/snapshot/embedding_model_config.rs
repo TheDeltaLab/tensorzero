@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -82,6 +83,10 @@ pub struct StoredEmbeddingProviderConfig {
     #[serde(default)]
     #[ts(skip)]
     pub cost: Option<UninitializedUnifiedCostConfig>,
+    #[serde(default)]
+    pub timezone: Option<String>,
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 impl From<StoredEmbeddingProviderConfig> for UninitializedEmbeddingProviderConfig {
@@ -94,6 +99,8 @@ impl From<StoredEmbeddingProviderConfig> for UninitializedEmbeddingProviderConfi
             extra_body,
             extra_headers,
             cost,
+            timezone,
+            currency,
         } = stored;
 
         Self {
@@ -103,6 +110,8 @@ impl From<StoredEmbeddingProviderConfig> for UninitializedEmbeddingProviderConfi
             extra_body,
             extra_headers,
             cost,
+            timezone,
+            currency,
         }
     }
 }
@@ -116,6 +125,8 @@ impl From<UninitializedEmbeddingProviderConfig> for StoredEmbeddingProviderConfi
             extra_body,
             extra_headers,
             cost,
+            timezone,
+            currency,
         } = uninitialized;
 
         Self {
@@ -125,6 +136,8 @@ impl From<UninitializedEmbeddingProviderConfig> for StoredEmbeddingProviderConfi
             extra_body,
             extra_headers,
             cost,
+            timezone,
+            currency,
         }
     }
 }

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -25,9 +26,15 @@ interface TagsTableProps {
   tags: Record<string, string>;
   onTagsChange?: (tags: Record<string, string>) => void;
   isEditing: boolean;
+  emptyMessage?: string;
 }
 
-export function TagsTable({ tags, onTagsChange, isEditing }: TagsTableProps) {
+export function TagsTable({
+  tags,
+  onTagsChange,
+  isEditing,
+  emptyMessage = "No tags found",
+}: TagsTableProps) {
   const navigate = useNavigate();
 
   const [newKey, setNewKey] = useState("");
@@ -131,7 +138,7 @@ export function TagsTable({ tags, onTagsChange, isEditing }: TagsTableProps) {
         </TableHeader>
         <TableBody>
           {sortedTagEntries.length === 0 ? (
-            <TableEmptyState message="No tags found" />
+            <TableEmptyState message={emptyMessage} />
           ) : (
             sortedTagEntries.map(([key, value]) => {
               const isSystemTag = key.startsWith("tensorzero::");

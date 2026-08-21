@@ -24,6 +24,8 @@ The OpenAI-compatible inference endpoints translate the OpenAI request parameter
 TensorZero-specific parameters are prefixed with `tensorzero::` (e.g. `tensorzero::episode_id`).
 These fields should be provided as extra body parameters in the request body.
 
+Migrated Synapse request headers also work as `x-tensorzero-*` (`provider`, `fallback`, `request-id`, `cache`, `stream-aggregate`, `request-profile`, `response-style`). `x-synapse-*` is still accepted; when both prefixes are set, `x-tensorzero-*` wins. Responses include both `x-tensorzero-*` and `x-synapse-*` (`request-id`, `served-by`, `fallback-count`).
+
 <Warning>
 
 The gateway will use the credentials specified in the `tensorzero.toml` file.
@@ -136,6 +138,8 @@ If null, the gateway will generate a new episode ID and return it in the respons
 See [Episodes](/gateway/guides/episodes) for more information.
 
 This field should be provided as an extra body parameter in the request body.
+
+You can also send `x-tensorzero-episode-id` (or `x-tensorzero-episodes-id`) on the request. The body field wins if both are set. Reusing the same episode id groups multiple inferences on the Episodes page.
 
 #### `tensorzero::extra_body`
 
@@ -498,6 +502,8 @@ This makes the web search tool available only to the OpenAI provider for the `gp
 User-provided tags to associate with the inference.
 
 For example, `{"user_id": "123"}` or `{"author": "Alice"}`.
+
+You can also send `x-tensorzero-tags` with comma-separated `key=value` pairs (bare keys become `true`), for example `env=prod,team=ml,canary`. Body tags win on key conflicts. The Inferences and Models pages can filter and aggregate by these tags.
 
 #### `frequency_penalty`
 
