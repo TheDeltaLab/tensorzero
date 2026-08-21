@@ -122,7 +122,7 @@ export default function InferenceSearchBar({
     }, 400);
     return () => window.clearTimeout(handle);
     // apply is stable enough via URL-derived query/variant/function.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId]);
 
   useEffect(() => {
@@ -131,7 +131,7 @@ export default function InferenceSearchBar({
       apply({ ...query, requestId, tags }, variantName, functionName);
     }, 400);
     return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [tags]);
 
   const hasActive =
