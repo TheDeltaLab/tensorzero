@@ -8,9 +8,12 @@
 //! - Standard OpenAI fields (e.g. `prompt_tokens`) keep their original names.
 //! - `prompt_tokens_details.cached_tokens` is the OpenAI-standard field for cache reads.
 //! - Non-standard TensorZero fields use a `tensorzero_` prefix (e.g. `tensorzero_cost`,
-//!   `tensorzero_currency`, `tensorzero_provider_cache_write_input_tokens`).
+//!   `tensorzero_currency`, `tensorzero_costs`, `tensorzero_provider_cache_write_input_tokens`).
+
+use std::collections::BTreeMap;
 
 use rust_decimal::Decimal;
+use rust_decimal::prelude::ToPrimitive;
 use serde::Serialize;
 use tensorzero_types::Currency;
 
@@ -22,7 +25,7 @@ pub struct OpenAICompatiblePromptTokensDetails {
     pub cached_tokens: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct OpenAICompatibleUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt_tokens: Option<u32>,
@@ -38,6 +41,10 @@ pub struct OpenAICompatibleUsage {
     pub tensorzero_cost: Option<Decimal>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tensorzero_currency: Option<Currency>,
+    /// Per-currency totals keyed by ISO 4217 code. Mixed currencies keep every
+    /// amount here even when `tensorzero_cost` is null.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tensorzero_costs: BTreeMap<String, f64>,
 }
 
 impl OpenAICompatibleUsage {
@@ -50,6 +57,7 @@ impl OpenAICompatibleUsage {
             tensorzero_provider_cache_write_input_tokens: None,
             tensorzero_cost: Some(Decimal::ZERO),
             tensorzero_currency: None,
+            tensorzero_costs: BTreeMap::new(),
         }
     }
 
@@ -118,7 +126,23 @@ impl OpenAICompatibleUsage {
                 None
             }
         };
+        add_usage_cost(&mut self.tensorzero_costs, other);
     }
+}
+
+fn add_usage_cost(map: &mut BTreeMap<String, f64>, usage: &Usage) {
+    let Some(cost) = usage.cost else {
+        return;
+    };
+    // Skip the `Usage::zero()` / accumulator sentinel (`cost = 0`, no currency).
+    if cost.is_zero() && usage.currency.is_none() {
+        return;
+    }
+    let Some(amount) = cost.to_f64() else {
+        return;
+    };
+    let code = usage.currency.unwrap_or(Currency::USD).as_str().to_string();
+    *map.entry(code).or_insert(0.0) += amount;
 }
 
 fn merge_usage_currency(left: Option<Currency>, right: Option<Currency>) -> Option<Currency> {
@@ -132,6 +156,8 @@ fn merge_usage_currency(left: Option<Currency>, right: Option<Currency>) -> Opti
 
 impl From<Usage> for OpenAICompatibleUsage {
     fn from(usage: Usage) -> Self {
+        let mut tensorzero_costs = BTreeMap::new();
+        add_usage_cost(&mut tensorzero_costs, &usage);
         OpenAICompatibleUsage {
             prompt_tokens: usage.input_tokens,
             completion_tokens: usage.output_tokens,
@@ -144,6 +170,7 @@ impl From<Usage> for OpenAICompatibleUsage {
             tensorzero_provider_cache_write_input_tokens: usage.provider_cache_write_input_tokens,
             tensorzero_cost: usage.cost,
             tensorzero_currency: usage.currency,
+            tensorzero_costs,
         }
     }
 }
@@ -188,6 +215,7 @@ mod tests {
             tensorzero_provider_cache_write_input_tokens: Some(20),
             tensorzero_cost: Some(Decimal::new(5, 2)),
             tensorzero_currency: None,
+            tensorzero_costs: BTreeMap::new(),
         };
         let other = Usage {
             input_tokens: Some(10),
@@ -222,6 +250,7 @@ mod tests {
             tensorzero_provider_cache_write_input_tokens: None,
             tensorzero_cost: Some(Decimal::ZERO),
             tensorzero_currency: None,
+            tensorzero_costs: BTreeMap::new(),
         };
         let other = Usage {
             input_tokens: Some(10),
@@ -304,7 +333,7 @@ mod tests {
     }
 
     #[gtest]
-    fn test_sum_usage_strict_mixed_currency_drops_cost() {
+    fn test_sum_usage_strict_mixed_currency_records_split_costs() {
         let mut usage = OpenAICompatibleUsage::from(Usage {
             input_tokens: Some(1),
             output_tokens: Some(1),
@@ -318,10 +347,12 @@ mod tests {
             output_tokens: Some(1),
             provider_cache_read_input_tokens: None,
             provider_cache_write_input_tokens: None,
-            cost: Some(Decimal::ONE),
+            cost: Some(Decimal::new(2, 0)),
             currency: Some(Currency::CNY),
         });
         expect_that!(usage.tensorzero_cost, none());
         expect_that!(usage.tensorzero_currency, none());
+        expect_that!(usage.tensorzero_costs.get("USD").copied(), some(eq(1.0)));
+        expect_that!(usage.tensorzero_costs.get("CNY").copied(), some(eq(2.0)));
     }
 }

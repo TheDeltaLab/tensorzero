@@ -1,6 +1,8 @@
 // Modified by Delta-AI under Apache 2.0
 //! Synapse-compatible Analysis dashboard aggregations over Postgres observability.
 
+use std::collections::BTreeMap;
+
 use axum::Json;
 use axum::extract::{Query, State};
 use chrono::{DateTime, Duration, Utc};
@@ -110,6 +112,7 @@ pub struct AnalysisResponse {
     pub total_tokens: i64,
     pub total_input_tokens: i64,
     pub total_output_tokens: i64,
+    pub total_cost_by_currency: BTreeMap<String, f64>,
     pub provider_stats: Vec<AnalysisProviderStats>,
     pub model_stats: Vec<AnalysisModelStats>,
     pub model_latency_stats: Vec<AnalysisModelStats>,
@@ -131,6 +134,12 @@ struct TotalsRow {
     total_input_tokens: i64,
     total_output_tokens: i64,
     cache_read_input_tokens: i64,
+}
+
+#[derive(sqlx::FromRow)]
+struct CostByCurrencyRow {
+    currency: String,
+    total: f64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -337,6 +346,35 @@ async fn fetch_totals(pool: &sqlx::PgPool, params: &AnalysisParams) -> Result<To
         })
 }
 
+async fn fetch_costs_by_currency(
+    pool: &sqlx::PgPool,
+    params: &AnalysisParams,
+) -> Result<BTreeMap<String, f64>, Error> {
+    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        "SELECT UPPER(CASE \
+            WHEN mi.currency IS NULL OR btrim(mi.currency) = '' THEN 'USD' \
+            WHEN UPPER(mi.currency) = 'RMB' THEN 'CNY' \
+            ELSE mi.currency \
+        END) as currency, \
+        COALESCE(SUM(mi.cost), 0)::FLOAT8 as total",
+    );
+    push_from_and_filters(&mut query_builder, params, true);
+    query_builder.push(" AND mi.cost IS NOT NULL GROUP BY 1 ORDER BY 1");
+    let rows: Vec<CostByCurrencyRow> = query_builder
+        .build_query_as()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            Error::new(ErrorDetails::PostgresQuery {
+                message: format!("Failed to load Analysis costs: {e}"),
+            })
+        })?;
+    Ok(rows
+        .into_iter()
+        .map(|row| (row.currency, row.total))
+        .collect())
+}
+
 async fn fetch_providers(
     pool: &sqlx::PgPool,
     params: &AnalysisParams,
@@ -453,11 +491,12 @@ pub async fn analysis_handler(
     };
     let pool = require_pool(&app_state)?;
 
-    let (totals, providers, models, series) = tokio::try_join!(
+    let (totals, providers, models, series, total_cost_by_currency) = tokio::try_join!(
         fetch_totals(pool, &params),
         fetch_providers(pool, &params),
         fetch_models(pool, &params),
         fetch_series(pool, &params),
+        fetch_costs_by_currency(pool, &params),
     )?;
 
     let total_requests = totals.total_requests;
@@ -556,6 +595,7 @@ pub async fn analysis_handler(
         total_tokens: totals.total_input_tokens + totals.total_output_tokens,
         total_input_tokens: totals.total_input_tokens,
         total_output_tokens: totals.total_output_tokens,
+        total_cost_by_currency,
         provider_stats,
         model_latency_stats: model_stats.clone(),
         model_stats,

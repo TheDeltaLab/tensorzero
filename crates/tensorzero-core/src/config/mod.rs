@@ -45,6 +45,7 @@ use uuid::Uuid;
 
 use crate::config::gateway::{GatewayConfig, UninitializedGatewayConfig};
 use crate::config::path::{ResolvedTomlPathData, ResolvedTomlPathDirectory};
+use crate::config::rerank::{RerankModelTable, UninitializedRerankModelConfig};
 use crate::config::snapshot::ConfigSnapshot;
 use crate::config::span_map::SpanMap;
 use crate::embeddings::{EmbeddingModelTable, UninitializedEmbeddingModelConfig};
@@ -87,6 +88,7 @@ pub mod path;
 pub mod provider_types;
 pub mod rate_limiting;
 pub mod rehydrate;
+pub mod rerank;
 pub mod snapshot;
 mod span_map;
 #[cfg(test)]
@@ -155,6 +157,7 @@ pub struct Config {
     pub clickhouse: ClickHouseConfig,
     pub models: Arc<ModelTable>, // model name => model config
     pub embedding_models: Arc<EmbeddingModelTable>, // embedding model name => embedding model config
+    pub rerank_models: RerankModelTable,            // rerank model name => provider cost config
     pub functions: HashMap<String, Arc<FunctionConfig>>, // function name => function config
     pub metrics: HashMap<String, MetricConfig>,     // metric name => metric config
     pub tools: HashMap<String, Arc<StaticToolConfig>>, // tool name => tool config
@@ -1159,6 +1162,7 @@ struct ProcessedConfigInput {
     tools: HashMap<String, UninitializedToolConfig>,
     models: HashMap<Arc<str>, UninitializedModelConfig>,
     embedding_models: HashMap<Arc<str>, UninitializedEmbeddingModelConfig>,
+    rerank_models: HashMap<Arc<str>, UninitializedRerankModelConfig>,
     model_aliases: HashMap<String, UninitializedModelAlias>,
     metrics: HashMap<String, MetricConfig>,
     evaluations: HashMap<String, UninitializedEvaluationConfig>,
@@ -1242,6 +1246,7 @@ async fn process_config_input(
                 object_storage: _, // replaced by overlay (via object_store_info)
                 models,
                 embedding_models,
+                rerank_models,
                 model_aliases,
                 functions,
                 metrics,
@@ -1263,6 +1268,7 @@ async fn process_config_input(
             // Resolve Options with defaults
             let models = models.unwrap_or_default();
             let embedding_models = embedding_models.unwrap_or_default();
+            let rerank_models = rerank_models.unwrap_or_default();
             let model_aliases = model_aliases.unwrap_or_default();
             let functions = functions.unwrap_or_default();
             let metrics = metrics.unwrap_or_default();
@@ -1283,6 +1289,7 @@ async fn process_config_input(
                     .map(|info| info.kind.clone()),
                 models: Some(models.clone()),
                 embedding_models: Some(embedding_models.clone()),
+                rerank_models: Some(rerank_models.clone()),
                 model_aliases: Some(model_aliases.clone()),
                 functions: Some(functions.clone()),
                 metrics: Some(metrics.clone()),
@@ -1321,6 +1328,7 @@ async fn process_config_input(
                 tools,
                 models,
                 embedding_models,
+                rerank_models,
                 model_aliases,
                 metrics,
                 evaluations,
@@ -1372,6 +1380,7 @@ async fn process_uninitialized_config(
         object_storage,
         models,
         embedding_models,
+        rerank_models,
         model_aliases,
         functions,
         metrics,
@@ -1389,6 +1398,7 @@ async fn process_uninitialized_config(
     let rate_limiting = rate_limiting.unwrap_or_default();
     let models = models.unwrap_or_default();
     let embedding_models = embedding_models.unwrap_or_default();
+    let rerank_models = rerank_models.unwrap_or_default();
     let model_aliases = model_aliases.unwrap_or_default();
     let functions = functions.unwrap_or_default();
     let metrics = metrics.unwrap_or_default();
@@ -1439,6 +1449,7 @@ async fn process_uninitialized_config(
         tools,
         models,
         embedding_models,
+        rerank_models,
         model_aliases,
         metrics,
         evaluations,
@@ -1671,6 +1682,7 @@ impl Config {
             tools,
             models,
             embedding_models,
+            rerank_models: uninitialized_rerank_models,
             model_aliases: toml_model_aliases,
             metrics,
             evaluations: uninitialized_evaluations,
@@ -1823,6 +1835,7 @@ impl Config {
                 message: format!("Failed to load embedding models: {e}"),
             })
         })?;
+        let rerank_models = RerankModelTable::load(uninitialized_rerank_models)?;
 
         // Split loaded functions into function configs and deferred evaluator artifacts
         let mut functions = HashMap::new();
@@ -1840,6 +1853,7 @@ impl Config {
             clickhouse,
             models: Arc::new(models),
             embedding_models: Arc::new(embedding_models),
+            rerank_models,
             functions,
             metrics,
             tools,
@@ -2318,6 +2332,8 @@ pub struct UninitializedConfig {
     pub object_storage: Option<StorageKind>,
     pub models: Option<HashMap<Arc<str>, UninitializedModelConfig>>, // model name => model config
     pub embedding_models: Option<HashMap<Arc<str>, UninitializedEmbeddingModelConfig>>, // embedding model name => embedding model config
+    #[serde(default)]
+    pub rerank_models: Option<HashMap<Arc<str>, UninitializedRerankModelConfig>>, // rerank model name => provider cost
     pub model_aliases: Option<HashMap<String, UninitializedModelAlias>>, // alias name => alias config
     pub functions: Option<HashMap<String, UninitializedFunctionConfig>>, // function name => function config
     pub metrics: Option<HashMap<String, MetricConfig>>, // metric name => metric config
@@ -2497,6 +2513,8 @@ struct TomlUninitializedConfig {
     #[serde(default)]
     embedding_models: HashMap<Arc<str>, UninitializedEmbeddingModelConfig>,
     #[serde(default)]
+    rerank_models: HashMap<Arc<str>, UninitializedRerankModelConfig>,
+    #[serde(default)]
     model_aliases: HashMap<String, UninitializedModelAlias>,
     #[serde(default)]
     functions: HashMap<String, UninitializedFunctionConfig>,
@@ -2530,6 +2548,7 @@ impl TryFrom<TomlUninitializedConfig> for UninitializedConfig {
             object_storage: toml_config.object_storage,
             models: Some(toml_config.models),
             embedding_models: Some(toml_config.embedding_models),
+            rerank_models: Some(toml_config.rerank_models),
             model_aliases: Some(toml_config.model_aliases),
             functions: Some(toml_config.functions),
             metrics: Some(toml_config.metrics),

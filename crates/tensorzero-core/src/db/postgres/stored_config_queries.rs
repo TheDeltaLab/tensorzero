@@ -949,6 +949,7 @@ async fn rehydrate_loaded_config_rows(
         object_storage,
         models: Some(models),
         embedding_models: Some(embedding_models),
+        rerank_models: None,
         model_aliases,
         functions: Some(functions),
         metrics: Some(metrics),

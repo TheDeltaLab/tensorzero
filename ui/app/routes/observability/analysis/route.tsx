@@ -6,6 +6,7 @@ import type { Route } from "./+types/route";
 import {
   Activity,
   CheckCircle2,
+  CircleDollarSign,
   Cpu,
   Database,
   HardDrive,
@@ -62,6 +63,7 @@ import {
   formatApiKeyOption,
 } from "~/routes/observability/inferences/inferenceQuery";
 import type { KeyInfo } from "~/types/tensorzero";
+import { formatCost } from "~/utils/cost";
 
 export const handle: RouteHandle = {
   crumb: () => ["Analysis"],
@@ -272,6 +274,9 @@ function AnalysisBody({
 }) {
   const range: AnalysisRange = query.range;
   const cacheMiss = query.cacheMissOnly;
+  const costs = Object.entries(data.total_cost_by_currency).sort(
+    ([left], [right]) => left.localeCompare(right),
+  );
   const navigate = useNavigate();
   const toggleCacheMiss = () => {
     const params = analysisSearchParams({
@@ -307,7 +312,7 @@ function AnalysisBody({
         </label>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4 xl:grid-cols-4">
         <StatCard
           title="Total Requests"
           value={formatCompactCount(data.total_requests)}
@@ -364,6 +369,24 @@ function AnalysisBody({
               : `${formatCompactCount(data.total_input_tokens)} in / ${formatCompactCount(data.total_output_tokens)} out`
           }
         />
+        {costs.length === 0 ? (
+          <StatCard
+            title="Cost"
+            value="N/A"
+            icon={CircleDollarSign}
+            description="No billed usage"
+          />
+        ) : (
+          costs.map(([currency, amount]) => (
+            <StatCard
+              key={currency}
+              title={`Cost (${currency})`}
+              value={formatCost(amount, currency)}
+              icon={CircleDollarSign}
+              description={`Billed in ${currency}`}
+            />
+          ))
+        )}
       </div>
 
       {query.kind === "embedding" ? (

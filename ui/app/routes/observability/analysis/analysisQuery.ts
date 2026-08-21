@@ -71,6 +71,7 @@ export type AnalysisResponse = {
   total_tokens: number;
   total_input_tokens: number;
   total_output_tokens: number;
+  total_cost_by_currency: Record<string, number>;
   provider_stats: AnalysisProviderStats[];
   model_stats: AnalysisModelStats[];
   model_latency_stats: AnalysisModelStats[];

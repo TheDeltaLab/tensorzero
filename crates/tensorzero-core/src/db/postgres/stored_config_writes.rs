@@ -139,6 +139,7 @@ pub(crate) async fn write_stored_config_in_tx(
         object_storage,
         models,
         embedding_models,
+        rerank_models: _,
         model_aliases,
         functions,
         metrics,
