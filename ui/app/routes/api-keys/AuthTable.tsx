@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import {
   Table,
   TableBody,
@@ -29,6 +30,11 @@ import {
 } from "~/components/ui/dialog";
 import { ReadOnlyGuard } from "~/components/utils/read-only-guard";
 import { Input } from "~/components/ui/input";
+import { Badge } from "~/components/ui/badge";
+
+function isImportedSynapseKey(publicId: string): boolean {
+  return publicId.trim().startsWith("syn");
+}
 
 function ApiKeyRow({
   apiKey,
@@ -62,23 +68,30 @@ function ApiKeyRow({
       className={isInactive ? "opacity-50" : ""}
     >
       <TableCell className="w-0">
-        {isDisabled ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
-            <TooltipContent>
-              Disabled on {formatDate(new Date(apiKey.disabled_at!))}
-            </TooltipContent>
-          </Tooltip>
-        ) : isExpired ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
-            <TooltipContent>
-              Expired on {formatDate(new Date(apiKey.expires_at!))}
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          publicIdElement
-        )}
+        <div className="flex items-center">
+          {isDisabled ? (
+            <Tooltip>
+              <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
+              <TooltipContent>
+                Disabled on {formatDate(new Date(apiKey.disabled_at!))}
+              </TooltipContent>
+            </Tooltip>
+          ) : isExpired ? (
+            <Tooltip>
+              <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
+              <TooltipContent>
+                Expired on {formatDate(new Date(apiKey.expires_at!))}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            publicIdElement
+          )}
+          {isImportedSynapseKey(apiKey.public_id) ? (
+            <Badge variant="secondary" className="ml-2 shrink-0">
+              Synapse
+            </Badge>
+          ) : null}
+        </div>
       </TableCell>
       <TableCell>
         {apiKey.description ? (

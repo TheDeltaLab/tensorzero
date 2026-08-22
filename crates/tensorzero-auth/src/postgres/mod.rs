@@ -279,13 +279,22 @@ pub async fn disable_key(
     // Round to microseconds, since postgres only has microsecond precision
     // This ensures that the value we return matches the value we set in the database.
     let now = Utc::now().round_subsecs(6);
-    sqlx::query!(
+    let native = sqlx::query!(
         "UPDATE tensorzero_auth_api_key SET disabled_at = $1, updated_at = $1 WHERE public_id = $2",
         now,
         public_id
     )
     .execute(pool)
     .await?;
+    if native.rows_affected() == 0 {
+        sqlx::query(
+            "UPDATE tensorzero_auth_synapse_api_key SET disabled_at = $1, updated_at = $1 WHERE btrim(public_id::text) = $2",
+        )
+        .bind(now)
+        .bind(public_id)
+        .execute(pool)
+        .await?;
+    }
     Ok(now)
 }
 
@@ -295,15 +304,28 @@ pub async fn update_key_description(
     description: Option<&str>,
     pool: &PgPool,
 ) -> Result<KeyInfo, TensorZeroAuthError> {
-    let key = sqlx::query_as!(
-        KeyInfo,
+    if let Some(key) = sqlx::query_as::<_, KeyInfo>(
         "UPDATE tensorzero_auth_api_key
            SET description = $1, updated_at = NOW()
            WHERE public_id = $2
            RETURNING public_id, organization, workspace, description, created_at, disabled_at, expires_at",
-        description,
-        public_id,
     )
+    .bind(description)
+    .bind(public_id)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(key);
+    }
+
+    let key = sqlx::query_as::<_, KeyInfo>(
+        "UPDATE tensorzero_auth_synapse_api_key
+           SET description = $1, updated_at = NOW()
+           WHERE btrim(public_id::text) = $2
+           RETURNING btrim(public_id::text) AS public_id, organization, workspace, description, created_at, disabled_at, expires_at",
+    )
+    .bind(description)
+    .bind(public_id)
     .fetch_one(pool)
     .await?;
 
@@ -316,23 +338,47 @@ pub async fn get_key_info(
     public_id: &str,
     pool: &PgPool,
 ) -> Result<Option<KeyInfo>, TensorZeroAuthError> {
-    let key = sqlx::query_as!(
-        KeyInfo,
+    if let Some(key) = sqlx::query_as::<_, KeyInfo>(
         "SELECT public_id, organization, workspace, description, created_at, disabled_at, expires_at \
          FROM tensorzero_auth_api_key \
          WHERE public_id = $1",
-        public_id,
     )
+    .bind(public_id)
+    .fetch_optional(pool)
+    .await?
+    {
+        return Ok(Some(key));
+    }
+
+    let key = sqlx::query_as::<_, KeyInfo>(
+        "SELECT btrim(public_id::text) AS public_id, organization, workspace, description, created_at, disabled_at, expires_at FROM tensorzero_auth_synapse_api_key WHERE btrim(public_id::text) = $1",
+    )
+    .bind(public_id)
     .fetch_optional(pool)
     .await?;
     Ok(key)
 }
 
+fn paginate_keys(mut keys: Vec<KeyInfo>, limit: Option<u32>, offset: Option<u32>) -> Vec<KeyInfo> {
+    keys.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.public_id.cmp(&right.public_id))
+    });
+    let offset = offset.unwrap_or(0) as usize;
+    keys.into_iter()
+        .skip(offset)
+        .take(limit.map_or(usize::MAX, |limit| limit as usize))
+        .collect()
+}
+
 /// Lists all API keys in the database, optionally filtered by organization
 /// and/or workspace, with an optional limit and offset.
 ///
-/// Workspace names are not unique across organizations, so the `workspace`
-/// filter requires an `organization` filter to be set.
+/// Includes imported Synapse keys (`tensorzero_auth_synapse_api_key`) alongside
+/// native TensorZero keys. Workspace names are not unique across organizations,
+/// so the `workspace` filter requires an `organization` filter to be set.
 pub async fn list_key_info(
     organization: Option<String>,
     workspace: Option<String>,
@@ -343,17 +389,75 @@ pub async fn list_key_info(
     if workspace.is_some() && organization.is_none() {
         return Err(TensorZeroAuthError::WorkspaceFilterRequiresOrganization);
     }
-    let keys = sqlx::query_as!(
-        KeyInfo,
-        "SELECT public_id, organization, workspace, description, created_at, disabled_at, expires_at FROM tensorzero_auth_api_key WHERE (organization = $1 OR $1 is NULL) AND (workspace = $2 OR $2 is NULL) ORDER BY created_at DESC LIMIT $3 OFFSET $4",
-        organization,
-        workspace,
-        // We take in a 'u32' and convert to 'i64' to avoid any weirdness around negative values
-        // Postgres does the right thing when the LIMIT or OFFSET is null (it gets ignored)
-        limit.map(i64::from),
-        offset.map(i64::from)
+    let native = sqlx::query_as::<_, KeyInfo>(
+        "SELECT public_id, organization, workspace, description, created_at, disabled_at, expires_at FROM tensorzero_auth_api_key WHERE (organization = $1 OR $1 is NULL) AND (workspace = $2 OR $2 is NULL)",
     )
+    .bind(&organization)
+    .bind(&workspace)
     .fetch_all(pool)
     .await?;
-    Ok(keys)
+    let synapse = sqlx::query_as::<_, KeyInfo>(
+        "SELECT btrim(public_id::text) AS public_id, organization, workspace, description, created_at, disabled_at, expires_at FROM tensorzero_auth_synapse_api_key WHERE (organization = $1 OR $1 is NULL) AND (workspace = $2 OR $2 is NULL)",
+    )
+    .bind(&organization)
+    .bind(&workspace)
+    .fetch_all(pool)
+    .await?;
+
+    let mut keys = native;
+    keys.extend(synapse);
+    Ok(paginate_keys(keys, limit, offset))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use googletest::prelude::*;
+
+    fn sample_key(public_id: &str, created_at: DateTime<Utc>) -> KeyInfo {
+        KeyInfo {
+            public_id: public_id.to_string(),
+            organization: "org".to_string(),
+            workspace: "ws".to_string(),
+            description: None,
+            created_at,
+            disabled_at: None,
+            expires_at: None,
+        }
+    }
+
+    #[gtest]
+    fn paginate_keys_orders_newest_first() {
+        let older = Utc::now();
+        let newer = older + chrono::TimeDelta::seconds(1);
+        let keys = paginate_keys(
+            vec![
+                sample_key("nativeaaaaaa", older),
+                sample_key("synbbbbbbbb", newer),
+            ],
+            None,
+            None,
+        );
+        expect_that!(keys.len(), eq(2));
+        expect_that!(keys[0].public_id.as_str(), eq("synbbbbbbbb"));
+        expect_that!(keys[1].public_id.as_str(), eq("nativeaaaaaa"));
+    }
+
+    #[gtest]
+    fn paginate_keys_applies_limit_and_offset() {
+        let t0 = Utc::now();
+        let t1 = t0 + chrono::TimeDelta::seconds(1);
+        let t2 = t0 + chrono::TimeDelta::seconds(2);
+        let keys = paginate_keys(
+            vec![
+                sample_key("key0aaaaaaaa", t0),
+                sample_key("key1aaaaaaaa", t1),
+                sample_key("key2aaaaaaaa", t2),
+            ],
+            Some(1),
+            Some(1),
+        );
+        expect_that!(keys.len(), eq(1));
+        expect_that!(keys[0].public_id.as_str(), eq("key1aaaaaaaa"));
+    }
 }
