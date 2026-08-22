@@ -65,7 +65,7 @@ pub use stored_function_config::{
 };
 pub use stored_gateway_config::{
     STORED_GATEWAY_CONFIG_SCHEMA_REVISION, StoredAuthConfig, StoredBatchWritesConfig,
-    StoredExportConfig, StoredGatewayAuthCacheConfig, StoredGatewayConfig,
+    StoredDashboardUiConfig, StoredExportConfig, StoredGatewayAuthCacheConfig, StoredGatewayConfig,
     StoredGatewayMetricsConfig, StoredInferenceCacheBackend, StoredModelInferenceCacheConfig,
     StoredObservabilityBackend, StoredObservabilityConfig, StoredOtlpConfig,
     StoredOtlpTracesConfig, StoredOtlpTracesFormat, StoredRelayConfig,

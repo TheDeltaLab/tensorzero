@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::sync::Arc;
 use std::{collections::HashSet, time::Duration};
 
@@ -16,6 +17,7 @@ use super::HealthCheckable;
 pub mod batch_inference;
 pub mod batching;
 pub mod config_queries;
+pub mod dashboard_users;
 pub mod dataset_queries;
 pub mod deployment_queries;
 pub mod dicl_queries;

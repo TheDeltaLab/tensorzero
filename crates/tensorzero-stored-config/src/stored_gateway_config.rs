@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
@@ -28,6 +29,14 @@ pub struct StoredGatewayConfig {
     pub relay: Option<StoredRelayConfig>,
     pub metrics: Option<StoredGatewayMetricsConfig>,
     pub cache: Option<StoredModelInferenceCacheConfig>,
+    #[serde(default)]
+    pub ui: Option<StoredDashboardUiConfig>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoredDashboardUiConfig {
+    pub admin_emails: Option<Vec<String>>,
 }
 
 // --- Observability ---

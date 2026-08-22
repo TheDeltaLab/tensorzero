@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { ReactQueryProvider } from "./react-query";
 import { GlobalToastProvider } from "./global-toast-provider";
 import { SidebarProvider } from "~/components/ui/sidebar";
@@ -12,6 +13,11 @@ import {
   DEFAULT_FEATURE_FLAGS,
   type FeatureFlags,
 } from "~/context/feature-flags";
+import {
+  DashboardSessionProvider,
+  DISABLED_DASHBOARD_SESSION,
+  type DashboardSession,
+} from "~/context/dashboard-session";
 import type { UiConfig } from "~/types/tensorzero";
 
 export interface AppProvidersLoaderData {
@@ -19,6 +25,7 @@ export interface AppProvidersLoaderData {
   autopilotAvailable?: boolean;
   config?: UiConfig;
   featureFlags?: FeatureFlags;
+  dashboardSession?: DashboardSession;
 }
 
 interface AppProvidersProps {
@@ -41,13 +48,19 @@ export function AppProviders({ children, loaderData }: AppProvidersProps) {
             <FeatureFlagsProvider
               value={loaderData?.featureFlags ?? DEFAULT_FEATURE_FLAGS}
             >
-              <ConfigProvider value={loaderData?.config ?? EMPTY_CONFIG}>
-                <SidebarProvider>
-                  <TooltipProvider delayDuration={250}>
-                    <EntitySheetProvider>{children}</EntitySheetProvider>
-                  </TooltipProvider>
-                </SidebarProvider>
-              </ConfigProvider>
+              <DashboardSessionProvider
+                value={
+                  loaderData?.dashboardSession ?? DISABLED_DASHBOARD_SESSION
+                }
+              >
+                <ConfigProvider value={loaderData?.config ?? EMPTY_CONFIG}>
+                  <SidebarProvider>
+                    <TooltipProvider delayDuration={250}>
+                      <EntitySheetProvider>{children}</EntitySheetProvider>
+                    </TooltipProvider>
+                  </SidebarProvider>
+                </ConfigProvider>
+              </DashboardSessionProvider>
             </FeatureFlagsProvider>
           </AutopilotAvailableProvider>
         </ReadOnlyProvider>

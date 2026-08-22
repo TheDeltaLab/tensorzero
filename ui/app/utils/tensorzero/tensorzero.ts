@@ -124,6 +124,28 @@ export interface InferenceApiKeyOption {
   disabled: boolean;
 }
 
+export interface DashboardSessionResponse {
+  enabled: boolean;
+  allowed: boolean;
+  email?: string | null;
+  is_admin: boolean;
+}
+
+export interface DashboardUser {
+  email: string;
+  is_admin: boolean;
+  created_at: string;
+  updated_at: string;
+  created_by?: string | null;
+}
+
+function dashboardEmailHeaders(
+  email: string | null,
+): Record<string, string> | undefined {
+  if (!email) return undefined;
+  return { "X-Auth-Request-Email": email };
+}
+
 /**
  * Feedback requests attach a metric value to a given inference or episode.
  */
@@ -307,6 +329,77 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       api_keys: InferenceApiKeyOption[];
     };
     return body.api_keys ?? [];
+  }
+
+  async getDashboardSession(
+    email: string | null,
+  ): Promise<DashboardSessionResponse> {
+    const response = await this.fetch("/internal/dashboard/session", {
+      method: "GET",
+      headers: dashboardEmailHeaders(email),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as DashboardSessionResponse;
+  }
+
+  async listDashboardUsers(email: string): Promise<DashboardUser[]> {
+    const response = await this.fetch("/internal/dashboard/users", {
+      method: "GET",
+      headers: dashboardEmailHeaders(email),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    const body = (await response.json()) as { users: DashboardUser[] };
+    return body.users ?? [];
+  }
+
+  async createDashboardUser(
+    actorEmail: string,
+    payload: { email: string; is_admin: boolean },
+  ): Promise<DashboardUser> {
+    const response = await this.fetch("/internal/dashboard/users", {
+      method: "POST",
+      headers: dashboardEmailHeaders(actorEmail),
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as DashboardUser;
+  }
+
+  async updateDashboardUser(
+    actorEmail: string,
+    payload: { email: string; is_admin: boolean },
+  ): Promise<DashboardUser> {
+    const response = await this.fetch("/internal/dashboard/users", {
+      method: "PATCH",
+      headers: dashboardEmailHeaders(actorEmail),
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as DashboardUser;
+  }
+
+  async deleteDashboardUser(actorEmail: string, email: string): Promise<void> {
+    const response = await this.fetch("/internal/dashboard/users/delete", {
+      method: "POST",
+      headers: dashboardEmailHeaders(actorEmail),
+      body: JSON.stringify({ email }),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
   }
 
   async getSynapseUsageExport(from: string, to: string): Promise<string> {

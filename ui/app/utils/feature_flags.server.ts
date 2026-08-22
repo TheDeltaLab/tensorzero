@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /**
  * Feature Flags Server Module
  *
@@ -8,6 +9,7 @@
  */
 
 import type { FeatureFlags } from "~/context/feature-flags";
+import { getEnv } from "./env.server";
 
 export type { FeatureFlags } from "~/context/feature-flags";
 
@@ -15,7 +17,9 @@ export type { FeatureFlags } from "~/context/feature-flags";
  * Load feature flags from environment variables.
  */
 export function loadFeatureFlags(): FeatureFlags {
-  return {};
+  return {
+    azureAuth: getEnv().TENSORZERO_UI_AZURE_AUTH,
+  };
 }
 
 /**
