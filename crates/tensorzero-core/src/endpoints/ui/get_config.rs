@@ -256,6 +256,7 @@ impl UiConfig {
         let UninitializedConfig {
             models,
             embedding_models,
+            rerank_models: _,
             model_aliases,
             functions,
             metrics,

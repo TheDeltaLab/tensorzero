@@ -15,13 +15,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use url::Url;
 
+use crate::cost::{ResponseMode, apply_computed_cost};
 use crate::endpoints::standalone_inference::{
     RERANK_ENDPOINT, StandaloneInferenceRecord, StandaloneInput, maybe_write_standalone_inference,
     rerank_output_payload, usage_from_json,
 };
 use crate::error::{Error, ErrorDetails};
 use crate::http::TensorzeroHttpClient;
-use crate::inference::types::Latency;
+use crate::inference::types::{Latency, Usage};
 use crate::model::{SILICONFLOW_DEFAULT_API_ROOT, openai_compatible_shorthand_api_base};
 use crate::model_alias::ModelAliasTable;
 use crate::utils::gateway::{AppState, AppStateData};
@@ -147,12 +148,14 @@ pub async fn rerank_handler(
         response_time: start.elapsed(),
     };
 
-    let (status, body) = match dispatch_result {
+    let (status, mut body) = match dispatch_result {
         Ok(result) => result,
         Err(error) => return Ok(error_response(error, false, &synapse)),
     };
 
     if status.is_success() {
+        let usage = apply_rerank_cost(&config, &provider_name, &upstream_name, &body);
+        overlay_rerank_usage(&mut body, &usage);
         let mut episode_id = None;
         let mut tags = HashMap::new();
         if let Err(error) = overlay_compat_headers(&headers, &mut episode_id, &mut tags) {
@@ -174,7 +177,7 @@ pub async fn rerank_handler(
                 output_text: rerank_output_payload(&body),
                 raw_request,
                 raw_response: serde_json::to_string(&body).unwrap_or_else(|_| body.to_string()),
-                usage: usage_from_json(&body),
+                usage,
                 latency,
                 cached: false,
                 extra_internal_tags: synapse.observability_tags(&headers),
@@ -408,6 +411,64 @@ fn unwrap_dashscope_results(json: &mut Value) {
     obj.insert("results".to_string(), nested);
 }
 
+fn apply_rerank_cost(
+    config: &crate::config::Config,
+    provider: &str,
+    model: &str,
+    body: &Value,
+) -> Usage {
+    let mut usage = usage_from_json(body);
+    let Some(cost_config) = config.rerank_models.cost(model, provider) else {
+        return usage;
+    };
+    let mut billed = body.clone();
+    if let Some(obj) = billed.as_object_mut() {
+        let mut extra = obj
+            .remove("_tensorzero")
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        extra.insert("searches".to_string(), json!(1));
+        obj.insert("_tensorzero".to_string(), Value::Object(extra));
+    }
+    apply_computed_cost(
+        &mut usage,
+        &billed.to_string(),
+        cost_config,
+        ResponseMode::NonStreaming,
+    );
+    usage
+}
+
+fn overlay_rerank_usage(body: &mut Value, usage: &Usage) {
+    let Some(obj) = body.as_object_mut() else {
+        return;
+    };
+    let usage_value = obj.entry("usage").or_insert_with(|| json!({}));
+    let Some(map) = usage_value.as_object_mut() else {
+        return;
+    };
+    if let Some(tokens) = usage.input_tokens {
+        map.entry("prompt_tokens").or_insert(json!(tokens));
+        map.entry("total_tokens").or_insert(json!(tokens));
+    }
+    if let Some(cost) = usage.cost {
+        map.insert("tensorzero_cost".to_string(), json!(decimal_as_f64(cost)));
+        let currency = usage.currency.unwrap_or(tensorzero_types::Currency::USD);
+        if usage.currency.is_some() {
+            map.insert("tensorzero_currency".to_string(), json!(currency.as_str()));
+        }
+        map.insert(
+            "tensorzero_costs".to_string(),
+            json!({ currency.as_str(): decimal_as_f64(cost) }),
+        );
+    }
+}
+
+fn decimal_as_f64(value: rust_decimal::Decimal) -> f64 {
+    use rust_decimal::prelude::ToPrimitive;
+    value.to_f64().unwrap_or(0.0)
+}
+
 fn dummy_rerank(
     model: &str,
     documents: &[String],
@@ -545,5 +606,70 @@ mod tests {
             url.path().ends_with("/reranks"),
             "unexpected rerank url {url}"
         );
+    }
+
+    #[test]
+    fn apply_alibaba_rerank_cost_records_cny() {
+        use crate::config::rerank::{RerankModelTable, UninitializedRerankModelConfig};
+        use rust_decimal::Decimal;
+        use std::sync::Arc;
+        use tensorzero_types::Currency;
+
+        let models: HashMap<Arc<str>, UninitializedRerankModelConfig> = toml::from_str(
+            r#"
+[qwen3-rerank.providers.alibaba]
+currency = "CNY"
+cost = [
+  { pointer = "/usage/total_tokens", cost_per_million = 0.5, usage = "input" },
+]
+"#,
+        )
+        .expect("rerank cost toml");
+        let config = crate::config::Config {
+            rerank_models: RerankModelTable::load(models).expect("load rerank cost"),
+            ..Default::default()
+        };
+        let body = json!({ "usage": { "total_tokens": 1_000_000 } });
+        let usage = apply_rerank_cost(&config, "alibaba", "qwen3-rerank", &body);
+        assert_eq!(usage.input_tokens, Some(1_000_000));
+        assert_eq!(usage.cost, Some(Decimal::new(5, 1)));
+        assert_eq!(usage.currency, Some(Currency::CNY));
+
+        let mut overlaid = body;
+        overlay_rerank_usage(&mut overlaid, &usage);
+        assert_eq!(overlaid["usage"]["tensorzero_currency"], "CNY");
+        assert_eq!(overlaid["usage"]["tensorzero_costs"]["CNY"], 0.5);
+    }
+
+    #[test]
+    fn apply_openrouter_rerank_cost_falls_back_to_search_rate() {
+        use crate::config::rerank::{RerankModelTable, UninitializedRerankModelConfig};
+        use rust_decimal::Decimal;
+        use std::sync::Arc;
+        use tensorzero_types::Currency;
+
+        let models: HashMap<Arc<str>, UninitializedRerankModelConfig> = toml::from_str(
+            r#"
+["cohere/rerank-v3.5".providers.openrouter]
+currency = "USD"
+cost = [
+  { pointer = "/usage/cost", cost_per_unit = 1 },
+  { pointer = "/_tensorzero/searches", cost_per_unit = 0.002, skip_if_pointer = "/usage/cost" },
+]
+"#,
+        )
+        .expect("rerank cost toml");
+        let config = crate::config::Config {
+            rerank_models: RerankModelTable::load(models).expect("load rerank cost"),
+            ..Default::default()
+        };
+        let usage = apply_rerank_cost(
+            &config,
+            "openrouter",
+            "cohere/rerank-v3.5",
+            &json!({ "results": [] }),
+        );
+        assert_eq!(usage.cost, Some(Decimal::new(2, 3)));
+        assert_eq!(usage.currency, Some(Currency::USD));
     }
 }

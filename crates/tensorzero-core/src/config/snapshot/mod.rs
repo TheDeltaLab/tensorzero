@@ -80,6 +80,8 @@ pub struct StoredConfig {
     pub rate_limiting: UninitializedRateLimitingConfig,
     #[serde(default)]
     pub embedding_models: HashMap<Arc<str>, StoredEmbeddingModelConfig>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub rerank_models: HashMap<Arc<str>, crate::config::rerank::UninitializedRerankModelConfig>,
     #[serde(default)]
     pub autopilot: AutopilotConfig,
     #[serde(default)]
@@ -105,6 +107,7 @@ impl From<UninitializedConfig> for StoredConfig {
             provider_types,
             optimizers,
             embedding_models,
+            rerank_models,
             model_aliases,
             autopilot,
         } = config;
@@ -131,6 +134,7 @@ impl From<UninitializedConfig> for StoredConfig {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
+            rerank_models: rerank_models.unwrap_or_default(),
             model_aliases: model_aliases.unwrap_or_default(),
             autopilot: autopilot.unwrap_or_default(),
         }
@@ -156,6 +160,7 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
             provider_types,
             optimizers,
             embedding_models,
+            rerank_models,
             model_aliases,
             autopilot,
         } = stored;
@@ -191,6 +196,7 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
                     .map(|(k, v)| (k, v.into()))
                     .collect(),
             ),
+            rerank_models: Some(rerank_models),
             autopilot: Some(autopilot),
         })
     }

@@ -957,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn test_aggregate_across_inferences_mixed_currency_drops_cost() {
+    fn test_aggregate_across_inferences_mixed_currency_drops_combined_cost() {
         let usages = vec![
             Usage {
                 input_tokens: Some(100),
@@ -972,18 +972,18 @@ mod tests {
                 output_tokens: Some(100),
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
-                cost: Some(Decimal::ONE),
+                cost: Some(Decimal::new(2, 0)),
                 currency: Some(tensorzero_types::Currency::CNY),
             },
         ];
         let result = aggregate_usage_across_model_inferences(usages);
         assert_eq!(
             result.cost, None,
-            "mixed currencies should drop aggregated cost"
+            "mixed currencies should drop a combined cost"
         );
         assert_eq!(
             result.currency, None,
-            "mixed currencies should drop aggregated currency"
+            "mixed currencies should drop a combined currency"
         );
     }
 
