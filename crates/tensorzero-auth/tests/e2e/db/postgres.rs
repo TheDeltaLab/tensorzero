@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![expect(clippy::unwrap_used, clippy::panic)]
 
 use chrono::{Duration, Utc};
@@ -7,7 +8,8 @@ use sqlx::PgPool;
 use tensorzero_auth::{
     key::{TensorZeroApiKey, TensorZeroAuthError},
     postgres::{
-        AuthResult, KeyInfo, check_key, create_key, disable_key, get_key_info, list_key_info,
+        AuthResult, KeyInfo, check_key, create_key, disable_key, get_key_info, import_synapse_key,
+        list_key_info, update_key_description,
     },
 };
 
@@ -429,6 +431,58 @@ async fn test_get_key_info(pool: PgPool) {
 
     let missing = get_key_info("aaaaaaaaaaaa", &pool).await.unwrap();
     assert!(missing.is_none(), "missing key should return None");
+}
+
+#[sqlx::test]
+async fn test_list_and_update_imported_synapse_keys(pool: PgPool) {
+    let native = create_key("my_org", "my_workspace", Some("native"), None, &pool)
+        .await
+        .unwrap();
+    let native_id = TensorZeroApiKey::parse(native.expose_secret())
+        .unwrap()
+        .public_id;
+
+    let synapse_id = import_synapse_key(
+        "my_org",
+        "my_workspace",
+        Some("imported-synapse"),
+        "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
+        &pool,
+    )
+    .await
+    .unwrap();
+
+    let listed = list_key_info(None, None, None, None, &pool).await.unwrap();
+    let public_ids: Vec<&str> = listed.iter().map(|key| key.public_id.as_str()).collect();
+    assert!(
+        public_ids.contains(&native_id.as_str()),
+        "native key {native_id} should be listed, got {public_ids:?}"
+    );
+    assert!(
+        public_ids.contains(&synapse_id.as_str()),
+        "imported Synapse key {synapse_id} should be listed, got {public_ids:?}"
+    );
+
+    let info = get_key_info(&synapse_id, &pool)
+        .await
+        .unwrap()
+        .expect("imported Synapse key should be fetchable");
+    assert_eq!(info.description.as_deref(), Some("imported-synapse"));
+
+    let updated = update_key_description(&synapse_id, Some("renamed-synapse"), &pool)
+        .await
+        .unwrap();
+    assert_eq!(updated.description.as_deref(), Some("renamed-synapse"));
+
+    disable_key(&synapse_id, &pool).await.unwrap();
+    let disabled = get_key_info(&synapse_id, &pool)
+        .await
+        .unwrap()
+        .expect("disabled Synapse key should still be listed");
+    assert!(
+        disabled.disabled_at.is_some(),
+        "imported Synapse key should have disabled_at set"
+    );
 }
 
 #[sqlx::test]

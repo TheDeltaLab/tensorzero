@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import AuthTable from "./AuthTable";
 import type { KeyInfo } from "~/types/tensorzero";
@@ -73,6 +74,14 @@ export const Simple: Story = {
         workspace: DEFAULT_WORKSPACE,
         description: "Staging environment - deprecated",
         created_at: "2024-03-10T13:00:00Z",
+        disabled_at: undefined,
+      },
+      {
+        public_id: "sync4589ffad",
+        organization: DEFAULT_ORGANIZATION,
+        workspace: DEFAULT_WORKSPACE,
+        description: "chuang-dev",
+        created_at: "2024-03-12T08:00:00Z",
         disabled_at: undefined,
       },
       {
