@@ -69,28 +69,28 @@ function ApiKeyRow({
     >
       <TableCell className="w-0">
         <div className="flex items-center">
-        {isDisabled ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
-            <TooltipContent>
-              Disabled on {formatDate(new Date(apiKey.disabled_at!))}
-            </TooltipContent>
-          </Tooltip>
-        ) : isExpired ? (
-          <Tooltip>
-            <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
-            <TooltipContent>
-              Expired on {formatDate(new Date(apiKey.expires_at!))}
-            </TooltipContent>
-          </Tooltip>
-        ) : (
-          publicIdElement
-        )}
-        {isImportedSynapseKey(apiKey.public_id) ? (
-          <Badge variant="secondary" className="ml-2 shrink-0">
-            Synapse
-          </Badge>
-        ) : null}
+          {isDisabled ? (
+            <Tooltip>
+              <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
+              <TooltipContent>
+                Disabled on {formatDate(new Date(apiKey.disabled_at!))}
+              </TooltipContent>
+            </Tooltip>
+          ) : isExpired ? (
+            <Tooltip>
+              <TooltipTrigger asChild>{publicIdElement}</TooltipTrigger>
+              <TooltipContent>
+                Expired on {formatDate(new Date(apiKey.expires_at!))}
+              </TooltipContent>
+            </Tooltip>
+          ) : (
+            publicIdElement
+          )}
+          {isImportedSynapseKey(apiKey.public_id) ? (
+            <Badge variant="secondary" className="ml-2 shrink-0">
+              Synapse
+            </Badge>
+          ) : null}
         </div>
       </TableCell>
       <TableCell>
