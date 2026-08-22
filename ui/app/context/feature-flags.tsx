@@ -1,4 +1,5 @@
 "use client";
+// Modified by Delta-AI under Apache 2.0
 
 /**
  * Feature Flags Context Provider
@@ -12,8 +13,9 @@
 
 import { createContext, use } from "react";
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type -- Will gain fields as new feature flags are added
-export interface FeatureFlags {}
+export interface FeatureFlags {
+  azureAuth?: boolean;
+}
 
 export const DEFAULT_FEATURE_FLAGS: FeatureFlags = {};
 

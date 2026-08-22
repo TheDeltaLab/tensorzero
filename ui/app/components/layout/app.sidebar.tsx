@@ -14,7 +14,15 @@ import {
   SidebarCollapse,
   SidebarExpand,
 } from "~/components/icons/Icons";
-import { BarChart3, FileCode2, KeyRound, LayoutGrid, Plus } from "lucide-react";
+import {
+  BarChart3,
+  FileCode2,
+  KeyRound,
+  LayoutGrid,
+  LogOut,
+  Plus,
+  Users,
+} from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -36,6 +44,7 @@ import { TensorZeroLogo } from "~/components/icons/Icons";
 import { Link } from "react-router";
 import TensorZeroStatusIndicator from "./TensorZeroStatusIndicator";
 import { ReadOnlyBadge } from "./ReadOnlyBadge";
+import { useDashboardSession } from "~/context/dashboard-session";
 
 interface NavigationItem {
   title: string;
@@ -122,6 +131,11 @@ const navigation: NavigationSection[] = [
         url: "/api-keys",
         icon: KeyRound,
       },
+      {
+        title: "Users",
+        url: "/users",
+        icon: Users,
+      },
     ],
   },
 ];
@@ -131,6 +145,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const activePathUtils = useActivePath();
   const autopilotAvailable = useAutopilotAvailable();
   const config = useConfig();
+  const session = useDashboardSession();
 
   return (
     <Sidebar collapsible="icon" {...props}>
@@ -215,28 +230,50 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
           <SidebarGroup key={section.title}>
             <SidebarGroupLabel>{section.title}</SidebarGroupLabel>
             <SidebarGroupContent className="flex flex-col gap-1">
-              {section.items?.map((item) => (
-                <SidebarMenuItem key={item.title} className="list-none">
-                  <SidebarMenuButton
-                    asChild
-                    tooltip={state === "collapsed" ? item.title : undefined}
-                    isActive={activePathUtils.isActive(item.url)}
-                  >
-                    <Link to={item.url} className="flex items-center gap-2">
-                      <item.icon className="h-4 w-4" />
-                      <span className="whitespace-nowrap transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0">
-                        {item.title}
-                      </span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {section.items
+                ?.filter((item) => item.url !== "/users" || session.is_admin)
+                .map((item) => (
+                  <SidebarMenuItem key={item.title} className="list-none">
+                    <SidebarMenuButton
+                      asChild
+                      tooltip={state === "collapsed" ? item.title : undefined}
+                      isActive={activePathUtils.isActive(item.url)}
+                    >
+                      <Link to={item.url} className="flex items-center gap-2">
+                        <item.icon className="h-4 w-4" />
+                        <span className="whitespace-nowrap transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0">
+                          {item.title}
+                        </span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
             </SidebarGroupContent>
           </SidebarGroup>
         ))}
       </SidebarContent>
       <SidebarFooter className="relative">
         <ReadOnlyBadge />
+        {session.enabled && session.email && (
+          <div className="text-fg-muted flex flex-col gap-1 overflow-hidden p-2 text-xs">
+            <span
+              className="truncate transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0"
+              title={session.email}
+            >
+              {session.email}
+            </span>
+            <SidebarMenuItem className="list-none">
+              <SidebarMenuButton asChild tooltip="Sign out">
+                <a href={session.logoutUrl} className="flex items-center gap-2">
+                  <LogOut className="h-4 w-4" />
+                  <span className="whitespace-nowrap transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0">
+                    Sign out
+                  </span>
+                </a>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </div>
+        )}
         <TensorZeroStatusIndicator collapsed={state === "collapsed"} />
         <SidebarMenuItem className="list-none">
           <SidebarMenuButton

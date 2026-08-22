@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { logger } from "./logger";
 
 // This is the only file in which `process.env` should be accessed directly.
@@ -20,12 +21,19 @@ interface Env {
   TENSORZERO_API_KEY?: string;
   TENSORZERO_UI_CONFIG_FILE?: string;
   TENSORZERO_AUTOPILOT_BETA_TOOLS?: string;
+  TENSORZERO_UI_AZURE_AUTH: boolean;
+  TENSORZERO_UI_AZURE_LOGOUT_URL: string;
   autopilotHeaders: Record<string, string>;
 }
 
 let _env: Env | undefined;
 let hasLoggedConfigPathDeprecation = false;
 let hasLoggedClickhouseUrlDeprecation = false;
+
+function parseTruthyEnv(value: string | undefined): boolean {
+  if (!value) return false;
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
 
 /**
  * Use this function to retrieve the environment variables instead of accessing
@@ -90,6 +98,11 @@ export function getEnv(): Env {
     TENSORZERO_UI_CONFIG_FILE: process.env.TENSORZERO_UI_CONFIG_FILE,
     TENSORZERO_AUTOPILOT_BETA_TOOLS:
       process.env.TENSORZERO_AUTOPILOT_BETA_TOOLS,
+    TENSORZERO_UI_AZURE_AUTH: parseTruthyEnv(
+      process.env.TENSORZERO_UI_AZURE_AUTH,
+    ),
+    TENSORZERO_UI_AZURE_LOGOUT_URL:
+      process.env.TENSORZERO_UI_AZURE_LOGOUT_URL || "/oauth2/sign_out",
     autopilotHeaders,
   };
 

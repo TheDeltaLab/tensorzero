@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import * as React from "react";
 import {
   data,
@@ -50,6 +51,16 @@ import {
   isSecureRequest,
   runWithRequest,
 } from "./utils/api-key-override.server";
+import {
+  DISABLED_DASHBOARD_SESSION,
+  type DashboardSession,
+} from "./context/dashboard-session";
+import { DashboardAccessDenied } from "./components/layout/DashboardAccessDenied";
+import {
+  getAzureLoginEmail,
+  getAzureLogoutUrl,
+} from "./utils/azure-auth.server";
+import { getTensorZeroClient } from "./utils/get-tensorzero-client.server";
 
 export const links: Route.LinksFunction = () => [
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
@@ -87,6 +98,26 @@ interface LoaderData {
   autopilotAvailable: boolean;
   featureFlags: FeatureFlags;
   infraError: ClassifiedError | null;
+  dashboardSession: DashboardSession;
+}
+
+async function loadDashboardSession(
+  request: Request,
+  azureAuth: boolean,
+): Promise<DashboardSession> {
+  const logoutUrl = getAzureLogoutUrl();
+  if (!azureAuth) {
+    return { ...DISABLED_DASHBOARD_SESSION, logoutUrl };
+  }
+  const email = getAzureLoginEmail(request);
+  const session = await getTensorZeroClient().getDashboardSession(email);
+  return {
+    enabled: session.enabled,
+    allowed: session.allowed,
+    email: session.email ?? email,
+    is_admin: session.is_admin,
+    logoutUrl,
+  };
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
@@ -94,7 +125,29 @@ export async function loader({ request }: Route.LoaderArgs) {
   startPeriodicCleanup();
   const isReadOnly = isReadOnlyMode();
   const featureFlags = loadFeatureFlags();
+  const logoutUrl = getAzureLogoutUrl();
+  const isHealth = new URL(request.url).pathname === "/health";
+  const fallbackSession: DashboardSession = {
+    ...DISABLED_DASHBOARD_SESSION,
+    logoutUrl,
+  };
+
   try {
+    const dashboardSession = isHealth
+      ? fallbackSession
+      : await loadDashboardSession(request, featureFlags.azureAuth === true);
+
+    if (dashboardSession.enabled && !dashboardSession.allowed) {
+      return {
+        config: EMPTY_CONFIG,
+        isReadOnly,
+        autopilotAvailable: false,
+        featureFlags,
+        infraError: null,
+        dashboardSession,
+      };
+    }
+
     // Fetch config and autopilot availability in parallel
     const [config, autopilotAvailable] = await Promise.all([
       getConfig(),
@@ -106,6 +159,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       autopilotAvailable,
       featureFlags,
       infraError: null,
+      dashboardSession,
     };
   } catch (e) {
     // Graceful degradation for infrastructure errors:
@@ -118,6 +172,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         autopilotAvailable: false,
         featureFlags,
         infraError: { type: InfraErrorType.GatewayUnavailable },
+        dashboardSession: fallbackSession,
       };
     }
     if (isAuthenticationError(e)) {
@@ -127,6 +182,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         autopilotAvailable: false,
         featureFlags,
         infraError: { type: InfraErrorType.GatewayAuthFailed },
+        dashboardSession: fallbackSession,
       };
       // Clear stale cookie so the auth dialog starts fresh
       if (await getApiKeyFromRequest(request)) {
@@ -152,6 +208,7 @@ export async function loader({ request }: Route.LoaderArgs) {
           type: InfraErrorType.ClickHouseUnavailable,
           message,
         },
+        dashboardSession: fallbackSession,
       };
     }
     throw e;
@@ -178,7 +235,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function App({ loaderData }: Route.ComponentProps) {
-  const { infraError } = loaderData;
+  const { infraError, dashboardSession } = loaderData;
   const [dialogOpen, setDialogOpen] = React.useState(true);
 
   // Reset dialog when infraError changes (component re-renders, not remounts)
@@ -187,6 +244,15 @@ export default function App({ loaderData }: Route.ComponentProps) {
       setDialogOpen(true);
     }
   }, [infraError]);
+
+  if (dashboardSession.enabled && !dashboardSession.allowed) {
+    return (
+      <DashboardAccessDenied
+        email={dashboardSession.email}
+        logoutUrl={dashboardSession.logoutUrl}
+      />
+    );
+  }
 
   return (
     <AppProviders loaderData={loaderData}>

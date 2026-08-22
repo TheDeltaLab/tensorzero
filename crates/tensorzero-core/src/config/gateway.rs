@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::model::{CredentialLocation, CredentialLocationWithFallback};
 use crate::model_table::load_tensorzero_relay_credential;
 use crate::relay::RelayCredentials;
@@ -15,7 +16,7 @@ use chrono::Duration;
 use serde::{Deserialize, Deserializer, Serialize};
 use tensorzero_stored_config::{
     StoredAuthConfig, StoredBatchWritesConfig, StoredCredentialLocationWithFallback,
-    StoredExportConfig, StoredGatewayAuthCacheConfig, StoredGatewayConfig,
+    StoredDashboardUiConfig, StoredExportConfig, StoredGatewayAuthCacheConfig, StoredGatewayConfig,
     StoredGatewayMetricsConfig, StoredInferenceCacheBackend, StoredModelInferenceCacheConfig,
     StoredObservabilityBackend, StoredObservabilityConfig, StoredOtlpConfig,
     StoredOtlpTracesConfig, StoredOtlpTracesFormat, StoredRelayConfig,
@@ -157,6 +158,67 @@ impl Default for ValkeyModelInferenceCacheConfig {
     }
 }
 
+/// Bootstrap allowlist for the Azure-authenticated dashboard (`[gateway.ui]`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DashboardUiConfig {
+    /// Emails seeded as dashboard admins when Azure dashboard auth is enabled.
+    /// Removing an email here does not demote an existing admin in Postgres.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub admin_emails: Vec<String>,
+}
+
+impl DashboardUiConfig {
+    pub fn is_empty(&self) -> bool {
+        self.admin_emails.is_empty()
+    }
+
+    fn normalized(self) -> Result<Self, Error> {
+        let mut admin_emails = Vec::new();
+        for email in self.admin_emails {
+            let Some(normalized) = normalize_dashboard_email(&email) else {
+                return Err(Error::new(ErrorDetails::Config {
+                    message: format!(
+                        "Invalid `gateway.ui.admin_emails` entry `{email}`. Expected an email address."
+                    ),
+                }));
+            };
+            if !admin_emails.contains(&normalized) {
+                admin_emails.push(normalized);
+            }
+        }
+        Ok(Self { admin_emails })
+    }
+}
+
+/// Trim, lowercase, and validate a dashboard email. Returns `None` if invalid.
+pub fn normalize_dashboard_email(raw: &str) -> Option<String> {
+    let email = raw.trim().to_ascii_lowercase();
+    if email.is_empty() || email.len() > 254 {
+        return None;
+    }
+    let (local, domain) = email.split_once('@')?;
+    if local.is_empty() || domain.is_empty() || !domain.contains('.') {
+        return None;
+    }
+    if email.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(email)
+}
+
+/// `TENSORZERO_UI_AZURE_AUTH` truthy values: `1`, `true`, `yes`, `on` (case-insensitive).
+pub fn parse_azure_auth_env(value: Option<&str>) -> bool {
+    matches!(
+        value.unwrap_or("").trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
+}
+
+pub fn azure_auth_enabled() -> bool {
+    parse_azure_auth_env(std::env::var("TENSORZERO_UI_AZURE_AUTH").ok().as_deref())
+}
+
 #[serde_with::skip_serializing_none]
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -194,6 +256,11 @@ pub struct UninitializedGatewayConfig {
     pub relay: Option<UninitializedRelayConfig>,
     pub metrics: Option<MetricsConfig>,
     pub cache: Option<ModelInferenceCacheConfig>,
+    /// Azure dashboard allowlist bootstrap. Seeded into Postgres as admins when
+    /// `TENSORZERO_UI_AZURE_AUTH` is enabled. Removing an email here does not
+    /// demote an existing admin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui: Option<DashboardUiConfig>,
 }
 
 impl UninitializedGatewayConfig {
@@ -260,6 +327,7 @@ impl UninitializedGatewayConfig {
             relay,
             metrics,
             cache: self.cache.unwrap_or_default(),
+            ui: self.ui.unwrap_or_default().normalized()?,
         })
     }
 }
@@ -454,6 +522,9 @@ impl TryFrom<StoredGatewayConfig> for UninitializedGatewayConfig {
             relay,
             metrics: stored.metrics.map(Into::into),
             cache: stored.cache.map(Into::into),
+            ui: stored.ui.map(|ui| DashboardUiConfig {
+                admin_emails: ui.admin_emails.unwrap_or_default(),
+            }),
         })
     }
 }
@@ -549,6 +620,12 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
                     ttl_s: Some(v.ttl_s),
                 }),
             }),
+            ui: config
+                .ui
+                .filter(|ui| !ui.admin_emails.is_empty())
+                .map(|ui| StoredDashboardUiConfig {
+                    admin_emails: Some(ui.admin_emails),
+                }),
         }
     }
 }
@@ -578,6 +655,7 @@ pub struct GatewayConfig {
     pub relay: Option<TensorzeroRelay>,
     pub metrics: MetricsConfig,
     pub cache: ModelInferenceCacheConfig,
+    pub ui: DashboardUiConfig,
 }
 
 impl Default for GatewayConfig {
@@ -599,6 +677,7 @@ impl Default for GatewayConfig {
             relay: Default::default(),
             metrics: Default::default(),
             cache: Default::default(),
+            ui: Default::default(),
         }
     }
 }
@@ -819,6 +898,9 @@ mod tests {
                 backend: Some(InferenceCacheBackend::Valkey),
                 valkey: Some(ValkeyModelInferenceCacheConfig { ttl_s: 7_200 }),
             }),
+            ui: Some(DashboardUiConfig {
+                admin_emails: vec!["admin@example.com".to_string()],
+            }),
         };
 
         let stored: StoredGatewayConfig = original.clone().into();
@@ -826,5 +908,68 @@ mod tests {
             .try_into()
             .expect("StoredGatewayConfig should convert back to UninitializedGatewayConfig");
         expect_that!(round_tripped, eq(&original));
+    }
+
+    #[gtest]
+    fn test_normalize_dashboard_email() {
+        expect_that!(
+            normalize_dashboard_email(" Admin@Example.COM "),
+            eq(&Some("admin@example.com".to_string()))
+        );
+        expect_that!(normalize_dashboard_email(""), eq(&None));
+        expect_that!(normalize_dashboard_email("not-an-email"), eq(&None));
+        expect_that!(normalize_dashboard_email("user@localhost"), eq(&None));
+        expect_that!(normalize_dashboard_email("a b@example.com"), eq(&None));
+    }
+
+    #[gtest]
+    fn test_parse_azure_auth_env() {
+        expect_that!(parse_azure_auth_env(None), eq(false));
+        expect_that!(parse_azure_auth_env(Some("")), eq(false));
+        expect_that!(parse_azure_auth_env(Some("false")), eq(false));
+        expect_that!(parse_azure_auth_env(Some("true")), eq(true));
+        expect_that!(parse_azure_auth_env(Some("TRUE")), eq(true));
+        expect_that!(parse_azure_auth_env(Some("1")), eq(true));
+        expect_that!(parse_azure_auth_env(Some("yes")), eq(true));
+        expect_that!(parse_azure_auth_env(Some("on")), eq(true));
+    }
+
+    #[gtest]
+    fn test_dashboard_ui_toml_normalizes_admin_emails() {
+        let parsed: UninitializedGatewayConfig = toml::from_str(
+            r#"
+            [ui]
+            admin_emails = ["Admin@Example.COM", " second@example.com "]
+            "#,
+        )
+        .expect("gateway.ui TOML should parse");
+        let loaded = parsed
+            .load(None)
+            .expect("gateway.ui admin emails should load");
+        expect_that!(
+            loaded.ui.admin_emails,
+            eq(&vec![
+                "admin@example.com".to_string(),
+                "second@example.com".to_string()
+            ])
+        );
+    }
+
+    #[gtest]
+    fn test_dashboard_ui_toml_rejects_invalid_admin_email() {
+        let parsed: UninitializedGatewayConfig = toml::from_str(
+            r#"
+            [ui]
+            admin_emails = ["not-an-email"]
+            "#,
+        )
+        .expect("gateway.ui TOML should parse before load validation");
+        let err = parsed
+            .load(None)
+            .expect_err("invalid admin email should fail config load");
+        expect_that!(
+            err.to_string(),
+            contains_substring("Invalid `gateway.ui.admin_emails` entry")
+        );
     }
 }

@@ -43,6 +43,20 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
             get(endpoints::internal::inference_api_keys::list_inference_api_keys_handler),
         )
         .route(
+            "/internal/dashboard/session",
+            get(endpoints::internal::dashboard::get_dashboard_session_handler),
+        )
+        .route(
+            "/internal/dashboard/users",
+            get(endpoints::internal::dashboard::list_dashboard_users_handler)
+                .post(endpoints::internal::dashboard::create_dashboard_user_handler)
+                .patch(endpoints::internal::dashboard::update_dashboard_user_handler),
+        )
+        .route(
+            "/internal/dashboard/users/delete",
+            post(endpoints::internal::dashboard::delete_dashboard_user_handler),
+        )
+        .route(
             "/internal/functions/{function_name}/inference_count",
             get(endpoints::internal::inference_count::get_inference_count_handler),
         )

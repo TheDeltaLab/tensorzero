@@ -3,6 +3,7 @@ pub mod autopilot;
 pub mod config;
 pub mod config_toml;
 pub mod count_inferences;
+pub mod dashboard;
 pub mod evaluations;
 pub mod inference_api_keys;
 pub mod inference_count;

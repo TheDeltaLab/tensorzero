@@ -202,6 +202,9 @@ export default [
   // API Keys
   route("api-keys", "routes/api-keys/route.tsx"),
 
+  // Dashboard users (Azure allowlist)
+  route("users", "routes/users/route.tsx"),
+
   // Config editor
   route("config", "routes/config/route.tsx"),
 

@@ -1,6 +1,9 @@
+// Modified by Delta-AI under Apache 2.0
 use serde::{Deserialize, Serialize};
 
-use crate::config::gateway::{AuthConfig, MetricsConfig, UninitializedGatewayConfig};
+use crate::config::gateway::{
+    AuthConfig, DashboardUiConfig, MetricsConfig, UninitializedGatewayConfig,
+};
 use crate::config::{ExportConfig, TemplateFilesystemAccess, UninitializedRelayConfig};
 
 use super::cache_config::StoredCacheConfig;
@@ -39,6 +42,8 @@ pub struct StoredGatewayConfig {
     pub metrics: MetricsConfig,
     #[serde(default)]
     pub cache: StoredCacheConfig,
+    #[serde(default, skip_serializing_if = "DashboardUiConfig::is_empty")]
+    pub ui: DashboardUiConfig,
 }
 
 impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
@@ -60,6 +65,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
             relay,
             metrics,
             cache,
+            ui,
         } = config;
         Self {
             bind_address,
@@ -80,6 +86,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
             relay,
             metrics: metrics.unwrap_or_default(),
             cache: cache.unwrap_or_default().into(),
+            ui: ui.unwrap_or_default(),
         }
     }
 }
@@ -103,6 +110,7 @@ impl From<StoredGatewayConfig> for UninitializedGatewayConfig {
             relay,
             metrics,
             cache,
+            ui,
         } = stored;
         Self {
             bind_address,
@@ -123,6 +131,7 @@ impl From<StoredGatewayConfig> for UninitializedGatewayConfig {
             relay,
             metrics: Some(metrics),
             cache: Some(cache.into()),
+            ui: if ui.is_empty() { None } else { Some(ui) },
         }
     }
 }

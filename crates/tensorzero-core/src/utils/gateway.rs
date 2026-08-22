@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 // This module defines and implements SwappableAppStateData and GatewayHandle.
 #![expect(
     clippy::disallowed_types,
@@ -1495,6 +1496,7 @@ mod tests {
             relay: None,
             metrics: Default::default(),
             cache: Default::default(),
+            ui: Default::default(),
         };
 
         let config = Config {
@@ -1578,6 +1580,7 @@ mod tests {
             relay: None,
             metrics: Default::default(),
             cache: Default::default(),
+            ui: Default::default(),
         };
 
         let config = Config {
@@ -1622,6 +1625,7 @@ mod tests {
             relay: None,
             metrics: Default::default(),
             cache: Default::default(),
+            ui: Default::default(),
         };
         let config = Config {
             gateway: gateway_config,
@@ -1666,6 +1670,7 @@ mod tests {
             relay: None,
             metrics: Default::default(),
             cache: Default::default(),
+            ui: Default::default(),
         };
         let config = Config {
             gateway: gateway_config,
