@@ -327,29 +327,61 @@ fn params_from_anthropic(
     })
 }
 
+fn flatten_system_text(system: Option<AnthropicSystem>) -> Option<String> {
+    match system {
+        Some(AnthropicSystem::Text(text)) => {
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        }
+        Some(AnthropicSystem::Blocks(blocks)) => {
+            let text = system_text_from_blocks(&blocks);
+            if text.is_empty() { None } else { Some(text) }
+        }
+        None => None,
+    }
+}
+
+fn system_text_from_blocks(blocks: &[AnthropicContentBlock]) -> String {
+    let mut text = String::new();
+    for block in blocks {
+        if let AnthropicContentBlock::Text { text: piece } = block {
+            text.push_str(piece);
+        }
+    }
+    text
+}
+
+fn system_text_from_content(content: AnthropicContent) -> String {
+    match content {
+        AnthropicContent::Text(text) => text,
+        AnthropicContent::Blocks(blocks) => system_text_from_blocks(&blocks),
+    }
+}
+
 fn anthropic_to_input(
     system: Option<AnthropicSystem>,
     messages: Vec<AnthropicIncomingMessage>,
 ) -> Result<Input, Error> {
-    let system = match system {
-        Some(AnthropicSystem::Text(text)) => Some(System::Text(text)),
-        Some(AnthropicSystem::Blocks(blocks)) => {
-            let mut text = String::new();
-            for block in blocks {
-                if let AnthropicContentBlock::Text { text: piece } = block {
-                    text.push_str(&piece);
-                }
-            }
-            if text.is_empty() {
-                None
-            } else {
-                Some(System::Text(text))
-            }
-        }
-        None => None,
-    };
+    // Official Anthropic puts the prompt on the top-level `system` field.
+    // Claude Code (and some proxies) also send `{ "role": "system" }` inside
+    // `messages`. Lift those into `Input.system` the same way the OpenAI
+    // chat-completions path does, instead of 400ing.
+    let mut system_parts = Vec::new();
+    if let Some(text) = flatten_system_text(system) {
+        system_parts.push(text);
+    }
     let mut out = Vec::new();
     for message in messages {
+        if message.role == "system" {
+            let text = system_text_from_content(message.content);
+            if !text.is_empty() {
+                system_parts.push(text);
+            }
+            continue;
+        }
         let role = match message.role.as_str() {
             "user" => Role::User,
             "assistant" => Role::Assistant,
@@ -373,6 +405,11 @@ fn anthropic_to_input(
         };
         out.push(InputMessage { role, content });
     }
+    let system = if system_parts.is_empty() {
+        None
+    } else {
+        Some(System::Text(system_parts.join("\n")))
+    };
     Ok(Input {
         system,
         messages: out,
@@ -756,6 +793,7 @@ fn value_to_sse_event(event: Option<String>, value: Value) -> Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
 
     #[test]
     fn converts_text_and_tools() {
@@ -788,5 +826,54 @@ mod tests {
         assert_eq!(tz.params.chat_completion.thinking_budget_tokens, Some(1024));
         assert_eq!(tz.params.chat_completion.max_tokens, Some(32));
         assert!(tz.dynamic_tool_params.additional_tools.is_some());
+    }
+
+    #[gtest]
+    fn lifts_system_role_from_messages() {
+        let input = anthropic_to_input(
+            None,
+            vec![
+                AnthropicIncomingMessage {
+                    role: "system".to_string(),
+                    content: AnthropicContent::Text("be terse".to_string()),
+                },
+                AnthropicIncomingMessage {
+                    role: "user".to_string(),
+                    content: AnthropicContent::Text("hi".to_string()),
+                },
+            ],
+        )
+        .expect("system-in-messages should be accepted");
+        expect_that!(
+            input.system,
+            some(eq(&System::Text("be terse".to_string())))
+        );
+        expect_eq!(input.messages.len(), 1);
+        expect_eq!(input.messages[0].role, Role::User);
+    }
+
+    #[gtest]
+    fn concatenates_top_level_system_and_message_system() {
+        let input = anthropic_to_input(
+            Some(AnthropicSystem::Text("top".to_string())),
+            vec![
+                AnthropicIncomingMessage {
+                    role: "system".to_string(),
+                    content: AnthropicContent::Blocks(vec![AnthropicContentBlock::Text {
+                        text: "from messages".to_string(),
+                    }]),
+                },
+                AnthropicIncomingMessage {
+                    role: "user".to_string(),
+                    content: AnthropicContent::Text("hi".to_string()),
+                },
+            ],
+        )
+        .expect("combined system prompts should be accepted");
+        expect_that!(
+            input.system,
+            some(eq(&System::Text("top\nfrom messages".to_string())))
+        );
+        expect_eq!(input.messages.len(), 1);
     }
 }
