@@ -132,6 +132,21 @@ pub trait ShorthandModelConfig: Sized {
         key: &str,
         global_outbound_http_timeout: &chrono::Duration,
     ) -> Result<(), Error>;
+    /// Copy `cost` / `batch_cost` from a matching configured provider onto a
+    /// `from_shorthand` model so `provider::model` lookups bill like the table entry.
+    fn inherit_configured_provider_settings(
+        &mut self,
+        table: &HashMap<Arc<str>, Self>,
+        requested_model_name: &str,
+    ) {
+        let _ = (table, requested_model_name);
+    }
+    /// Whether this table entry can serve `provider_type::…` without rebuilding
+    /// providers from shorthand (same routing key or `provider::` prefix).
+    fn covers_shorthand_provider(&self, provider_type: &str) -> bool {
+        let _ = provider_type;
+        false
+    }
 }
 
 pub use tensorzero_http::CowNoClone;
@@ -239,6 +254,23 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
             if let Some(session) = crate::routing::RoutingSession::current() {
                 session.set_min_tokens_per_sec(alias.min_tokens_per_sec);
             }
+            // `deepseek-v4-pro` hits the table (and its cost config). The Synapse
+            // rewrite `deepseek::deepseek-v4-pro` used to rebuild via shorthand
+            // with `cost: None`. Reuse the configured model when it already lists
+            // that provider so billing / timeouts / upstream IDs stay in sync.
+            if let Some(configured) = self.table.get(alias.name.as_ref()) {
+                let covered = requested_shorthand
+                    .as_ref()
+                    .is_none_or(|sh| configured.covers_shorthand_provider(sh.provider_type));
+                if covered {
+                    if let Some(session) = crate::routing::RoutingSession::current()
+                        && let Some(sh) = requested_shorthand.as_ref()
+                    {
+                        session.set_requested_provider(sh.provider_type);
+                    }
+                    return Ok(Some(CowNoClone::Borrowed(configured)));
+                }
+            }
             let targets = rotated_alias_targets(alias, requested_shorthand.as_ref());
             let mut parts = Vec::new();
             for target in targets {
@@ -272,17 +304,19 @@ impl<T: ShorthandModelConfig> BaseModelTable<T> {
         model_name: &str,
         relay: Option<&TensorzeroRelay>,
     ) -> Result<T, Error> {
-        if relay.is_some() {
+        let mut model = if relay.is_some() {
             let creds = self.default_credentials.clone();
             let provider_type = provider_type.to_string();
             let model_name = model_name.to_string();
             with_skip_credential_validation(async move {
                 T::from_shorthand(&provider_type, &model_name, &creds).await
             })
-            .await
+            .await?
         } else {
-            T::from_shorthand(provider_type, model_name, &self.default_credentials).await
-        }
+            T::from_shorthand(provider_type, model_name, &self.default_credentials).await?
+        };
+        model.inherit_configured_provider_settings(&self.table, model_name);
+        Ok(model)
     }
     /// Check that a model name is valid
     /// This is either true because it's in the table, because it resolves via alias,
@@ -1124,13 +1158,52 @@ impl ProviderKind for XAIKind {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::ModelConfig;
+    use crate::cost::{CostConfigEntry, CostRate, NormalizedCostPointerConfig};
+    use crate::model::{ModelConfig, ModelProvider, ProviderConfig};
+    use crate::providers::dummy::DummyProvider;
+    use googletest::prelude::*;
+    use rust_decimal::Decimal;
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    #[tokio::test]
-    async fn alias_get_merges_all_shorthand_targets() {
-        let aliases = ModelAliasTable {
+    fn dummy_model_config(model_name: &str, provider_name: &str, with_cost: bool) -> ModelConfig {
+        let cost = with_cost.then(|| {
+            vec![CostConfigEntry {
+                pointer: NormalizedCostPointerConfig::Unified {
+                    pointers: vec!["/usage/input_tokens".to_string()],
+                },
+                rate: Some(CostRate {
+                    cost_per_unit: Decimal::from(1) / Decimal::from(1_000_000),
+                }),
+                ..Default::default()
+            }]
+        });
+        ModelConfig {
+            routing: vec![provider_name.into()],
+            providers: HashMap::from([(
+                Arc::from(provider_name),
+                ModelProvider {
+                    name: provider_name.into(),
+                    config: ProviderConfig::Dummy(DummyProvider {
+                        model_name: model_name.to_string(),
+                        ..Default::default()
+                    }),
+                    extra_body: Default::default(),
+                    extra_headers: Default::default(),
+                    timeouts: Default::default(),
+                    discard_unknown_chunks: false,
+                    cost,
+                    batch_cost: None,
+                },
+            )]),
+            timeouts: Default::default(),
+            skip_relay: false,
+            namespace: None,
+        }
+    }
+
+    fn flash_alias() -> ModelAliasTable {
+        ModelAliasTable {
             aliases: vec![ModelAlias {
                 name: Arc::from("flash"),
                 task: Some(Arc::from("chat")),
@@ -1146,12 +1219,16 @@ mod tests {
                 ],
                 min_tokens_per_sec: Some(10.0),
             }],
-        };
+        }
+    }
+
+    #[tokio::test]
+    async fn alias_get_merges_all_shorthand_targets() {
         let table = BaseModelTable::<ModelConfig>::new(
             HashMap::new(),
             Arc::new(ProviderTypeDefaultCredentials::default()),
             chrono::Duration::seconds(120),
-            Arc::new(aliases),
+            Arc::new(flash_alias()),
         )
         .unwrap();
         let model = table.get("flash", None).await.unwrap().unwrap();
@@ -1167,32 +1244,105 @@ mod tests {
 
     #[tokio::test]
     async fn find_containing_rotates_requested_shorthand_to_head() {
-        let aliases = ModelAliasTable {
-            aliases: vec![ModelAlias {
-                name: Arc::from("flash"),
-                task: Some(Arc::from("chat")),
-                targets: vec![
-                    ModelAliasTarget {
-                        provider_type: Arc::from("dummy"),
-                        model_name: Arc::from("error"),
-                    },
-                    ModelAliasTarget {
-                        provider_type: Arc::from("dummy"),
-                        model_name: Arc::from("good"),
-                    },
-                ],
-                min_tokens_per_sec: None,
-            }],
-        };
         let table = BaseModelTable::<ModelConfig>::new(
             HashMap::new(),
             Arc::new(ProviderTypeDefaultCredentials::default()),
             chrono::Duration::seconds(120),
-            Arc::new(aliases),
+            Arc::new(flash_alias()),
         )
         .unwrap();
         let model = table.get("dummy::good", None).await.unwrap().unwrap();
         assert_eq!(model.routing[0].as_ref(), "dummy::good");
         assert_eq!(model.routing[1].as_ref(), "dummy::error");
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn shorthand_reuses_configured_model_when_alias_name_is_in_table() {
+        let mut models = HashMap::new();
+        models.insert(
+            Arc::from("flash"),
+            dummy_model_config("good", "dummy", true),
+        );
+        let table = BaseModelTable::<ModelConfig>::new(
+            models,
+            Arc::new(ProviderTypeDefaultCredentials::default()),
+            chrono::Duration::seconds(120),
+            Arc::new(flash_alias()),
+        )
+        .unwrap();
+        let model = table
+            .get("dummy::good", None)
+            .await
+            .expect("lookup should succeed")
+            .expect("model should exist");
+        expect_eq!(
+            model
+                .routing
+                .iter()
+                .map(std::convert::AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            vec!["dummy"]
+        );
+        expect_true!(
+            model
+                .providers
+                .get("dummy")
+                .expect("dummy provider")
+                .cost
+                .is_some()
+        );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn shorthand_inherits_cost_from_configured_model() {
+        let mut models = HashMap::new();
+        models.insert(Arc::from("good"), dummy_model_config("good", "dummy", true));
+        let table = BaseModelTable::<ModelConfig>::new(
+            models,
+            Arc::new(ProviderTypeDefaultCredentials::default()),
+            chrono::Duration::seconds(120),
+            Arc::new(ModelAliasTable::default()),
+        )
+        .unwrap();
+        let model = table
+            .get("dummy::good", None)
+            .await
+            .expect("lookup should succeed")
+            .expect("model should exist");
+        expect_that!(model.routing[0].as_ref(), eq("dummy"));
+        expect_true!(
+            model
+                .providers
+                .get("dummy")
+                .expect("dummy provider")
+                .cost
+                .is_some()
+        );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn alias_shorthand_merges_when_configured_model_lacks_provider() {
+        let mut models = HashMap::new();
+        models.insert(
+            Arc::from("flash"),
+            dummy_model_config("good", "other", true),
+        );
+        let table = BaseModelTable::<ModelConfig>::new(
+            models,
+            Arc::new(ProviderTypeDefaultCredentials::default()),
+            chrono::Duration::seconds(120),
+            Arc::new(flash_alias()),
+        )
+        .unwrap();
+        let model = table
+            .get("dummy::good", None)
+            .await
+            .expect("lookup should succeed")
+            .expect("model should exist");
+        expect_that!(model.routing[0].as_ref(), eq("dummy::good"));
+        expect_that!(model.routing[1].as_ref(), eq("dummy::error"));
     }
 }
