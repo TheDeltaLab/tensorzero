@@ -34,6 +34,7 @@ pub struct RoutingOutcome {
 #[derive(Debug)]
 pub struct RoutingSession {
     pub fallback_disabled: bool,
+    requested_provider: Mutex<Option<String>>,
     min_tokens_per_sec: Mutex<Option<f64>>,
     outcome: Mutex<Option<RoutingOutcome>>,
 }
@@ -42,6 +43,7 @@ impl RoutingSession {
     pub fn new(fallback_disabled: bool) -> Arc<Self> {
         Arc::new(Self {
             fallback_disabled,
+            requested_provider: Mutex::new(None),
             min_tokens_per_sec: Mutex::new(None),
             outcome: Mutex::new(None),
         })
@@ -56,6 +58,21 @@ impl RoutingSession {
         F: std::future::Future<Output = T>,
     {
         ROUTING_SESSION.scope(session, fut).await
+    }
+
+    /// Prefer this provider when borrowing a configured model for a
+    /// `provider::model` shorthand (rotate it to the head of `routing`).
+    pub fn set_requested_provider(&self, provider: impl Into<String>) {
+        if let Ok(mut slot) = self.requested_provider.lock() {
+            *slot = Some(provider.into());
+        }
+    }
+
+    pub fn requested_provider(&self) -> Option<String> {
+        self.requested_provider
+            .lock()
+            .ok()
+            .and_then(|slot| slot.clone())
     }
 
     pub fn set_min_tokens_per_sec(&self, value: Option<f64>) {
@@ -185,19 +202,46 @@ fn served_by_from_model_name(model_name: &str) -> String {
     }
 }
 
+pub(crate) fn routing_matches_requested(name: &str, requested: &str) -> bool {
+    name == requested
+        || name
+            .strip_prefix(requested)
+            .is_some_and(|rest| rest.starts_with("::"))
+}
+
+fn rotate_requested_provider(routing: &[Arc<str>], requested: &str) -> Vec<Arc<str>> {
+    let mut candidates = routing.to_vec();
+    if let Some(idx) = candidates
+        .iter()
+        .position(|name| routing_matches_requested(name, requested))
+        && idx != 0
+    {
+        let head = candidates.remove(idx);
+        candidates.insert(0, head);
+    }
+    candidates
+}
+
 /// Ordered provider names to actually try for this request.
 pub fn effective_routing(routing: &[Arc<str>]) -> Vec<Arc<str>> {
     if routing.is_empty() {
         return Vec::new();
     }
     let session = RoutingSession::current();
+    let ordered = match session
+        .as_ref()
+        .and_then(|session| session.requested_provider())
+    {
+        Some(requested) => rotate_requested_provider(routing, &requested),
+        None => routing.to_vec(),
+    };
     let fallback_disabled = session
         .as_ref()
         .is_some_and(|session| session.fallback_disabled);
     let candidates: Vec<Arc<str>> = if fallback_disabled {
-        routing.iter().take(1).cloned().collect()
+        ordered.into_iter().take(1).collect()
     } else {
-        routing.to_vec()
+        ordered
     };
     let threshold = session
         .as_ref()
@@ -276,6 +320,7 @@ pub fn record_tokens_per_sec_from_latency(
 mod tests {
     use super::*;
     use crate::error::ErrorDetails;
+    use googletest::prelude::*;
     use reqwest::StatusCode;
 
     #[test]
@@ -306,6 +351,36 @@ mod tests {
         let effective = RoutingSession::scope(session, async { effective_routing(&routing) }).await;
         assert_eq!(effective.len(), 1);
         assert_eq!(effective[0].as_ref(), "dummy::error");
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn requested_provider_rotates_before_fallback_disabled() {
+        let session = RoutingSession::new(true);
+        session.set_requested_provider("dummy");
+        let routing = vec![Arc::<str>::from("alibaba"), Arc::<str>::from("dummy")];
+        let effective = RoutingSession::scope(session, async { effective_routing(&routing) }).await;
+        expect_eq!(effective.len(), 1);
+        expect_eq!(effective[0].as_ref(), "dummy");
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn requested_provider_rotates_shorthand_key_to_head() {
+        let session = RoutingSession::new(false);
+        session.set_requested_provider("dummy");
+        let routing = vec![
+            Arc::<str>::from("alibaba::flash"),
+            Arc::<str>::from("dummy::good"),
+        ];
+        let effective = RoutingSession::scope(session, async { effective_routing(&routing) }).await;
+        expect_eq!(
+            effective
+                .iter()
+                .map(std::convert::AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            vec!["dummy::good", "alibaba::flash"]
+        );
     }
 
     #[test]

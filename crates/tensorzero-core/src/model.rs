@@ -3922,6 +3922,61 @@ impl ShorthandModelConfig for ModelConfig {
         }
         Ok(())
     }
+
+    fn inherit_configured_provider_settings(
+        &mut self,
+        table: &HashMap<Arc<str>, Self>,
+        requested_model_name: &str,
+    ) {
+        if table.is_empty() {
+            return;
+        }
+        for provider in self.providers.values_mut() {
+            if provider.cost.is_some() && provider.batch_cost.is_some() {
+                continue;
+            }
+            let Some(source) =
+                configured_provider_for_shorthand(table, requested_model_name, provider)
+            else {
+                continue;
+            };
+            if provider.cost.is_none() {
+                provider.cost = source.cost.clone();
+            }
+            if provider.batch_cost.is_none() {
+                provider.batch_cost = source.batch_cost.clone();
+            }
+        }
+    }
+
+    fn covers_shorthand_provider(&self, provider_type: &str) -> bool {
+        self.routing
+            .iter()
+            .any(|name| crate::routing::routing_matches_requested(name, provider_type))
+    }
+}
+
+fn configured_provider_for_shorthand<'a>(
+    table: &'a HashMap<Arc<str>, ModelConfig>,
+    requested_model_name: &str,
+    shorthand: &ModelProvider,
+) -> Option<&'a ModelProvider> {
+    if let Some(configured) = table.get(requested_model_name)
+        && let Some(provider) = configured.providers.values().find(|candidate| {
+            candidate.name.as_ref() == shorthand.name.as_ref()
+                || candidate.provider_type() == shorthand.provider_type()
+        })
+    {
+        return Some(provider);
+    }
+
+    let billed = shorthand.genai_model_name()?;
+    table.values().find_map(|configured| {
+        configured.providers.values().find(|candidate| {
+            candidate.provider_type() == shorthand.provider_type()
+                && candidate.genai_model_name() == Some(billed)
+        })
+    })
 }
 
 #[cfg(test)]
