@@ -18,6 +18,17 @@ use crate::utils::gateway::{AppState, AppStateData};
 const SUCCESS_STATUS_SQL: &str =
     "COALESCE(i.tags->>'tensorzero::status_code', '200') ~ '^2[0-9]{2}$'";
 
+/// Prompt-side input tokens. DeepSeek cost pointers may overwrite stored
+/// `input_tokens` to cache-miss only, so cache-read can exceed input. In that
+/// case the true prompt is miss + hit.
+const PROMPT_INPUT_TOKENS_SQL: &str = "CASE \
+    WHEN COALESCE(mi.provider_cache_read_input_tokens, 0) > COALESCE(mi.input_tokens, 0) \
+    THEN COALESCE(mi.input_tokens, 0) + COALESCE(mi.provider_cache_read_input_tokens, 0) \
+    ELSE COALESCE(mi.input_tokens, 0) \
+END";
+
+const CANONICAL_MODEL_NAME_SQL: &str = "regexp_replace(mi.model_name, '^.*::', '')";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalysisRange {
     FifteenMinutes,
@@ -242,10 +253,18 @@ impl AnalysisKind {
     }
 }
 
-/// Input cache hit rate as a percentage: cache-read input tokens / total input tokens.
+/// Bare model name, stripping a leading `provider::` shorthand prefix.
+fn canonical_model_name(name: &str) -> &str {
+    match name.rsplit_once("::") {
+        Some((_, rest)) if !rest.is_empty() => rest,
+        _ => name,
+    }
+}
+
+/// Input cache hit rate as a percentage: cache-read input tokens / prompt input tokens.
 fn input_cache_hit_rate_pct(cache_read_input_tokens: i64, total_input_tokens: i64) -> f64 {
     if total_input_tokens > 0 {
-        (cache_read_input_tokens as f64 / total_input_tokens as f64) * 100.0
+        ((cache_read_input_tokens as f64 / total_input_tokens as f64) * 100.0).min(100.0)
     } else {
         0.0
     }
@@ -309,8 +328,14 @@ fn push_from_and_filters(
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
-        query_builder.push(" AND mi.model_name = ");
-        query_builder.push_bind(model);
+        let canonical = canonical_model_name(model);
+        query_builder.push(" AND (mi.model_name = ");
+        query_builder.push_bind(model.to_string());
+        query_builder.push(" OR mi.model_name = ");
+        query_builder.push_bind(canonical.to_string());
+        query_builder.push(" OR regexp_replace(mi.model_name, '^.*::', '') = ");
+        query_builder.push_bind(canonical.to_string());
+        query_builder.push(")");
     }
     if params.cache_miss_only {
         query_builder.push(" AND mi.cached = FALSE");
@@ -328,9 +353,9 @@ async fn fetch_totals(pool: &sqlx::PgPool, params: &AnalysisParams) -> Result<To
             COUNT(*)::BIGINT as total_responses, \
             COUNT(*) FILTER (WHERE mi.cached AND {SUCCESS_STATUS_SQL})::BIGINT as cached_requests, \
             COUNT(DISTINCT mi.model_provider_name) FILTER (WHERE {SUCCESS_STATUS_SQL})::BIGINT as unique_providers, \
-            COUNT(DISTINCT mi.model_name) FILTER (WHERE {SUCCESS_STATUS_SQL})::BIGINT as unique_models, \
+            COUNT(DISTINCT {CANONICAL_MODEL_NAME_SQL}) FILTER (WHERE {SUCCESS_STATUS_SQL})::BIGINT as unique_models, \
             AVG(mi.response_time_ms) FILTER (WHERE {SUCCESS_STATUS_SQL})::FLOAT8 as avg_latency, \
-            COALESCE(SUM(mi.input_tokens) FILTER (WHERE {SUCCESS_STATUS_SQL}), 0)::BIGINT as total_input_tokens, \
+            COALESCE(SUM({PROMPT_INPUT_TOKENS_SQL}) FILTER (WHERE {SUCCESS_STATUS_SQL}), 0)::BIGINT as total_input_tokens, \
             COALESCE(SUM(mi.output_tokens) FILTER (WHERE {SUCCESS_STATUS_SQL}), 0)::BIGINT as total_output_tokens, \
             COALESCE(SUM(mi.provider_cache_read_input_tokens) FILTER (WHERE {SUCCESS_STATUS_SQL}), 0)::BIGINT as cache_read_input_tokens"
     ));
@@ -398,8 +423,8 @@ async fn fetch_models(
     pool: &sqlx::PgPool,
     params: &AnalysisParams,
 ) -> Result<Vec<ModelRow>, Error> {
-    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT mi.model_name as model, \
+    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
+        "SELECT {CANONICAL_MODEL_NAME_SQL} as model, \
                 mi.model_provider_name as provider, \
                 COUNT(*)::BIGINT as count, \
                 AVG(mi.response_time_ms)::FLOAT8 as avg, \
@@ -409,11 +434,9 @@ async fn fetch_models(
                     FILTER (WHERE mi.response_time_ms IS NOT NULL) as p90, \
                 percentile_cont(0.99) WITHIN GROUP (ORDER BY mi.response_time_ms) \
                     FILTER (WHERE mi.response_time_ms IS NOT NULL) as p99",
-    );
+    ));
     push_from_and_filters(&mut query_builder, params, true);
-    query_builder.push(
-        " GROUP BY mi.model_name, mi.model_provider_name ORDER BY count DESC, model, provider",
-    );
+    query_builder.push(" GROUP BY 1, mi.model_provider_name ORDER BY count DESC, model, provider");
     query_builder
         .build_query_as()
         .fetch_all(pool)
@@ -435,7 +458,7 @@ async fn fetch_series(
     let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
         "SELECT date_trunc('{trunc}', mi.created_at) as bucket, \
                 COUNT(*)::BIGINT as requests, \
-                COALESCE(SUM(mi.input_tokens), 0)::BIGINT as input_tokens, \
+                COALESCE(SUM({PROMPT_INPUT_TOKENS_SQL}), 0)::BIGINT as input_tokens, \
                 COALESCE(SUM(mi.output_tokens), 0)::BIGINT as output_tokens, \
                 AVG(mi.response_time_ms)::FLOAT8 as avg_latency, \
                 percentile_cont(0.5) WITHIN GROUP (ORDER BY mi.response_time_ms) \
@@ -618,6 +641,18 @@ mod tests {
         expect_eq!(input_cache_hit_rate_pct(0, 0), 0.0);
         expect_eq!(input_cache_hit_rate_pct(25, 100), 25.0);
         expect_eq!(input_cache_hit_rate_pct(100, 100), 100.0);
+        expect_eq!(input_cache_hit_rate_pct(200, 100), 100.0);
+        expect_eq!(input_cache_hit_rate_pct(99_000, 100_000), 99.0);
+    }
+
+    #[gtest]
+    fn canonical_model_name_strips_provider_prefix() {
+        expect_eq!(canonical_model_name("deepseek-v4-pro"), "deepseek-v4-pro");
+        expect_eq!(
+            canonical_model_name("deepseek::deepseek-v4-pro"),
+            "deepseek-v4-pro"
+        );
+        expect_eq!(canonical_model_name("openai::gpt-4o"), "gpt-4o");
     }
 
     #[gtest]

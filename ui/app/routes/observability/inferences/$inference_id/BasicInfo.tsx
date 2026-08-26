@@ -7,6 +7,7 @@ import { getTotalInferenceUsage } from "~/utils/clickhouse/helpers";
 import {
   mergeUsage,
   usageFromTags,
+  API_KEY_PUBLIC_ID_TAG,
 } from "~/routes/observability/inferences/inferenceQuery";
 import {
   firstFiniteMs,
@@ -29,7 +30,12 @@ import {
   Cached,
   Cost,
 } from "~/components/icons/Icons";
-import { toFunctionUrl, toVariantUrl, toEpisodeUrl } from "~/utils/urls";
+import {
+  toFunctionUrl,
+  toVariantUrl,
+  toEpisodeUrl,
+  toInferencesListUrl,
+} from "~/utils/urls";
 import { formatCost } from "~/utils/cost";
 import { formatDateWithSeconds } from "~/utils/date";
 import { TimestampTooltip } from "~/components/ui/TimestampTooltip";
@@ -55,7 +61,7 @@ export function BasicInfoStreaming({
   locationKey,
 }: BasicInfoStreamingProps) {
   return (
-    <Suspense key={locationKey} fallback={<BasicInfoLayoutSkeleton rows={5} />}>
+    <Suspense key={locationKey} fallback={<BasicInfoLayoutSkeleton rows={6} />}>
       <Await
         resolve={promise}
         errorElement={
@@ -106,6 +112,7 @@ export function BasicInfo({
   });
   const kind = inferenceKindFromStored(inference);
   const standalone = isStandaloneInferenceKind(kind);
+  const apiKeyPublicId = inference.tags[API_KEY_PUBLIC_ID_TAG]?.trim();
 
   const functionIconConfig = getFunctionTypeIcon(kind);
   const hasCachedInferences = modelInferences.some((mi) => mi.cached);
@@ -165,6 +172,22 @@ export function BasicInfo({
             link={toEpisodeUrl(inference.episode_id)}
             font="mono"
           />
+        </BasicInfoItemContent>
+      </BasicInfoItem>
+
+      <BasicInfoItem>
+        <BasicInfoItemTitle>API Key</BasicInfoItemTitle>
+        <BasicInfoItemContent>
+          {apiKeyPublicId ? (
+            <Chip
+              label={apiKeyPublicId}
+              link={toInferencesListUrl({ api_key: apiKeyPublicId })}
+              font="mono"
+              tooltip="Public id of the API key that made this request"
+            />
+          ) : (
+            <span className="text-fg-muted">—</span>
+          )}
         </BasicInfoItemContent>
       </BasicInfoItem>
 

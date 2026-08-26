@@ -152,6 +152,16 @@ pub async fn tensorzero_auth_middleware(
                                 key_info: Some(Box::new(key_info)),
                             });
                         }
+                        let key_info = if TensorZeroApiKey::is_synapse_key(raw_api_key) {
+                            crate::postgres::align_synapse_key_public_id(
+                                parsed_key.get_public_id(),
+                                key_info,
+                                pool,
+                            )
+                            .await?
+                        } else {
+                            key_info
+                        };
                         Ok((parsed_key, key_info))
                     }
                     AuthResult::Disabled(disabled_at, key_info) => {

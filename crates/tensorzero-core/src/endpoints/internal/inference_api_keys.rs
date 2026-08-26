@@ -3,6 +3,10 @@
 //!
 //! Combines TensorZero native keys, imported Synapse keys, and distinct
 //! `tensorzero::api_key_public_id` tags already stored on inferences.
+//!
+//! Synapse auth rows whose `public_id` is not yet aligned with inference tags
+//! (bcrypt-hash id vs plaintext-hash id) are omitted when tagged ids exist, so
+//! the dropdown does not offer a named key that matches zero rows.
 
 use axum::Json;
 use axum::extract::State;
@@ -38,6 +42,17 @@ pub async fn list_inference_api_keys_handler(
 
     let api_keys: Vec<InferenceApiKeyOption> = sqlx::query_as(
         r"
+        WITH tagged AS (
+            SELECT DISTINCT tags->>'tensorzero::api_key_public_id' AS public_id
+            FROM tensorzero.chat_inferences
+            WHERE tags ? 'tensorzero::api_key_public_id'
+              AND COALESCE(tags->>'tensorzero::api_key_public_id', '') <> ''
+            UNION
+            SELECT DISTINCT tags->>'tensorzero::api_key_public_id'
+            FROM tensorzero.json_inferences
+            WHERE tags ? 'tensorzero::api_key_public_id'
+              AND COALESCE(tags->>'tensorzero::api_key_public_id', '') <> ''
+        )
         SELECT DISTINCT ON (public_id)
             public_id,
             description,
@@ -49,27 +64,22 @@ pub async fn list_inference_api_keys_handler(
                    0 AS rank
             FROM tensorzero_auth_api_key
             UNION ALL
-            SELECT btrim(public_id::text),
-                   description,
-                   (disabled_at IS NOT NULL),
+            SELECT btrim(k.public_id::text),
+                   k.description,
+                   (k.disabled_at IS NOT NULL),
                    0
-            FROM tensorzero_auth_synapse_api_key
+            FROM tensorzero_auth_synapse_api_key k
+            WHERE NOT EXISTS (SELECT 1 FROM tagged)
+               OR EXISTS (
+                    SELECT 1 FROM tagged t
+                    WHERE t.public_id = btrim(k.public_id::text)
+               )
             UNION ALL
-            SELECT DISTINCT tags->>'tensorzero::api_key_public_id',
+            SELECT t.public_id,
                    NULL,
                    FALSE,
                    1
-            FROM tensorzero.chat_inferences
-            WHERE tags ? 'tensorzero::api_key_public_id'
-              AND COALESCE(tags->>'tensorzero::api_key_public_id', '') <> ''
-            UNION ALL
-            SELECT DISTINCT tags->>'tensorzero::api_key_public_id',
-                   NULL,
-                   FALSE,
-                   1
-            FROM tensorzero.json_inferences
-            WHERE tags ? 'tensorzero::api_key_public_id'
-              AND COALESCE(tags->>'tensorzero::api_key_public_id', '') <> ''
+            FROM tagged t
         ) keys
         ORDER BY public_id, rank, description NULLS LAST
         LIMIT $1

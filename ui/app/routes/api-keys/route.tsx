@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Route } from "./+types/route";
 import { Suspense, useState } from "react";
 import {
@@ -22,6 +23,7 @@ import {
 } from "~/utils/postgres.server";
 import { requireValidApiKeyIfEnabled } from "~/utils/auth.server";
 import AuthTable from "./AuthTable";
+import type { ApiKeyListItem } from "./AuthTable";
 import { AuthActions } from "./AuthActions";
 import { GenerateApiKeyModal } from "./GenerateApiKeyModal";
 import { PostgresRequiredState } from "~/components/ui/PostgresRequiredState";
@@ -34,7 +36,6 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import type { KeyInfo } from "~/types/tensorzero";
 import {
   CUSTOM_EXPIRATION_REQUIRED_ERROR,
   getExpirationDateError,
@@ -46,7 +47,7 @@ export const handle: RouteHandle = {
 };
 
 export type ApiKeysData = {
-  apiKeys: KeyInfo[];
+  apiKeys: ApiKeyListItem[];
   offset: number;
   limit: number;
 };
@@ -71,6 +72,7 @@ function ApiKeysContentSkeleton() {
               <TableHead>Description</TableHead>
               <TableHead className="w-0 whitespace-nowrap">Expires</TableHead>
               <TableHead className="w-0 whitespace-nowrap">Created</TableHead>
+              <TableHead className="w-0 whitespace-nowrap">Last Used</TableHead>
               <TableHead className="w-0"></TableHead>
             </TableRow>
           </TableHeader>
@@ -82,6 +84,9 @@ function ApiKeysContentSkeleton() {
                 </TableCell>
                 <TableCell>
                   <Skeleton className="h-4 w-48" />
+                </TableCell>
+                <TableCell>
+                  <Skeleton className="h-4 w-20" />
                 </TableCell>
                 <TableCell>
                   <Skeleton className="h-4 w-20" />
