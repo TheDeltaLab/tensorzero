@@ -253,4 +253,17 @@ mod tests {
         assert_eq!(parsed.public_id.len(), PUBLIC_ID_LENGTH);
         assert!(parsed.public_id.starts_with("syn"));
     }
+
+    #[test]
+    fn test_synapse_public_id_is_hash_of_plaintext_not_bcrypt() {
+        let key = format!("sk-syn-v1-{}", "a".repeat(48));
+        let from_plaintext = TensorZeroApiKey::from_synapse_plaintext(&key);
+        let bcrypt_hash = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+        let from_bcrypt = format!(
+            "syn{}",
+            &hex::encode(Sha256::digest(bcrypt_hash.as_bytes()))[..9]
+        );
+        assert_ne!(from_plaintext.public_id, from_bcrypt);
+        assert_eq!(from_plaintext.public_id.len(), PUBLIC_ID_LENGTH);
+    }
 }

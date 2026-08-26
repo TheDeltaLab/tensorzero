@@ -14,6 +14,7 @@ use self::batching::PostgresBatchSender;
 use super::BatchWriterHandle;
 use super::HealthCheckable;
 
+pub mod api_key_usage;
 pub mod batch_inference;
 pub mod batching;
 pub mod config_queries;

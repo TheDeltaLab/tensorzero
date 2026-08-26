@@ -32,6 +32,8 @@ import { ReadOnlyGuard } from "~/components/utils/read-only-guard";
 import { Input } from "~/components/ui/input";
 import { Badge } from "~/components/ui/badge";
 
+export type ApiKeyListItem = KeyInfo & { last_used_at?: string };
+
 function isImportedSynapseKey(publicId: string): boolean {
   return publicId.trim().startsWith("syn");
 }
@@ -41,9 +43,9 @@ function ApiKeyRow({
   onDelete,
   onEdit,
 }: {
-  apiKey: KeyInfo;
+  apiKey: ApiKeyListItem;
   onDelete: (publicId: string) => void;
-  onEdit: (apiKey: KeyInfo) => void;
+  onEdit: (apiKey: ApiKeyListItem) => void;
 }) {
   const isDisabled = apiKey.disabled_at !== undefined;
   const isExpired =
@@ -115,6 +117,13 @@ function ApiKeyRow({
         </span>
       </TableCell>
       <TableCell className="w-0">
+        <span className="whitespace-nowrap">
+          {apiKey.last_used_at
+            ? formatDate(new Date(apiKey.last_used_at))
+            : "—"}
+        </span>
+      </TableCell>
+      <TableCell className="w-0">
         <div className="flex items-center justify-end gap-2">
           <ReadOnlyGuard asChild>
             <Button
@@ -143,13 +152,13 @@ function ApiKeyRow({
   );
 }
 
-export default function AuthTable({ apiKeys }: { apiKeys: KeyInfo[] }) {
+export default function AuthTable({ apiKeys }: { apiKeys: ApiKeyListItem[] }) {
   const deleteFetcher = useFetcher();
   const updateFetcher = useFetcher();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [keyToDelete, setKeyToDelete] = useState<string | null>(null);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
-  const [keyToEdit, setKeyToEdit] = useState<KeyInfo | null>(null);
+  const [keyToEdit, setKeyToEdit] = useState<ApiKeyListItem | null>(null);
   const [editDescription, setEditDescription] = useState("");
   const [shouldCloseAfterSubmit, setShouldCloseAfterSubmit] = useState(false);
 
@@ -169,7 +178,7 @@ export default function AuthTable({ apiKeys }: { apiKeys: KeyInfo[] }) {
     setKeyToDelete(null);
   };
 
-  const handleEdit = (apiKey: KeyInfo) => {
+  const handleEdit = (apiKey: ApiKeyListItem) => {
     setKeyToEdit(apiKey);
     setEditDescription(apiKey.description ?? "");
     setShouldCloseAfterSubmit(false);
@@ -217,6 +226,7 @@ export default function AuthTable({ apiKeys }: { apiKeys: KeyInfo[] }) {
               <TableHead>Description</TableHead>
               <TableHead className="w-0 whitespace-nowrap">Expires</TableHead>
               <TableHead className="w-0 whitespace-nowrap">Created</TableHead>
+              <TableHead className="w-0 whitespace-nowrap">Last Used</TableHead>
               <TableHead className="w-0"></TableHead>
             </TableRow>
           </TableHeader>

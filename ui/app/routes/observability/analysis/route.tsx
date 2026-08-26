@@ -39,10 +39,6 @@ import {
   TtftChart,
 } from "~/components/analysis/charts";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
-import {
-  getPostgresClient,
-  isPostgresAvailable,
-} from "~/utils/postgres.server";
 import { logger } from "~/utils/logger";
 import { useConfig } from "~/context/config";
 import {
@@ -62,7 +58,7 @@ import {
   apiKeysForSelect,
   formatApiKeyOption,
 } from "~/routes/observability/inferences/inferenceQuery";
-import type { KeyInfo } from "~/types/tensorzero";
+import type { InferenceApiKeyOption } from "~/utils/tensorzero";
 import { formatCost } from "~/utils/cost";
 
 export const handle: RouteHandle = {
@@ -87,13 +83,9 @@ export async function loader({ request }: Route.LoaderArgs) {
           error instanceof Error ? error.message : "Failed to load analysis",
       };
     });
-  const apiKeysPromise = (async (): Promise<KeyInfo[]> => {
-    if (!isPostgresAvailable()) {
-      return [];
-    }
+  const apiKeysPromise = (async (): Promise<InferenceApiKeyOption[]> => {
     try {
-      const postgres = await getPostgresClient();
-      return await postgres.listApiKeys(1000, 0);
+      return await client.listInferenceApiKeys();
     } catch (error) {
       logger.error("Failed to list API keys for analysis filters", error);
       return [];
@@ -144,7 +136,7 @@ function AnalysisFilters({
   apiKeys,
 }: {
   query: AnalysisQueryValues;
-  apiKeys: KeyInfo[];
+  apiKeys: InferenceApiKeyOption[];
 }) {
   const navigate = useNavigate();
   const config = useConfig();

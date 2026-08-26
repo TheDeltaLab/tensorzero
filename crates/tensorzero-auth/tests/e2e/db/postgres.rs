@@ -8,8 +8,8 @@ use sqlx::PgPool;
 use tensorzero_auth::{
     key::{TensorZeroApiKey, TensorZeroAuthError},
     postgres::{
-        AuthResult, KeyInfo, check_key, create_key, disable_key, get_key_info, import_synapse_key,
-        list_key_info, update_key_description,
+        AuthResult, KeyInfo, check_key, check_synapse_key, create_key, disable_key, get_key_info,
+        import_synapse_key, import_synapse_key_or_plaintext, list_key_info, update_key_description,
     },
 };
 
@@ -482,6 +482,60 @@ async fn test_list_and_update_imported_synapse_keys(pool: PgPool) {
     assert!(
         disabled.disabled_at.is_some(),
         "imported Synapse key should have disabled_at set"
+    );
+}
+
+#[sqlx::test]
+async fn test_import_synapse_plaintext_uses_tag_public_id(pool: PgPool) {
+    let plaintext = format!("sk-syn-v1-{}", "c".repeat(48));
+    let tagged_id = TensorZeroApiKey::from_synapse_plaintext(&plaintext)
+        .get_public_id()
+        .to_string();
+    let imported =
+        import_synapse_key_or_plaintext("my_org", "my_workspace", Some("plain"), &plaintext, &pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        imported, tagged_id,
+        "plaintext import should use the same public_id as inference tags"
+    );
+}
+
+#[sqlx::test]
+async fn test_check_synapse_key_aligns_public_id_to_plaintext_tag(pool: PgPool) {
+    let plaintext = format!("sk-syn-v1-{}", "b".repeat(48));
+    let tagged_id = TensorZeroApiKey::from_synapse_plaintext(&plaintext)
+        .get_public_id()
+        .to_string();
+    let bcrypt_hash = bcrypt::hash(&plaintext, 10).unwrap();
+    let imported_id = import_synapse_key(
+        "my_org",
+        "my_workspace",
+        Some("imported-bcrypt"),
+        &bcrypt_hash,
+        &pool,
+    )
+    .await
+    .unwrap();
+    assert_ne!(
+        imported_id, tagged_id,
+        "bcrypt-derived public_id should not match the inference tag public_id"
+    );
+
+    let AuthResult::Success(info) = check_synapse_key(&plaintext, &pool).await.unwrap() else {
+        panic!("Synapse key should authenticate");
+    };
+    assert_eq!(
+        info.public_id, tagged_id,
+        "successful auth should rewrite public_id to the inference tag id"
+    );
+    assert!(
+        get_key_info(&tagged_id, &pool).await.unwrap().is_some(),
+        "aligned public_id should be fetchable"
+    );
+    assert!(
+        get_key_info(&imported_id, &pool).await.unwrap().is_none(),
+        "old bcrypt-derived public_id should no longer exist"
     );
 }
 

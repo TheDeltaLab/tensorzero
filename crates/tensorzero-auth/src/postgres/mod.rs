@@ -180,7 +180,34 @@ struct SynapseKeyRow {
     bcrypt_hash: String,
 }
 
+async fn insert_synapse_api_key(
+    organization: &str,
+    workspace: &str,
+    description: Option<&str>,
+    public_id: &str,
+    bcrypt_hash: &str,
+    pool: &PgPool,
+) -> Result<(), TensorZeroAuthError> {
+    sqlx::query(
+        "INSERT INTO tensorzero_auth_synapse_api_key \
+         (organization, workspace, description, public_id, bcrypt_hash) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(organization)
+    .bind(workspace)
+    .bind(description)
+    .bind(public_id)
+    .bind(bcrypt_hash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Import a precomputed Synapse bcrypt hash (cost 10). Does not re-hash.
+///
+/// The stored `public_id` is derived from the bcrypt string. On first successful
+/// authentication, [`align_synapse_key_public_id`] rewrites it to the plaintext
+/// tag id used on inferences.
 pub async fn import_synapse_key(
     organization: &str,
     workspace: &str,
@@ -190,17 +217,14 @@ pub async fn import_synapse_key(
 ) -> Result<String, TensorZeroAuthError> {
     let digest = hex::encode(Sha256::digest(bcrypt_hash.as_bytes()));
     let public_id = format!("syn{}", &digest[..9]);
-    sqlx::query(
-        "INSERT INTO tensorzero_auth_synapse_api_key \
-         (organization, workspace, description, public_id, bcrypt_hash) \
-         VALUES ($1, $2, $3, $4, $5)",
+    insert_synapse_api_key(
+        organization,
+        workspace,
+        description,
+        &public_id,
+        bcrypt_hash,
+        pool,
     )
-    .bind(organization)
-    .bind(workspace)
-    .bind(description)
-    .bind(&public_id)
-    .bind(bcrypt_hash)
-    .execute(pool)
     .await?;
     Ok(public_id)
 }
@@ -215,21 +239,67 @@ pub async fn import_synapse_key_or_plaintext(
     hash_or_key: &str,
     pool: &PgPool,
 ) -> Result<String, TensorZeroAuthError> {
-    let bcrypt_hash = if hash_or_key.starts_with("$2") {
-        hash_or_key.to_string()
-    } else if TensorZeroApiKey::is_synapse_key(hash_or_key) {
-        bcrypt::hash(hash_or_key, SYNAPSE_BCRYPT_COST).map_err(|e| {
-            TensorZeroAuthError::Middleware {
-                message: format!("Failed to bcrypt Synapse key: {e}"),
-                key_info: None,
-            }
-        })?
-    } else {
+    if hash_or_key.starts_with("$2") {
+        return import_synapse_key(organization, workspace, description, hash_or_key, pool).await;
+    }
+    if !TensorZeroApiKey::is_synapse_key(hash_or_key) {
         return Err(TensorZeroAuthError::InvalidKeyFormat(
             "expected a bcrypt hash or a plaintext sk-syn-v1- key",
         ));
-    };
-    import_synapse_key(organization, workspace, description, &bcrypt_hash, pool).await
+    }
+    let public_id = TensorZeroApiKey::from_synapse_plaintext(hash_or_key)
+        .get_public_id()
+        .to_string();
+    let bcrypt_hash = bcrypt::hash(hash_or_key, SYNAPSE_BCRYPT_COST).map_err(|e| {
+        TensorZeroAuthError::Middleware {
+            message: format!("Failed to bcrypt Synapse key: {e}"),
+            key_info: None,
+        }
+    })?;
+    insert_synapse_api_key(
+        organization,
+        workspace,
+        description,
+        &public_id,
+        &bcrypt_hash,
+        pool,
+    )
+    .await?;
+    Ok(public_id)
+}
+
+/// Rewrite an imported Synapse `public_id` so it matches the id stamped on
+/// inference tags (`syn` + first 9 hex chars of SHA-256(plaintext)).
+///
+/// Older imports hashed the bcrypt string instead, so the API-keys dropdown
+/// value never matched `tensorzero::api_key_public_id`.
+pub async fn align_synapse_key_public_id(
+    tagged_public_id: &str,
+    mut key: KeyInfo,
+    pool: &PgPool,
+) -> Result<KeyInfo, TensorZeroAuthError> {
+    key.public_id = key.public_id.trim().to_string();
+    if key.public_id == tagged_public_id {
+        return Ok(key);
+    }
+    let stored_public_id = key.public_id.clone();
+    let result = sqlx::query(
+        "UPDATE tensorzero_auth_synapse_api_key \
+         SET public_id = $1, updated_at = CURRENT_TIMESTAMP \
+         WHERE btrim(public_id::text) = $2 \
+           AND NOT EXISTS ( \
+             SELECT 1 FROM tensorzero_auth_synapse_api_key other \
+             WHERE btrim(other.public_id::text) = $1 \
+           )",
+    )
+    .bind(tagged_public_id)
+    .bind(&stored_public_id)
+    .execute(pool)
+    .await?;
+    if result.rows_affected() > 0 {
+        key.public_id = tagged_public_id.to_string();
+    }
+    Ok(key)
 }
 
 /// Scan imported Synapse bcrypt hashes. Matches Synapse's compare-all-keys lookup.
@@ -237,8 +307,11 @@ pub async fn check_synapse_key(
     plaintext: &str,
     pool: &PgPool,
 ) -> Result<AuthResult, TensorZeroAuthError> {
+    let tagged_public_id = TensorZeroApiKey::from_synapse_plaintext(plaintext)
+        .get_public_id()
+        .to_string();
     let rows: Vec<SynapseKeyRow> = sqlx::query_as(
-        "SELECT public_id, organization, workspace, description, created_at, disabled_at, expires_at, bcrypt_hash \
+        "SELECT btrim(public_id::text) AS public_id, organization, workspace, description, created_at, disabled_at, expires_at, bcrypt_hash \
          FROM tensorzero_auth_synapse_api_key",
     )
     .fetch_all(pool)
@@ -248,15 +321,20 @@ pub async fn check_synapse_key(
         if !ok {
             continue;
         }
-        let key = KeyInfo {
-            public_id: row.public_id,
-            organization: row.organization,
-            workspace: row.workspace,
-            description: row.description,
-            created_at: row.created_at,
-            disabled_at: row.disabled_at,
-            expires_at: row.expires_at,
-        };
+        let key = align_synapse_key_public_id(
+            &tagged_public_id,
+            KeyInfo {
+                public_id: row.public_id,
+                organization: row.organization,
+                workspace: row.workspace,
+                description: row.description,
+                created_at: row.created_at,
+                disabled_at: row.disabled_at,
+                expires_at: row.expires_at,
+            },
+            pool,
+        )
+        .await?;
         if let Some(disabled_at) = key.disabled_at {
             return Ok(AuthResult::Disabled(disabled_at, key));
         }

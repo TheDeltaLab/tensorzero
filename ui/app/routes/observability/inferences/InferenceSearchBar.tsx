@@ -22,9 +22,9 @@ import {
   parseInferenceQuery,
   providersFromConfig,
   toDatetimeLocalValue,
+  type ApiKeySelectOption,
   type InferenceQueryValues,
 } from "./inferenceQuery";
-import type { KeyInfo } from "~/types/tensorzero";
 
 const FILTER_PARAM_KEYS = [
   "request_id",
@@ -46,7 +46,7 @@ const FILTER_PARAM_KEYS = [
 export default function InferenceSearchBar({
   apiKeys = [],
 }: {
-  apiKeys?: KeyInfo[];
+  apiKeys?: ApiKeySelectOption[];
 }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();

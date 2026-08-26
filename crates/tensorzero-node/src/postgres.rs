@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use secrecy::ExposeSecret;
 use tensorzero_auth::{
     constants::{DEFAULT_ORGANIZATION, DEFAULT_WORKSPACE},
@@ -76,7 +77,36 @@ impl PostgresClient {
             .await
             .map_err(|e| napi::Error::from_reason(format!("Failed to list API keys: {e}")))?;
 
-        serde_json::to_string(&keys).map_err(|e| {
+        let public_ids: Vec<String> = keys.iter().map(|key| key.public_id.clone()).collect();
+        let last_used =
+            tensorzero_core::db::postgres::api_key_usage::last_used_at_by_api_key_public_ids(
+                pool,
+                &public_ids,
+            )
+            .await
+            .unwrap_or_default();
+
+        let mut encoded = serde_json::to_value(&keys).map_err(|e| {
+            napi::Error::from_reason(format!("Failed to serialize API keys list: {e}"))
+        })?;
+        if let Some(arr) = encoded.as_array_mut() {
+            for item in arr {
+                let Some(obj) = item.as_object_mut() else {
+                    continue;
+                };
+                let Some(public_id) = obj.get("public_id").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                if let Some(ts) = last_used.get(public_id) {
+                    obj.insert(
+                        "last_used_at".to_string(),
+                        serde_json::Value::String(ts.clone()),
+                    );
+                }
+            }
+        }
+
+        serde_json::to_string(&encoded).map_err(|e| {
             napi::Error::from_reason(format!("Failed to serialize API keys list: {e}"))
         })
     }

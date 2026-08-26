@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /**
  * URL helper functions that ensure proper encoding of identifiers.
  * Always use these instead of string interpolation to handle names with special characters.
@@ -32,6 +33,16 @@ export function toVariantUrl(
 
 export function toInferenceUrl(inferenceId: string): string {
   return `/observability/inferences/${encodeURIComponent(inferenceId)}`;
+}
+
+export function toInferencesListUrl(params?: { api_key?: string }): string {
+  const search = new URLSearchParams();
+  const apiKey = params?.api_key?.trim();
+  if (apiKey) {
+    search.set("api_key", apiKey);
+  }
+  const qs = search.toString();
+  return qs ? `/observability/inferences?${qs}` : "/observability/inferences";
 }
 
 export function toInferenceApiUrl(inferenceId: string): string {

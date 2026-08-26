@@ -44,7 +44,7 @@ export const DEFAULT_INFERENCE_QUERY: InferenceQueryValues = {
 
 export type ApiKeySelectOption = {
   public_id: string;
-  description?: string;
+  description?: string | null;
   disabled?: boolean;
 };
 

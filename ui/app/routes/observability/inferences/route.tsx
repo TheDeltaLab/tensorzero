@@ -12,16 +12,9 @@ import {
   PageLayout,
   SectionLayout,
 } from "~/components/layout/PageLayout";
-import type {
-  InferenceFilter,
-  KeyInfo,
-  StoredInference,
-} from "~/types/tensorzero";
+import type { InferenceFilter, StoredInference } from "~/types/tensorzero";
+import type { InferenceApiKeyOption } from "~/utils/tensorzero";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
-import {
-  getPostgresClient,
-  isPostgresAvailable,
-} from "~/utils/postgres.server";
 import { logger } from "~/utils/logger";
 import {
   buildDimensionalFilter,
@@ -68,13 +61,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     includeRequestIdTags: false,
   });
   const sharedFilters = combineFilters(barFilters, advancedFilters);
-  const apiKeysPromise = (async (): Promise<KeyInfo[]> => {
-    if (!isPostgresAvailable()) {
-      return [];
-    }
+  const apiKeysPromise = (async (): Promise<InferenceApiKeyOption[]> => {
     try {
-      const postgres = await getPostgresClient();
-      return await postgres.listApiKeys(1000, 0);
+      return await getTensorZeroClient().listInferenceApiKeys();
     } catch (error) {
       logger.error("Failed to list API keys for inference filters", error);
       return [];

@@ -1,8 +1,10 @@
+// Modified by Delta-AI under Apache 2.0
 import { describe, it, expect } from "vitest";
 import {
   toFunctionUrl,
   toVariantUrl,
   toInferenceUrl,
+  toInferencesListUrl,
   toEpisodeUrl,
   toDatasetUrl,
   toDatapointUrl,
@@ -65,6 +67,15 @@ describe("URL helper functions", () => {
       expect(toInferenceUrl("123")).toBe("/observability/inferences/123");
       expect(toInferenceUrl("id/with/slashes")).toBe(
         "/observability/inferences/id%2Fwith%2Fslashes",
+      );
+    });
+  });
+
+  describe("toInferencesListUrl", () => {
+    it("should add api_key when provided", () => {
+      expect(toInferencesListUrl()).toBe("/observability/inferences");
+      expect(toInferencesListUrl({ api_key: "synabcdefghi" })).toBe(
+        "/observability/inferences?api_key=synabcdefghi",
       );
     });
   });
