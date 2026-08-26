@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Cache token field mappings for all supported providers.
 //!
 //! This module is the single source of truth for how each provider reports
@@ -53,7 +54,11 @@
 //!
 //! | Provider | `cache_read` source | `cache_write` source | Mechanism |
 //! |----------|---------------------|----------------------|-----------|
-//! | **DeepSeek** | `prompt_cache_hit_tokens` | `prompt_cache_miss_tokens` | Automatic |
+//! | **DeepSeek** | `prompt_cache_hit_tokens` | — | Automatic |
+//!
+//! DeepSeek miss tokens (`prompt_cache_miss_tokens`) are uncached input
+//! (`hit + miss = prompt_tokens`) billed at the input rate. They are not a
+//! cache-write surcharge like Anthropic `cache_creation_input_tokens`.
 //!
 //! DeepSeek uses top-level usage fields instead of `prompt_tokens_details`.
 //! Parsed via [`DeepSeekUsage`](super::deepseek::DeepSeekUsage).

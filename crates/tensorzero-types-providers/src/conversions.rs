@@ -72,11 +72,13 @@ impl From<XAIUsage> for Usage {
 
 impl From<DeepSeekUsage> for Usage {
     fn from(usage: DeepSeekUsage) -> Self {
+        // DeepSeek miss tokens are uncached input (hit + miss = prompt_tokens),
+        // billed at the input rate. They are not Anthropic-style cache writes.
         Usage {
             input_tokens: usage.prompt_tokens,
             output_tokens: usage.completion_tokens,
             provider_cache_read_input_tokens: usage.prompt_cache_hit_tokens,
-            provider_cache_write_input_tokens: usage.prompt_cache_miss_tokens,
+            provider_cache_write_input_tokens: None,
             cost: None,
             currency: None,
         }
@@ -86,6 +88,7 @@ impl From<DeepSeekUsage> for Usage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deepseek::DeepSeekUsage;
     use crate::openai::OpenAIPromptTokensDetails;
     use crate::xai::XAICompletionTokensDetails;
 
@@ -191,5 +194,23 @@ mod tests {
         assert_eq!(usage.input_tokens, Some(5000));
         assert_eq!(usage.provider_cache_read_input_tokens, Some(4500));
         assert_eq!(usage.provider_cache_write_input_tokens, None);
+    }
+
+    #[test]
+    fn test_usage_from_deepseek_miss_is_not_cache_write() {
+        let deepseek_usage = DeepSeekUsage {
+            prompt_tokens: Some(177_624),
+            completion_tokens: Some(325),
+            prompt_cache_hit_tokens: Some(7_424),
+            prompt_cache_miss_tokens: Some(170_200),
+        };
+        let usage: Usage = deepseek_usage.into();
+        assert_eq!(usage.input_tokens, Some(177_624));
+        assert_eq!(usage.output_tokens, Some(325));
+        assert_eq!(usage.provider_cache_read_input_tokens, Some(7_424));
+        assert_eq!(
+            usage.provider_cache_write_input_tokens, None,
+            "DeepSeek prompt_cache_miss_tokens is uncached input, not a cache write",
+        );
     }
 }
