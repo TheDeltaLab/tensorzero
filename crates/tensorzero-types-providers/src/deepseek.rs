@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Serde types for DeepSeek API
 //!
 //! These types handle DeepSeek-specific request/response structures, including
@@ -60,7 +61,8 @@ pub struct DeepSeekUsage {
     pub completion_tokens: Option<u32>,
     /// Tokens served from DeepSeek's automatic cache.
     pub prompt_cache_hit_tokens: Option<u32>,
-    /// Tokens not in cache (written for future requests).
+    /// Tokens not in cache. Together with `prompt_cache_hit_tokens` this equals
+    /// `prompt_tokens`. Billed at the standard input rate, not as a cache write.
     pub prompt_cache_miss_tokens: Option<u32>,
 }
 

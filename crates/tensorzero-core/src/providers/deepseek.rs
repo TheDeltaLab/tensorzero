@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use reqwest_sse_stream::Event;
@@ -1084,9 +1085,8 @@ mod tests {
             "DeepSeek prompt_cache_hit_tokens should map to provider_cache_read_input_tokens"
         );
         assert_eq!(
-            inference_response.usage.provider_cache_write_input_tokens,
-            Some(5),
-            "DeepSeek prompt_cache_miss_tokens should map to provider_cache_write_input_tokens"
+            inference_response.usage.provider_cache_write_input_tokens, None,
+            "DeepSeek prompt_cache_miss_tokens is uncached input, not a cache write"
         );
         assert_eq!(
             inference_response.provider_latency,
@@ -1501,6 +1501,6 @@ mod tests {
         expect_that!(usage.input_tokens, eq(Some(100)));
         expect_that!(usage.output_tokens, eq(Some(50)));
         expect_that!(usage.provider_cache_read_input_tokens, eq(Some(80)));
-        expect_that!(usage.provider_cache_write_input_tokens, eq(Some(20)));
+        expect_that!(usage.provider_cache_write_input_tokens, eq(None));
     }
 }
