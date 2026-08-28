@@ -113,27 +113,25 @@ pub fn convert_file_to_base64(file: OpenAICompatibleFile) -> Result<File, Error>
     Ok(File::Base64(base64_file))
 }
 
-/// Converts OpenAI-compatible input audio to TensorZero's Base64File.
+/// Converts OpenAI-compatible input audio to TensorZero's File type.
 ///
-/// This function:
-/// 1. Decodes the base64 audio data
-/// 2. Detects the MIME type using magic bytes (via the `infer` crate)
-/// 3. Validates that the detected type is actually audio
-/// 4. Logs a warning if the detected type doesn't match the format field
-/// 5. Creates a Base64File with the inferred MIME type
+/// Trusts the client `format` field (Synapse passthrough). Validates that
+/// `data` is base64 (or an HTTP URL). Does not sniff magic bytes — truncated
+/// or nonstandard payloads are forwarded to the provider.
 pub fn convert_input_audio_to_file(input_audio: OpenAICompatibleInputAudio) -> Result<File, Error> {
+    let mime_type = mime_from_audio_format(&input_audio.format).ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+            message: format!(
+                "Unknown audio format `{}` for input_audio",
+                input_audio.format
+            ),
+        })
+    })?;
+
     if looks_like_http_url(&input_audio.data) {
         let url = Url::parse(&input_audio.data).map_err(|e| {
             Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
                 message: format!("Invalid audio URL in input_audio.data: {e}"),
-            })
-        })?;
-        let mime_type = mime_from_audio_format(&input_audio.format).ok_or_else(|| {
-            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-                message: format!(
-                    "Unknown audio format `{}` for input_audio URL",
-                    input_audio.format
-                ),
             })
         })?;
         return Ok(File::Url(UrlFile {
@@ -144,8 +142,7 @@ pub fn convert_input_audio_to_file(input_audio: OpenAICompatibleInputAudio) -> R
         }));
     }
 
-    // Decode base64 to bytes for MIME type detection
-    let bytes = base64::Engine::decode(
+    base64::Engine::decode(
         &base64::engine::general_purpose::STANDARD,
         &input_audio.data,
     )
@@ -155,58 +152,6 @@ pub fn convert_input_audio_to_file(input_audio: OpenAICompatibleInputAudio) -> R
         })
     })?;
 
-    // Detect MIME type from file content using infer crate
-    let mime_type = if let Some(inferred_type) = infer::get(&bytes) {
-        let inferred_mime = inferred_type
-            .mime_type()
-            .parse::<MediaType>()
-            .map_err(|e| {
-                Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-                    message: format!("Inferred mime type is not valid: {e}"),
-                })
-            })?;
-
-        // Validate that the detected file is actually audio
-        if inferred_mime.type_() != mime::AUDIO {
-            return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-                message: format!(
-                    "Expected audio file for input_audio, but detected {} (type: {})",
-                    inferred_mime,
-                    inferred_mime.type_()
-                ),
-            }));
-        }
-
-        // Log warning if detected MIME type differs from format field
-        // Map common format strings to expected MIME types for comparison
-        let expected_mime = match input_audio.format.as_str() {
-            "wav" => Some("audio/x-wav"),
-            "mp3" => Some("audio/mpeg"),
-            _ => None,
-        };
-
-        if let Some(expected) = expected_mime
-            && inferred_mime.as_ref() != expected
-        {
-            tracing::warn!(
-                "Inferred audio MIME type `{}` differs from format field `{}` (expected `{}`). Using inferred type.",
-                inferred_mime,
-                input_audio.format,
-                expected
-            );
-        }
-
-        inferred_mime
-    } else {
-        return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-            message: format!(
-                "Could not detect audio format from file content. Format field was: {}",
-                input_audio.format
-            ),
-        }));
-    };
-
-    // Create Base64File with the inferred MIME type and original base64 data
     let base64_file = Base64File::new(None, Some(mime_type), input_audio.data, None, None)?;
     Ok(File::Base64(base64_file))
 }
@@ -231,6 +176,8 @@ fn mime_from_audio_format(format: &str) -> Option<MediaType> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::gtest;
+    use googletest::prelude::{eq, expect_that};
     use serde_json::json;
 
     use crate::endpoints::openai_compatible::types::chat_completions::{
@@ -238,7 +185,6 @@ mod tests {
         convert_openai_message_content, openai_messages_to_input,
     };
     use crate::inference::types::{Input, InputMessageContent, Role};
-    use crate::utils::testing::capture_logs;
 
     #[test]
     fn test_input_audio_content_block() {
@@ -260,10 +206,9 @@ mod tests {
 
         match &result[0] {
             InputMessageContent::File(File::Base64(base64_file)) => {
-                // infer crate returns audio/x-wav for WAV files
                 assert_eq!(
                     base64_file.mime_type,
-                    "audio/x-wav".parse::<MediaType>().unwrap()
+                    "audio/wav".parse::<MediaType>().unwrap()
                 );
                 assert_eq!(base64_file.data(), wav_base64);
             }
@@ -315,7 +260,7 @@ mod tests {
             _ => panic!("Expected InvalidOpenAICompatibleRequest error"),
         }
 
-        // Test non-audio file (image)
+        // Non-audio magic bytes still pass: the gateway trusts `format`.
         let jpeg_bytes = [0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
         let jpeg_base64 =
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, jpeg_bytes);
@@ -328,117 +273,65 @@ mod tests {
             }
         }]);
 
-        let error = convert_openai_message_content("user".to_string(), content).unwrap_err();
-        let details = error.get_details();
-        match details {
-            ErrorDetails::InvalidOpenAICompatibleRequest { message } => {
-                assert!(message.contains("Expected audio file"));
+        let result = convert_openai_message_content("user".to_string(), content)
+            .expect("gateway should not sniff input_audio magic bytes");
+        match &result[0] {
+            InputMessageContent::File(File::Base64(base64_file)) => {
+                assert_eq!(
+                    base64_file.mime_type,
+                    "audio/wav".parse::<MediaType>().unwrap()
+                );
             }
-            _ => panic!("Expected InvalidOpenAICompatibleRequest error"),
+            other => panic!("Expected File(Base64(...)), got {other:?}"),
         }
+    }
 
-        // Test undetectable format
-        let unknown_bytes = [0x00, 0x01, 0x02, 0x03];
-        let unknown_base64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, unknown_bytes);
+    #[gtest]
+    fn input_audio_trusts_format_when_bytes_are_not_sniffable() {
+        let unknown_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [0x00, 0x01, 0x02, 0x03],
+        );
 
         let content = json!([{
             "type": "input_audio",
             "input_audio": {
                 "data": unknown_base64,
-                "format": "wav"
+                "format": "mp3"
             }
         }]);
 
-        let error = convert_openai_message_content("user".to_string(), content).unwrap_err();
-        let details = error.get_details();
-        match details {
-            ErrorDetails::InvalidOpenAICompatibleRequest { message } => {
-                assert!(message.contains("Could not detect audio format"));
-            }
-            _ => panic!("Expected InvalidOpenAICompatibleRequest error"),
-        }
+        let result = convert_openai_message_content("user".to_string(), content)
+            .expect("truncated or nonstandard audio should be forwarded");
+        expect_that!(result.len(), eq(1));
+        let InputMessageContent::File(File::Base64(base64_file)) = &result[0] else {
+            panic!("Expected File(Base64(...))");
+        };
+        expect_that!(base64_file.mime_type.as_ref(), eq("audio/mpeg"));
+        expect_that!(base64_file.data(), eq(unknown_base64.as_str()));
     }
 
-    #[test]
-    fn test_input_audio_format_mismatch_warning() {
-        let logs_contain = capture_logs();
-
-        // Test WAV file with wrong format field - should warn
-        let wav_bytes = b"RIFF\x00\x00\x00\x00WAVEfmt ";
-        let wav_base64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, wav_bytes);
+    #[gtest]
+    fn input_audio_uses_declared_format_even_if_magic_bytes_differ() {
+        let wav_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            b"RIFF\x00\x00\x00\x00WAVEfmt ",
+        );
 
         let content = json!([{
             "type": "input_audio",
             "input_audio": {
                 "data": wav_base64,
-                "format": "mp3"  // Wrong format!
+                "format": "mp3"
             }
         }]);
 
-        let result = convert_openai_message_content("user".to_string(), content).unwrap();
-        assert_eq!(result.len(), 1);
-
-        // Should log a warning about mismatch
-        assert!(
-            logs_contain("Inferred audio MIME type `audio/x-wav` differs from format field `mp3`"),
-            "Expected warning about MIME type mismatch"
-        );
-    }
-
-    #[test]
-    fn test_input_audio_wav_format_correct_no_warning() {
-        let logs_contain = capture_logs();
-
-        // Test WAV file with correct format field - should NOT warn
-        let wav_bytes = b"RIFF\x00\x00\x00\x00WAVEfmt ";
-        let wav_base64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, wav_bytes);
-
-        let content = json!([{
-            "type": "input_audio",
-            "input_audio": {
-                "data": wav_base64,
-                "format": "wav"  // Correct format
-            }
-        }]);
-
-        let result = convert_openai_message_content("user".to_string(), content).unwrap();
-        assert_eq!(result.len(), 1);
-
-        // Should NOT log a warning
-        assert!(
-            !logs_contain("Inferred audio MIME type"),
-            "Should not warn when WAV format matches detected type"
-        );
-    }
-
-    #[test]
-    fn test_input_audio_mp3_format_correct_no_warning() {
-        let logs_contain = capture_logs();
-
-        // Test MP3 file with correct format field - should NOT warn
-        let mp3_bytes = [0xFF, 0xFB, 0x90, 0x44, 0x00, 0x00];
-        let mp3_base64 =
-            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, mp3_bytes);
-
-        let content = json!([{
-            "type": "input_audio",
-            "input_audio": {
-                "data": mp3_base64,
-                "format": "mp3"  // Correct format
-            }
-        }]);
-
-        let result = convert_openai_message_content("user".to_string(), content).unwrap();
-        assert_eq!(result.len(), 1);
-
-        // Should NOT log a warning
-        assert!(
-            !logs_contain("Inferred audio MIME type"),
-            "Should not warn when MP3 format matches detected type"
-        );
+        let result = convert_openai_message_content("user".to_string(), content)
+            .expect("declared format should win over magic bytes");
+        let InputMessageContent::File(File::Base64(base64_file)) = &result[0] else {
+            panic!("Expected File(Base64(...))");
+        };
+        expect_that!(base64_file.mime_type.as_ref(), eq("audio/mpeg"));
     }
 
     #[test]
