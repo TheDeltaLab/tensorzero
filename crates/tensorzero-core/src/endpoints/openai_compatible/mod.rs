@@ -7,6 +7,8 @@
 //! (Synapse / OpenAI SDK default).
 
 pub mod anthropic_messages;
+pub mod async_inference;
+pub mod async_inference_types;
 pub mod chat_completions;
 pub mod completions;
 pub mod embeddings;
@@ -21,6 +23,10 @@ pub mod types;
 pub use error::{OpenAICompatibleError, OpenAIStructuredJson};
 
 use anthropic_messages::messages_handler;
+use async_inference::{
+    chat_completions_async_handler, get_async_task_handler, messages_async_handler,
+    responses_async_handler, stream_async_task_handler,
+};
 use chat_completions::chat_completions_handler;
 use completions::completions_handler;
 use embeddings::embeddings_handler;
@@ -28,7 +34,7 @@ use rerank::rerank_handler;
 use responses::responses_handler;
 
 use axum::Router;
-use axum::routing::post;
+use axum::routing::{get, post};
 
 use crate::endpoints::RouteHandlers;
 #[expect(
@@ -64,6 +70,33 @@ pub fn build_openai_compatible_routes() -> RouteHandlers {
             ("/openai/v1/messages", post(messages_handler)),
             ("/v1/messages", post(messages_handler)),
             ("/anthropic/v1/messages", post(messages_handler)),
+            // Async inference
+            (
+                "/openai/v1/chat/completions/async",
+                post(chat_completions_async_handler),
+            ),
+            (
+                "/v1/chat/completions/async",
+                post(chat_completions_async_handler),
+            ),
+            ("/openai/v1/responses/async", post(responses_async_handler)),
+            ("/v1/responses/async", post(responses_async_handler)),
+            ("/openai/v1/messages/async", post(messages_async_handler)),
+            ("/v1/messages/async", post(messages_async_handler)),
+            ("/anthropic/v1/messages/async", post(messages_async_handler)),
+            (
+                "/openai/v1/async_tasks/{task_id}",
+                get(get_async_task_handler),
+            ),
+            ("/v1/async_tasks/{task_id}", get(get_async_task_handler)),
+            (
+                "/openai/v1/async_tasks/{task_id}/stream",
+                get(stream_async_task_handler),
+            ),
+            (
+                "/v1/async_tasks/{task_id}/stream",
+                get(stream_async_task_handler),
+            ),
         ],
     }
 }
@@ -113,6 +146,17 @@ mod tests {
             "/openai/v1/messages",
             "/v1/messages",
             "/anthropic/v1/messages",
+            "/openai/v1/chat/completions/async",
+            "/v1/chat/completions/async",
+            "/openai/v1/responses/async",
+            "/v1/responses/async",
+            "/openai/v1/messages/async",
+            "/v1/messages/async",
+            "/anthropic/v1/messages/async",
+            "/openai/v1/async_tasks/{task_id}",
+            "/v1/async_tasks/{task_id}",
+            "/openai/v1/async_tasks/{task_id}/stream",
+            "/v1/async_tasks/{task_id}/stream",
         ] {
             assert!(paths.contains(&path), "missing route {path}");
         }

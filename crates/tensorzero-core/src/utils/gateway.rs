@@ -247,6 +247,9 @@ pub struct AppStateData {
     pub autopilot_client: Option<Arc<AutopilotClient>>,
     /// Optional durable task spawning client for GEPA workflows
     pub spawn_client: Option<Arc<SpawnClient>>,
+    /// Optional durable task spawning client for the async inference API,
+    /// targeting the `gateway.async_inference.queue_name` queue.
+    pub async_inference_spawn_client: Option<Arc<SpawnClient>>,
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     /// Token pool manager for rate limiting pre-borrowing
@@ -283,6 +286,9 @@ pub struct SwappableAppStateData {
     pub autopilot_client: Option<Arc<AutopilotClient>>,
     /// Optional durable task spawning client for GEPA workflows
     pub spawn_client: Option<Arc<SpawnClient>>,
+    /// Optional durable task spawning client for the async inference API,
+    /// targeting the `gateway.async_inference.queue_name` queue.
+    pub async_inference_spawn_client: Option<Arc<SpawnClient>>,
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     pub shutdown_token: CancellationToken,
@@ -419,6 +425,7 @@ impl SwappableAppStateData {
             config_snapshot_cache: self.config_snapshot_cache.clone(),
             autopilot_client: self.autopilot_client.clone(),
             spawn_client: self.spawn_client.clone(),
+            async_inference_spawn_client: self.async_inference_spawn_client.clone(),
             deployment_id: self.deployment_id.clone(),
             rate_limiting_manager: live_state.rate_limiting_manager.clone(),
             shutdown_token: self.shutdown_token.clone(),
@@ -623,6 +630,7 @@ impl GatewayHandle {
                 config_snapshot_cache: None,
                 autopilot_client: None,
                 spawn_client: None,
+                async_inference_spawn_client: None,
                 deployment_id: None,
                 shutdown_token: cancel_token,
                 config_in_database: false,
@@ -786,6 +794,29 @@ impl GatewayHandle {
             None
         };
 
+        let async_inference_spawn_client = if !config.gateway.async_inference.enabled {
+            None
+        } else if let Some(pool) = postgres_connection_info.get_pool() {
+            match SpawnClient::builder()
+                .pool(pool.clone())
+                .queue_name(&config.gateway.async_inference.queue_name)
+                .build()
+                .await
+            {
+                Ok(client) => Some(Arc::new(client)),
+                Err(e) => {
+                    tracing::warn!("Failed to create async inference `SpawnClient`: {e}");
+                    None
+                }
+            }
+        } else {
+            tracing::warn!(
+                "`gateway.async_inference.enabled` is set but Postgres is not enabled; \
+                 async inference endpoints will return an error"
+            );
+            None
+        };
+
         let autopilot_client = setup_autopilot_client(
             &postgres_connection_info,
             deployment_id.as_ref(),
@@ -830,6 +861,7 @@ impl GatewayHandle {
                 config_snapshot_cache,
                 autopilot_client,
                 spawn_client,
+                async_inference_spawn_client,
                 deployment_id,
                 shutdown_token: cancel_token,
                 config_in_database,
@@ -872,6 +904,7 @@ impl SwappableAppStateData {
             config_snapshot_cache: None,
             autopilot_client: None,
             spawn_client: None,
+            async_inference_spawn_client: None,
             deployment_id: None,
             shutdown_token: CancellationToken::new(),
             config_in_database: self.config_in_database,
@@ -964,6 +997,7 @@ impl AppStateData {
             config_snapshot_cache: None,
             autopilot_client: None,
             spawn_client: None,
+            async_inference_spawn_client: None,
             deployment_id: None,
             rate_limiting_manager,
             shutdown_token,
@@ -1497,6 +1531,7 @@ mod tests {
             metrics: Default::default(),
             cache: Default::default(),
             ui: Default::default(),
+            async_inference: Default::default(),
         };
 
         let config = Config {
@@ -1581,6 +1616,7 @@ mod tests {
             metrics: Default::default(),
             cache: Default::default(),
             ui: Default::default(),
+            async_inference: Default::default(),
         };
 
         let config = Config {
@@ -1626,6 +1662,7 @@ mod tests {
             metrics: Default::default(),
             cache: Default::default(),
             ui: Default::default(),
+            async_inference: Default::default(),
         };
         let config = Config {
             gateway: gateway_config,
@@ -1671,6 +1708,7 @@ mod tests {
             metrics: Default::default(),
             cache: Default::default(),
             ui: Default::default(),
+            async_inference: Default::default(),
         };
         let config = Config {
             gateway: gateway_config,

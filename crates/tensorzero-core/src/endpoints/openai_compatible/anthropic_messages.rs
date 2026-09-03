@@ -10,7 +10,7 @@ use axum::Extension;
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Sse;
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 use mime::MediaType;
@@ -41,6 +41,7 @@ use super::synapse::{
     SynapseRequestContext, apply_compat_to_params, resolve_cache_options,
     resolve_openai_compatible_model, run_with_request_timeout,
 };
+use super::types::streaming::{SerializedSseEvent, value_to_sse_frame};
 use super::{OpenAICompatibleError, OpenAIStructuredJson};
 
 #[derive(Debug, Deserialize)]
@@ -200,8 +201,8 @@ pub(super) async fn handle_anthropic_messages(
     headers: &HeaderMap,
     params: AnthropicMessagesParams,
 ) -> Result<Response, OpenAICompatibleError> {
-    let mut synapse = match SynapseRequestContext::try_from_headers(headers) {
-        Ok(ctx) => ctx,
+    let validated = match validate_anthropic_request(headers, params) {
+        Ok(validated) => validated,
         Err(error) => {
             return Ok(error_response(
                 error,
@@ -210,20 +211,83 @@ pub(super) async fn handle_anthropic_messages(
             ));
         }
     };
-    let mut tz_params = match params_from_anthropic(params, &synapse) {
-        Ok(params) => params,
-        Err(error) => return Ok(error_response(error, false, &synapse)),
+    let response_model = validated.response_model.clone();
+    let stream_aggregate = validated.synapse.stream_aggregate.clone();
+
+    let (output, synapse) = match Box::pin(execute_anthropic(state, api_key_ext, validated)).await {
+        Ok(ok) => ok,
+        Err(rejection) => {
+            return Ok(error_response(rejection.error, false, &rejection.synapse));
+        }
     };
+
+    let mut response = match output {
+        InferenceOutput::NonStreaming(response) => {
+            Json(anthropic_from_inference(response, &response_model)).into_response()
+        }
+        InferenceOutput::Streaming(stream) => {
+            let events = prepare_anthropic_sse(stream, response_model, stream_aggregate)
+                .map(|frame| frame.map(SerializedSseEvent::into_event));
+            Sse::new(events)
+                .keep_alive(axum::response::sse::KeepAlive::new())
+                .into_response()
+        }
+    };
+    synapse.apply_to_response(&mut response);
+    Ok(response)
+}
+
+/// An Anthropic Messages request that passed validation and is ready to
+/// execute via [`execute_anthropic`].
+pub(super) struct AnthropicValidatedRequest {
+    pub tz_params: Params,
+    pub synapse: SynapseRequestContext,
+    pub response_model: String,
+}
+
+/// Anthropic execution failure (the inference itself errored).
+pub(super) struct AnthropicExecutionError {
+    pub error: Error,
+    pub synapse: SynapseRequestContext,
+}
+
+/// Validate an Anthropic Messages body and apply Synapse headers, without
+/// running inference. Shared between the synchronous handler and the async
+/// inference submit endpoint, which validates at submit time so obvious
+/// errors surface synchronously.
+pub(super) fn validate_anthropic_request(
+    headers: &HeaderMap,
+    params: AnthropicMessagesParams,
+) -> Result<AnthropicValidatedRequest, Error> {
+    let mut synapse = SynapseRequestContext::try_from_headers(headers)?;
+    let mut tz_params = params_from_anthropic(params, &synapse)?;
     tz_params.extra_internal_tags = synapse.observability_tags(headers);
-    if let Err(error) = apply_compat_to_params(headers, &mut tz_params) {
-        return Ok(error_response(error, false, &synapse));
-    }
+    apply_compat_to_params(headers, &mut tz_params)?;
     synapse = synapse.with_served_by_from_params(&tz_params);
     let response_model = tz_params
         .model_name
         .clone()
         .unwrap_or_else(|| "unknown".to_string());
+    Ok(AnthropicValidatedRequest {
+        tz_params,
+        synapse,
+        response_model,
+    })
+}
 
+/// Execute a validated Anthropic Messages request against [`inference`],
+/// applying the Synapse per-request timeout and recording routing outcomes
+/// on the Synapse context.
+pub(super) async fn execute_anthropic(
+    state: &AppStateData,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
+    validated: AnthropicValidatedRequest,
+) -> Result<(InferenceOutput, SynapseRequestContext), AnthropicExecutionError> {
+    let AnthropicValidatedRequest {
+        tz_params,
+        mut synapse,
+        ..
+    } = validated;
     let session = RoutingSession::new(synapse.fallback_disabled);
     let inference_result = Box::pin(run_with_request_timeout(
         synapse.request_timeout,
@@ -250,25 +314,10 @@ pub(super) async fn handle_anthropic_messages(
         synapse.fallback_count = outcome.fallback_count;
     }
 
-    let output = match inference_result {
-        Ok(data) => data.output,
-        Err(error) => return Ok(error_response(error, false, &synapse)),
-    };
-
-    let mut response = match output {
-        InferenceOutput::NonStreaming(response) => {
-            Json(anthropic_from_inference(response, &response_model)).into_response()
-        }
-        InferenceOutput::Streaming(stream) => {
-            let events =
-                prepare_anthropic_sse(stream, response_model, synapse.stream_aggregate.clone());
-            Sse::new(events)
-                .keep_alive(axum::response::sse::KeepAlive::new())
-                .into_response()
-        }
-    };
-    synapse.apply_to_response(&mut response);
-    Ok(response)
+    match inference_result {
+        Ok(data) => Ok((data.output, synapse)),
+        Err(error) => Err(AnthropicExecutionError { error, synapse }),
+    }
 }
 
 fn params_from_anthropic(
@@ -577,7 +626,7 @@ pub(super) fn prepare_anthropic_sse(
     mut stream: InferenceStream,
     model: String,
     aggregate: Option<Vec<StreamAggregateRule>>,
-) -> impl futures::Stream<Item = Result<Event, Error>> {
+) -> impl futures::Stream<Item = Result<SerializedSseEvent, Error>> {
     async_stream::stream! {
         let mut started = false;
         let mut open_index: Option<usize> = None;
@@ -594,7 +643,7 @@ pub(super) fn prepare_anthropic_sse(
                 if let Some(agg) = aggregator.as_mut()
                     && let Some((event, value)) = agg.flush_if_due(Instant::now())
                 {
-                    yield Ok(value_to_sse_event(event, value));
+                    yield Ok(value_to_sse_frame(event, value));
                 }
                 continue;
             }
@@ -606,7 +655,7 @@ pub(super) fn prepare_anthropic_sse(
                         if let Some(agg) = aggregator.as_mut()
                             && let Some((event, value)) = agg.flush_if_due(Instant::now())
                         {
-                            yield Ok(value_to_sse_event(event, value));
+                            yield Ok(value_to_sse_frame(event, value));
                         }
                         continue;
                     }
@@ -644,7 +693,10 @@ pub(super) fn prepare_anthropic_sse(
                         }
                     }
                 });
-                yield Ok(Event::default().event("message_start").data(start.to_string()));
+                yield Ok(SerializedSseEvent::new(
+                    Some("message_start".to_string()),
+                    start.to_string(),
+                ));
             }
             for block in chat.content {
                 match block {
@@ -717,7 +769,10 @@ pub(super) fn prepare_anthropic_sse(
                                 "index": index,
                                 "delta": { "type": "input_json_delta", "partial_json": tool.raw_arguments }
                             });
-                            yield Ok(Event::default().event("content_block_delta").data(payload.to_string()));
+                            yield Ok(SerializedSseEvent::new(
+                                Some("content_block_delta".to_string()),
+                                payload.to_string(),
+                            ));
                         }
                     }
                     crate::inference::types::ContentBlockChunk::Unknown(_) => {}
@@ -734,43 +789,48 @@ pub(super) fn prepare_anthropic_sse(
                     "delta": { "stop_reason": stop_reason(Some(finish)) },
                     "usage": { "output_tokens": usage.output_tokens.unwrap_or(0) }
                 });
-                yield Ok(Event::default().event("message_delta").data(delta.to_string()));
-                yield Ok(Event::default().event("message_stop").data(json!({"type":"message_stop"}).to_string()));
+                yield Ok(SerializedSseEvent::new(
+                    Some("message_delta".to_string()),
+                    delta.to_string(),
+                ));
+                yield Ok(SerializedSseEvent::new(
+                    Some("message_stop".to_string()),
+                    json!({"type":"message_stop"}).to_string(),
+                ));
             }
         }
         if let Some(agg) = aggregator.as_mut() {
             for (event, value) in agg.finish() {
-                yield Ok(value_to_sse_event(event, value));
+                yield Ok(value_to_sse_frame(event, value));
             }
         }
         if let Some(index) = open_index.take() {
             yield Ok(emit_stop(index));
-            yield Ok(Event::default().event("message_stop").data(json!({"type":"message_stop"}).to_string()));
+            yield Ok(SerializedSseEvent::new(
+                Some("message_stop".to_string()),
+                json!({"type":"message_stop"}).to_string(),
+            ));
         }
     }
 }
 
-fn emit_start(index: usize, block: Value) -> Event {
+fn emit_start(index: usize, block: Value) -> SerializedSseEvent {
     let payload = json!({"type": "content_block_start", "index": index, "content_block": block});
-    Event::default()
-        .event("content_block_start")
-        .data(payload.to_string())
+    SerializedSseEvent::new(Some("content_block_start".to_string()), payload.to_string())
 }
 
-fn emit_stop(index: usize) -> Event {
+fn emit_stop(index: usize) -> SerializedSseEvent {
     let payload = json!({"type": "content_block_stop", "index": index});
-    Event::default()
-        .event("content_block_stop")
-        .data(payload.to_string())
+    SerializedSseEvent::new(Some("content_block_stop".to_string()), payload.to_string())
 }
 
 fn emit_maybe_aggregate(
     aggregator: &mut Option<StreamAggregator>,
     event_name: Option<&str>,
     payload: Value,
-) -> Vec<Result<Event, Error>> {
+) -> Vec<Result<SerializedSseEvent, Error>> {
     let Some(agg) = aggregator.as_mut() else {
-        return vec![Ok(value_to_sse_event(
+        return vec![Ok(value_to_sse_frame(
             event_name.map(str::to_string),
             payload,
         ))];
@@ -778,16 +838,8 @@ fn emit_maybe_aggregate(
     let data = payload.to_string();
     agg.push(event_name, &data, Instant::now())
         .into_iter()
-        .map(|(event, value)| Ok(value_to_sse_event(event, value)))
+        .map(|(event, value)| Ok(value_to_sse_frame(event, value)))
         .collect()
-}
-
-fn value_to_sse_event(event: Option<String>, value: Value) -> Event {
-    let mut ev = Event::default();
-    if let Some(name) = event {
-        ev = ev.event(name);
-    }
-    ev.data(value.to_string())
 }
 
 #[cfg(test)]

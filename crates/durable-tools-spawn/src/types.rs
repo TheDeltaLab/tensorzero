@@ -1,8 +1,10 @@
+// Modified by Delta-AI under Apache 2.0
 //! Types for task polling.
 
 use std::fmt;
 use std::str::FromStr;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
@@ -64,4 +66,52 @@ pub struct TaskPollResult {
     pub error: Option<JsonValue>,
     /// The task's input params (from the `params` column).
     pub params: Option<JsonValue>,
+}
+
+/// Timing information for a durable task, read from the task table.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TaskTiming {
+    /// When the task was enqueued.
+    pub enqueue_at: DateTime<Utc>,
+    /// When the task first started running (`None` if it has never been claimed).
+    pub first_started_at: Option<DateTime<Utc>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use googletest::prelude::*;
+
+    #[gtest]
+    fn task_status_parses_all_states() {
+        for (raw, expected) in [
+            ("pending", TaskStatus::Pending),
+            ("running", TaskStatus::Running),
+            ("sleeping", TaskStatus::Sleeping),
+            ("completed", TaskStatus::Completed),
+            ("failed", TaskStatus::Failed),
+            ("cancelled", TaskStatus::Cancelled),
+        ] {
+            expect_that!(raw.parse::<TaskStatus>(), ok(eq(&expected)));
+        }
+        expect_that!("unknown".parse::<TaskStatus>(), err(anything()));
+    }
+
+    #[gtest]
+    fn task_status_is_terminal() {
+        for status in [
+            TaskStatus::Pending,
+            TaskStatus::Running,
+            TaskStatus::Sleeping,
+        ] {
+            expect_that!(status.is_terminal(), eq(false));
+        }
+        for status in [
+            TaskStatus::Completed,
+            TaskStatus::Failed,
+            TaskStatus::Cancelled,
+        ] {
+            expect_that!(status.is_terminal(), eq(true));
+        }
+    }
 }

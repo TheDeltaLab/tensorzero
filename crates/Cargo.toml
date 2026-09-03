@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "async-inference",
     "autopilot-client",
     "autopilot-tools",
     "autopilot-worker",

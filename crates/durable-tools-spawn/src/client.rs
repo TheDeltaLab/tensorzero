@@ -1,14 +1,16 @@
+// Modified by Delta-AI under Apache 2.0
 //! Lightweight spawn-only client.
 
+use chrono::{DateTime, Utc};
 use durable::{Durable, DurableBuilder, SpawnOptions, SpawnResult};
 use secrecy::{ExposeSecret, SecretString};
 use serde_json::Value as JsonValue;
-use sqlx::{Executor, PgPool, Postgres};
+use sqlx::{Executor, PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
 use crate::error::SpawnError;
 use crate::params::TaskToolParams;
-use crate::types::{TaskPollResult, TaskStatus};
+use crate::types::{TaskPollResult, TaskStatus, TaskTiming};
 
 /// A lightweight client for spawning durable tasks.
 ///
@@ -146,6 +148,28 @@ impl SpawnClient {
             .map_err(Into::into)
     }
 
+    /// Spawn a task by name with raw JSON parameters, without wrapping them in
+    /// [`TaskToolParams`].
+    ///
+    /// Use this for tasks whose `Params` type is not the tool-call envelope
+    /// (e.g. internal gateway tasks like async inference). The task's `Params`
+    /// type must deserialize from `params` as-is.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if spawning the task fails.
+    pub async fn spawn_task_by_name(
+        &self,
+        task_name: &str,
+        params: JsonValue,
+        options: SpawnOptions,
+    ) -> Result<SpawnResult, SpawnError> {
+        self.durable
+            .spawn_by_name_unchecked(task_name, params, options)
+            .await
+            .map_err(Into::into)
+    }
+
     /// Get the queue name.
     pub fn queue_name(&self) -> &str {
         self.durable.queue_name()
@@ -227,6 +251,93 @@ impl SpawnClient {
             .fetch_optional(self.pool())
             .await?;
         Ok(row.map(|(name,)| name))
+    }
+
+    /// Compute the queue position of a pending/sleeping task: the number of
+    /// currently-claimable runs that would be claimed before this task's
+    /// latest run (claim order is `(available_at, run_id)`).
+    ///
+    /// Returns `Ok(None)` if no task with the given ID exists. Returns
+    /// `Ok(Some(0))` when the task is next in line (or not pending).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any database operation fails.
+    pub async fn get_queue_position(&self, task_id: Uuid) -> Result<Option<i64>, SpawnError> {
+        let queue_name = self.queue_name();
+
+        // Bail out early if the task does not exist at all.
+        // Table names are dynamic (`t_<queue>`), so use `QueryBuilder`:
+        // `.push()` for the trusted queue name, `.push_bind()` for values.
+        let mut exists_query: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT state FROM durable.t_");
+        exists_query.push(queue_name);
+        exists_query.push(" WHERE task_id = ");
+        exists_query.push_bind(task_id);
+        let task_state: Option<(String,)> = exists_query
+            .build_query_as()
+            .fetch_optional(self.pool())
+            .await?;
+        if task_state.is_none() {
+            return Ok(None);
+        }
+
+        let mut query: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT count(*)::BIGINT FROM durable.r_");
+        query.push(queue_name);
+        query.push(" r JOIN durable.t_");
+        query.push(queue_name);
+        query.push(
+            " t ON t.task_id = r.task_id \
+             WHERE r.state IN ('pending', 'sleeping') \
+             AND t.state IN ('pending', 'sleeping', 'running') \
+             AND r.available_at <= durable.current_time() \
+             AND (r.available_at, r.run_id) < (\
+                 SELECT available_at, run_id FROM durable.r_",
+        );
+        query.push(queue_name);
+        query.push(" WHERE task_id = ");
+        query.push_bind(task_id);
+        query.push(" ORDER BY attempt DESC LIMIT 1)");
+
+        let count: i64 = query.build_query_scalar().fetch_one(self.pool()).await?;
+        Ok(Some(count))
+    }
+
+    /// Get the enqueue / first-start timing of a task, for computing
+    /// `started_at` / `elapsed_ms` of running tasks.
+    ///
+    /// Returns `Ok(None)` if no task with the given ID exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any database operation fails.
+    pub async fn get_task_timing(&self, task_id: Uuid) -> Result<Option<TaskTiming>, SpawnError> {
+        let queue_name = self.queue_name();
+        let mut query: QueryBuilder<Postgres> =
+            QueryBuilder::new("SELECT enqueue_at, first_started_at FROM durable.t_");
+        query.push(queue_name);
+        query.push(" WHERE task_id = ");
+        query.push_bind(task_id);
+        let row: Option<(DateTime<Utc>, Option<DateTime<Utc>>)> =
+            query.build_query_as().fetch_optional(self.pool()).await?;
+        Ok(row.map(|(enqueue_at, first_started_at)| TaskTiming {
+            enqueue_at,
+            first_started_at,
+        }))
+    }
+
+    /// Cancel a task by ID. Running tasks will be cancelled at their next
+    /// checkpoint or heartbeat.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
+    pub async fn cancel_task(&self, task_id: Uuid) -> Result<(), SpawnError> {
+        self.durable
+            .cancel_task(task_id, None)
+            .await
+            .map_err(Into::into)
     }
 
     /// Interrupt all durable tasks associated with a session ID.

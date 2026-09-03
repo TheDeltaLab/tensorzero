@@ -2,7 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::gateway::{
-    AuthConfig, DashboardUiConfig, MetricsConfig, UninitializedGatewayConfig,
+    AsyncInferenceConfig, AuthConfig, DashboardUiConfig, MetricsConfig, UninitializedGatewayConfig,
 };
 use crate::config::{ExportConfig, TemplateFilesystemAccess, UninitializedRelayConfig};
 
@@ -44,6 +44,12 @@ pub struct StoredGatewayConfig {
     pub cache: StoredCacheConfig,
     #[serde(default, skip_serializing_if = "DashboardUiConfig::is_empty")]
     pub ui: DashboardUiConfig,
+    #[serde(default, skip_serializing_if = "async_inference_config_is_default")]
+    pub async_inference: AsyncInferenceConfig,
+}
+
+fn async_inference_config_is_default(config: &AsyncInferenceConfig) -> bool {
+    config == &AsyncInferenceConfig::default()
 }
 
 impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
@@ -66,6 +72,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
             metrics,
             cache,
             ui,
+            async_inference,
         } = config;
         Self {
             bind_address,
@@ -87,6 +94,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
             metrics: metrics.unwrap_or_default(),
             cache: cache.unwrap_or_default().into(),
             ui: ui.unwrap_or_default(),
+            async_inference: async_inference.unwrap_or_default(),
         }
     }
 }
@@ -111,6 +119,7 @@ impl From<StoredGatewayConfig> for UninitializedGatewayConfig {
             metrics,
             cache,
             ui,
+            async_inference,
         } = stored;
         Self {
             bind_address,
@@ -132,6 +141,11 @@ impl From<StoredGatewayConfig> for UninitializedGatewayConfig {
             metrics: Some(metrics),
             cache: Some(cache.into()),
             ui: if ui.is_empty() { None } else { Some(ui) },
+            async_inference: if async_inference_config_is_default(&async_inference) {
+                None
+            } else {
+                Some(async_inference)
+            },
         }
     }
 }

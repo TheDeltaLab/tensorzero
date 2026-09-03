@@ -479,6 +479,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-inference"
+version = "2026.6.0"
+dependencies = [
+ "anyhow",
+ "durable",
+ "redis",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tensorzero-core",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2718,7 +2735,9 @@ name = "durable-tools-spawn"
 version = "2026.6.0"
 dependencies = [
  "async-trait",
+ "chrono",
  "durable",
+ "googletest",
  "secrecy",
  "serde",
  "serde_json",
@@ -3273,6 +3292,7 @@ dependencies = [
 name = "gateway"
 version = "2026.6.0"
 dependencies = [
+ "async-inference",
  "async-stream",
  "autopilot-client",
  "autopilot-tools",

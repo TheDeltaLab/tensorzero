@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Lightweight durable task spawning.
 //!
 //! This crate provides minimal functionality for spawning durable tasks
@@ -36,7 +37,7 @@ mod types;
 pub use client::{SpawnClient, SpawnClientBuilder};
 pub use error::{SpawnError, SpawnResult};
 pub use params::TaskToolParams;
-pub use types::{TaskPollResult, TaskStatus};
+pub use types::{TaskPollResult, TaskStatus, TaskTiming};
 
 // Re-export durable types needed for spawning
 pub use durable::{SpawnOptions, SpawnResult as DurableSpawnResult};
