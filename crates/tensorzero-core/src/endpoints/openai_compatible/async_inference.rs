@@ -78,7 +78,9 @@ pub const STREAM_MARKER_DONE: &str = "done";
 pub const STREAM_MARKER_ERROR: &str = "error";
 
 /// How long an XREAD call blocks waiting for new stream entries before the
-/// handler re-checks the task status in Postgres.
+/// handler re-checks the task status in Postgres. In practice the valkey
+/// client's 500ms default response timeout fires first on an idle stream;
+/// the follow loop treats that client-side timeout as an empty read.
 const XREAD_BLOCK_MS: usize = 5000;
 
 /// Upper bound on the number of entries kept in a task's Redis stream.
@@ -511,16 +513,23 @@ fn async_task_event_stream(
 
         while !finished {
             let options = StreamReadOptions::default().block(XREAD_BLOCK_MS);
-            let reply: Option<StreamReadReply> = conn
+            let reply: Option<StreamReadReply> = match conn
                 .xread_options(&[key.as_str()], &[last_id.as_str()], &options)
                 .await
-                .map_err(|e| {
-                    Error::new(ErrorDetails::InternalError {
-                        message: format!(
-                            "Failed to follow async inference event stream for task `{task_id}`: {e}"
-                        ),
-                    })
-                })?;
+            {
+                Ok(reply) => reply,
+                // The shared valkey `ConnectionManager` times commands out
+                // after 500ms by default, below `XREAD_BLOCK_MS`, so an idle
+                // blocking read always ends in a client-side timeout. Treat
+                // that like an empty blocking read: fall through to the task
+                // status re-check below.
+                Err(e) if e.is_timeout() => None,
+                Err(e) => Err(Error::new(ErrorDetails::InternalError {
+                    message: format!(
+                        "Failed to follow async inference event stream for task `{task_id}`: {e}"
+                    ),
+                }))?,
+            };
 
             let Some(reply) = reply else {
                 // Block timed out with no new entries. Re-check the task status:
