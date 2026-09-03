@@ -43,7 +43,7 @@ use crate::endpoints::inference::{
     InferenceResponseChunk, InferenceStream, JsonInferenceResponse, JsonInferenceResponseChunk,
 };
 use crate::error::{Error, ErrorDetails};
-use crate::observability_tags::API_KEY_PUBLIC_ID_TAG;
+use crate::observability_tags::{API_KEY_PUBLIC_ID_TAG, ASYNC_TAG, ASYNC_TASK_ID_TAG};
 use crate::utils::gateway::{AppState, AppStateData};
 
 use super::anthropic_messages::{
@@ -296,6 +296,14 @@ fn insert_api_key_public_id_tag(
         return;
     };
     tags.insert(API_KEY_PUBLIC_ID_TAG.to_string(), public_id.into());
+}
+
+/// Mark the inference as async-executed, stamped with the durable task's UUID.
+/// Inserted after the request body's tags so the worker's values win over any
+/// caller-supplied tags with the same keys.
+fn insert_async_tags(tags: &mut HashMap<String, String>, task_id: Uuid) {
+    tags.insert(ASYNC_TAG.to_string(), "true".to_string());
+    tags.insert(ASYNC_TASK_ID_TAG.to_string(), task_id.to_string());
 }
 
 fn require_spawn_client(state: &AppStateData) -> Result<Arc<SpawnClient>, OpenAICompatibleError> {
@@ -665,6 +673,7 @@ impl std::error::Error for AsyncInferenceError {}
 /// while the final response is the durable task output.
 pub async fn run_async_inference(
     state: &AppStateData,
+    task_id: Uuid,
     params: AsyncInferenceTaskParams,
     event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
@@ -677,6 +686,7 @@ pub async fn run_async_inference(
                 &headers,
                 params.request,
                 OpenAIStyle::Chat,
+                task_id,
                 api_key_public_id,
                 event_tx,
             ))
@@ -688,6 +698,7 @@ pub async fn run_async_inference(
                 &headers,
                 params.request,
                 OpenAIStyle::Responses,
+                task_id,
                 api_key_public_id,
                 event_tx,
             ))
@@ -698,6 +709,7 @@ pub async fn run_async_inference(
                 state,
                 &headers,
                 params.request,
+                task_id,
                 api_key_public_id,
                 event_tx,
             ))
@@ -717,6 +729,7 @@ async fn run_openai_style(
     headers: &HeaderMap,
     request: Value,
     style: OpenAIStyle,
+    task_id: Uuid,
     api_key_public_id: Option<&str>,
     event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
@@ -738,6 +751,7 @@ async fn run_openai_style(
         })?;
     validated.params.include_aggregated_response = true;
     insert_api_key_public_id_tag(&mut validated.params.tags, api_key_public_id);
+    insert_async_tags(&mut validated.params.tags, task_id);
 
     let include_usage = validated.include_usage;
     let include_raw_usage = validated.include_raw_usage;
@@ -814,6 +828,7 @@ async fn run_messages_style(
     state: &AppStateData,
     headers: &HeaderMap,
     request: Value,
+    task_id: Uuid,
     api_key_public_id: Option<&str>,
     event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
@@ -824,6 +839,7 @@ async fn run_messages_style(
         .map_err(|error| AsyncInferenceError::from_error(&error, false))?;
     validated.tz_params.include_aggregated_response = true;
     insert_api_key_public_id_tag(&mut validated.tz_params.tags, api_key_public_id);
+    insert_async_tags(&mut validated.tz_params.tags, task_id);
 
     let response_model = validated.response_model.clone();
     let stream_aggregate = validated.synapse.stream_aggregate.clone();
@@ -1210,5 +1226,94 @@ mod tests {
         let mut tags = HashMap::new();
         insert_api_key_public_id_tag(&mut tags, None);
         expect_that!(tags.contains_key(API_KEY_PUBLIC_ID_TAG), eq(false));
+    }
+
+    #[gtest]
+    fn worker_path_marks_inference_async_with_task_id() {
+        let task_id = Uuid::now_v7();
+        let expected_task_id = task_id.to_string();
+        let mut tags = HashMap::new();
+        insert_async_tags(&mut tags, task_id);
+        expect_that!(tags.get(ASYNC_TAG).map(String::as_str), some(eq("true")));
+        expect_that!(
+            tags.get(ASYNC_TASK_ID_TAG).map(String::as_str),
+            some(eq(expected_task_id.as_str()))
+        );
+    }
+
+    #[gtest]
+    fn openai_style_worker_tags_override_body_tags() {
+        let task_id = Uuid::now_v7();
+        let expected_task_id = task_id.to_string();
+        let body = json!({
+            "model": "openai::gpt-5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tensorzero::tags": {
+                "tensorzero::async": "false",
+                "tensorzero::async_task_id": "caller-supplied",
+                "caller_tag": "kept"
+            }
+        });
+        let params: OpenAICompatibleParams =
+            serde_json::from_value(body).expect("should deserialize");
+        let mut validated = validate_openai_compatible_request(&HeaderMap::new(), params)
+            .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
+
+        // Same stamping sequence as `run_openai_style`, after validation.
+        insert_api_key_public_id_tag(&mut validated.params.tags, None);
+        insert_async_tags(&mut validated.params.tags, task_id);
+
+        expect_that!(
+            validated.params.tags.get(ASYNC_TAG).map(String::as_str),
+            some(eq("true"))
+        );
+        expect_that!(
+            validated
+                .params
+                .tags
+                .get(ASYNC_TASK_ID_TAG)
+                .map(String::as_str),
+            some(eq(expected_task_id.as_str()))
+        );
+        expect_that!(
+            validated.params.tags.get("caller_tag").map(String::as_str),
+            some(eq("kept"))
+        );
+    }
+
+    #[gtest]
+    fn messages_style_worker_tags_mark_task_id() {
+        let task_id = Uuid::now_v7();
+        let expected_task_id = task_id.to_string();
+        let headers = header_map(&[("x-tensorzero-tags", "env=prod")]);
+        let body = json!({
+            "model": "claude-sonnet-4-5",
+            "max_tokens": 16,
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        let params: AnthropicMessagesParams =
+            serde_json::from_value(body).expect("should deserialize");
+        let mut validated = validate_anthropic_request(&headers, params).expect("should validate");
+
+        // Same stamping sequence as `run_messages_style`, after validation.
+        insert_api_key_public_id_tag(&mut validated.tz_params.tags, None);
+        insert_async_tags(&mut validated.tz_params.tags, task_id);
+
+        expect_that!(
+            validated.tz_params.tags.get(ASYNC_TAG).map(String::as_str),
+            some(eq("true"))
+        );
+        expect_that!(
+            validated
+                .tz_params
+                .tags
+                .get(ASYNC_TASK_ID_TAG)
+                .map(String::as_str),
+            some(eq(expected_task_id.as_str()))
+        );
+        expect_that!(
+            validated.tz_params.tags.get("env").map(String::as_str),
+            some(eq("prod"))
+        );
     }
 }
