@@ -10,6 +10,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::sse::Sse;
 use axum::response::{IntoResponse, Response};
+use futures::StreamExt;
 
 use crate::endpoints::inference::{InferenceOutput, InferenceResponse};
 use crate::utils::gateway::{AppState, AppStateData};
@@ -18,7 +19,7 @@ use tensorzero_auth::middleware::RequestApiKeyExtension;
 use super::anthropic_messages::{anthropic_from_inference, prepare_anthropic_sse};
 use super::infer::infer_openai_compatible;
 use super::types::chat_completions::{OpenAICompatibleParams, OpenAICompatibleResponse};
-use super::types::streaming::prepare_serialized_openai_compatible_events;
+use super::types::streaming::{SerializedSseEvent, prepare_serialized_openai_compatible_events};
 use super::{OpenAICompatibleError, OpenAIStructuredJson};
 
 /// A handler for the OpenAI-compatible inference endpoint
@@ -80,7 +81,8 @@ pub(super) async fn handle_chat_completions(
                     stream,
                     inferred.response_model_prefix,
                     inferred.synapse.stream_aggregate.clone(),
-                );
+                )
+                .map(|frame| frame.map(SerializedSseEvent::into_event));
                 Sse::new(events)
                     .keep_alive(axum::response::sse::KeepAlive::new())
                     .into_response()
@@ -93,7 +95,8 @@ pub(super) async fn handle_chat_completions(
                     inferred.include_original_response,
                     inferred.include_raw_response,
                     inferred.synapse.stream_aggregate.clone(),
-                );
+                )
+                .map(|frame| frame.map(SerializedSseEvent::into_event));
                 Sse::new(openai_compatible_stream)
                     .keep_alive(axum::response::sse::KeepAlive::new())
                     .into_response()

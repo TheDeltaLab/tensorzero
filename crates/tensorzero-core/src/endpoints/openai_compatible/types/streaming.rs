@@ -29,6 +29,57 @@ use crate::endpoints::openai_compatible::stream_aggregator::{
 };
 use crate::serde_util::is_none_or_empty;
 
+/// A serialized SSE event in a storage-friendly form: an optional event name
+/// plus the raw `data:` payload string.
+///
+/// The OpenAI-compatible SSE serializers produce these frames (instead of
+/// axum [`Event`]s, which are write-only) so that the async inference worker
+/// can persist each event to a Redis Stream and the stream-attach endpoint
+/// can replay them byte-identically to the sync streaming APIs.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SerializedSseEvent {
+    /// The SSE `event:` field (`None` = unnamed event, the SSE default).
+    pub event: Option<String>,
+    /// The SSE `data:` field.
+    pub data: String,
+}
+
+impl SerializedSseEvent {
+    pub fn new(event: Option<String>, data: String) -> Self {
+        Self { event, data }
+    }
+
+    /// Serialize a JSON value into an event frame, matching axum's
+    /// `Event::json_data` (compact JSON) behavior.
+    pub fn json<T: Serialize>(event: Option<String>, value: &T) -> Result<Self, Error> {
+        let data = serde_json::to_string(value).map_err(|e| {
+            Error::new(ErrorDetails::Inference {
+                message: format!("Failed to serialize SSE event payload to JSON: {e}"),
+            })
+        })?;
+        Ok(Self { event, data })
+    }
+
+    /// Convert into an axum SSE [`Event`] for HTTP responses.
+    pub fn into_event(self) -> Event {
+        let mut event = Event::default();
+        if let Some(name) = self.event {
+            event = event.event(name);
+        }
+        event.data(self.data)
+    }
+}
+
+/// Convert an `(event name, JSON value)` pair into a frame, preserving the
+/// `[DONE]` sentinel as a plain `data: [DONE]` payload (not a JSON string).
+pub fn value_to_sse_frame(event: Option<String>, value: Value) -> SerializedSseEvent {
+    if value.as_str() == Some("[DONE]") {
+        SerializedSseEvent::new(event, "[DONE]".to_string())
+    } else {
+        SerializedSseEvent::new(event, value.to_string())
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct OpenAICompatibleResponseChunk {
     pub id: String,
@@ -333,9 +384,13 @@ pub fn process_chat_content_chunk(
     (content_str, tool_calls, extra_content)
 }
 
-/// Prepares an Event for SSE on the way out of the gateway.
+/// Prepares serialized SSE frames on the way out of the gateway.
 /// Converts each InferenceResponseChunk to OpenAI-compatible format and streams it.
 /// Usage, raw_usage, and original_chunk are passed through from the upstream `create_stream` based on flags.
+///
+/// Yields [`SerializedSseEvent`] frames rather than axum events so callers can
+/// also persist/relay them (async inference); HTTP handlers convert via
+/// [`SerializedSseEvent::into_event`].
 pub fn prepare_serialized_openai_compatible_events(
     mut stream: InferenceStream,
     response_model_prefix: String,
@@ -344,7 +399,7 @@ pub fn prepare_serialized_openai_compatible_events(
     include_original_response: bool,
     include_raw_response: bool,
     stream_aggregate: Option<Vec<StreamAggregateRule>>,
-) -> impl Stream<Item = Result<Event, Error>> {
+) -> impl Stream<Item = Result<SerializedSseEvent, Error>> {
     async_stream::stream! {
         let mut state = StreamingContentState::default();
         let mut is_first_chunk = true;
@@ -359,7 +414,7 @@ pub fn prepare_serialized_openai_compatible_events(
                 if let Some(agg) = aggregator.as_mut()
                     && let Some((event, value)) = agg.flush_if_due(Instant::now())
                 {
-                    yield Ok(value_to_sse_event(event, value));
+                    yield Ok(value_to_sse_frame(event, value));
                 }
                 continue;
             }
@@ -371,7 +426,7 @@ pub fn prepare_serialized_openai_compatible_events(
                         if let Some(agg) = aggregator.as_mut()
                             && let Some((event, value)) = agg.flush_if_due(Instant::now())
                         {
-                            yield Ok(value_to_sse_event(event, value));
+                            yield Ok(value_to_sse_frame(event, value));
                         }
                         continue;
                     }
@@ -387,11 +442,7 @@ pub fn prepare_serialized_openai_compatible_events(
                 Ok(chunk) => chunk,
                 Err(e) => {
                     let error_event = e.build_streaming_error_event(true, include_raw_response);
-                    yield Event::default().json_data(&error_event).map_err(|ser_err| {
-                        Error::new(ErrorDetails::Inference {
-                            message: format!("Failed to convert error to Event: {ser_err}"),
-                        })
-                    });
+                    yield SerializedSseEvent::json(None, &error_event);
                     continue;
                 }
             };
@@ -417,37 +468,21 @@ pub fn prepare_serialized_openai_compatible_events(
                         continue;
                     };
                     for (event, value) in agg.push(None, &serialized, Instant::now()) {
-                        yield Ok(value_to_sse_event(event, value));
+                        yield Ok(value_to_sse_frame(event, value));
                     }
                 } else {
-                    yield Event::default().json_data(&chunk).map_err(|e| {
-                        Error::new(ErrorDetails::Inference {
-                            message: format!("Failed to convert chunk to Event: {e}"),
-                        })
-                    });
+                    yield SerializedSseEvent::json(None, &chunk);
                 }
             }
         }
 
         if let Some(agg) = aggregator.as_mut() {
             for (event, value) in agg.push(None, "[DONE]", Instant::now()) {
-                yield Ok(value_to_sse_event(event, value));
+                yield Ok(value_to_sse_frame(event, value));
             }
         } else {
-            yield Ok(Event::default().data("[DONE]"));
+            yield Ok(SerializedSseEvent::new(None, "[DONE]".to_string()));
         }
-    }
-}
-
-fn value_to_sse_event(event: Option<String>, value: Value) -> Event {
-    let mut ev = Event::default();
-    if let Some(name) = event {
-        ev = ev.event(name);
-    }
-    if value.as_str() == Some("[DONE]") {
-        ev.data("[DONE]")
-    } else {
-        ev.data(value.to_string())
     }
 }
 

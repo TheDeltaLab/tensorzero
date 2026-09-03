@@ -27,44 +27,64 @@ pub struct OpenAICompatibleInference {
     pub include_raw_response: bool,
 }
 
-/// Validate an OpenAI-compatible chat-style body, apply Synapse headers, and
-/// run inference. HTTP-layer errors are returned as already-formatted responses
-/// (with Synapse headers) so callers can `return Ok(response)`.
-pub async fn infer_openai_compatible(
-    state: &AppStateData,
-    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
+/// An OpenAI-compatible chat-style request that passed validation and is
+/// ready to execute via [`execute_openai_compatible`].
+pub struct ValidatedOpenAICompatibleRequest {
+    pub params: Params,
+    pub synapse: SynapseRequestContext,
+    pub response_model_prefix: String,
+    pub include_usage: bool,
+    pub include_raw_usage: bool,
+    pub include_original_response: bool,
+    pub include_raw_response: bool,
+}
+
+/// Validation failure, before any inference was attempted.
+pub struct OpenAICompatibleValidationError {
+    pub error: Error,
+    pub include_raw_response: bool,
+}
+
+/// Execution failure (the inference itself errored).
+pub struct OpenAICompatibleExecutionError {
+    pub error: Error,
+    pub synapse: SynapseRequestContext,
+    pub include_raw_response: bool,
+}
+
+/// Validate an OpenAI-compatible chat-style body and apply Synapse headers,
+/// without running inference. Shared between the synchronous handlers (via
+/// [`infer_openai_compatible`]) and the async inference submit endpoints,
+/// which validate at submit time so obvious errors surface synchronously.
+pub fn validate_openai_compatible_request(
     headers: &HeaderMap,
     mut openai_compatible_params: OpenAICompatibleParams,
-) -> Result<OpenAICompatibleInference, Response> {
-    let mut synapse = match SynapseRequestContext::try_from_headers(headers) {
-        Ok(ctx) => ctx,
-        Err(error) => {
-            return Err(error_response(
-                error,
-                false,
-                &SynapseRequestContext::from_headers(headers),
-            ));
+) -> Result<ValidatedOpenAICompatibleRequest, OpenAICompatibleValidationError> {
+    let mut synapse = SynapseRequestContext::try_from_headers(headers).map_err(|error| {
+        OpenAICompatibleValidationError {
+            error,
+            include_raw_response: false,
         }
-    };
+    })?;
 
-    openai_compatible_params.model = match resolve_openai_compatible_model(
+    openai_compatible_params.model = resolve_openai_compatible_model(
         &openai_compatible_params.model,
         synapse.provider.as_deref(),
-    ) {
-        Ok(model) => model,
-        Err(error) => return Err(error_response(error, false, &synapse)),
-    };
+    )
+    .map_err(|error| OpenAICompatibleValidationError {
+        error,
+        include_raw_response: false,
+    })?;
 
     if let Some(n) = openai_compatible_params.n
         && n != 1
     {
-        return Err(error_response(
-            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+        return Err(OpenAICompatibleValidationError {
+            error: Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
                 message: "TensorZero does not support `n` other than 1. Please omit this parameter or set it to 1.".to_string(),
             }),
-            false,
-            &synapse,
-        ));
+            include_raw_response: false,
+        });
     }
 
     if !openai_compatible_params.unknown_fields.is_empty() {
@@ -78,15 +98,14 @@ pub async fn infer_openai_compatible(
             unknown_field_names.sort();
             let unknown_field_names = unknown_field_names.join(", ");
 
-            return Err(error_response(
-                Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+            return Err(OpenAICompatibleValidationError {
+                error: Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
                     message: format!(
                         "`tensorzero::deny_unknown_fields` is set to true, but found unknown fields in the request: [{unknown_field_names}]"
                     ),
                 }),
-                false,
-                &synapse,
-            ));
+                include_raw_response: false,
+            });
         }
         tracing::warn!(
             "Ignoring unknown fields in OpenAI-compatible request: {:?}",
@@ -116,25 +135,29 @@ pub async fn infer_openai_compatible(
         && include_raw_usage
         && explicit_include_usage == Some(false)
     {
-        return Err(error_response(
-            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+        return Err(OpenAICompatibleValidationError {
+            error: Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
                 message: "`tensorzero::include_raw_usage` requires `stream_options.include_usage` to be true (or omitted) for streaming requests".to_string(),
             }),
             include_raw_response,
-            &synapse,
-        ));
+        });
     }
 
     let include_usage = explicit_include_usage.unwrap_or(false) || include_raw_usage;
 
     let explicit_cache = openai_compatible_params.tensorzero_cache_options.clone();
-    let mut params = match Params::try_from_openai(openai_compatible_params) {
-        Ok(params) => params,
-        Err(error) => return Err(error_response(error, include_raw_response, &synapse)),
-    };
-    if let Err(error) = apply_compat_to_params(headers, &mut params) {
-        return Err(error_response(error, include_raw_response, &synapse));
-    }
+    let mut params = Params::try_from_openai(openai_compatible_params).map_err(|error| {
+        OpenAICompatibleValidationError {
+            error,
+            include_raw_response,
+        }
+    })?;
+    apply_compat_to_params(headers, &mut params).map_err(|error| {
+        OpenAICompatibleValidationError {
+            error,
+            include_raw_response,
+        }
+    })?;
     params.cache_options = resolve_cache_options(explicit_cache, synapse.cache_disabled);
     params.extra_internal_tags = synapse.observability_tags(headers);
 
@@ -146,27 +169,54 @@ pub async fn infer_openai_compatible(
         }
         (None, Some(_model_name)) => "tensorzero::model_name::".to_string(),
         (Some(_), Some(_)) => {
-            return Err(error_response(
-                ErrorDetails::InvalidInferenceTarget {
+            return Err(OpenAICompatibleValidationError {
+                error: ErrorDetails::InvalidInferenceTarget {
                     message: "Only one of `function_name` or `model_name` can be provided"
                         .to_string(),
                 }
                 .into(),
                 include_raw_response,
-                &synapse,
-            ));
+            });
         }
         (None, None) => {
-            return Err(error_response(
-                ErrorDetails::InvalidInferenceTarget {
+            return Err(OpenAICompatibleValidationError {
+                error: ErrorDetails::InvalidInferenceTarget {
                     message: "Either `function_name` or `model_name` must be provided".to_string(),
                 }
                 .into(),
                 include_raw_response,
-                &synapse,
-            ));
+            });
         }
     };
+
+    Ok(ValidatedOpenAICompatibleRequest {
+        params,
+        synapse,
+        response_model_prefix,
+        include_usage,
+        include_raw_usage,
+        include_original_response,
+        include_raw_response,
+    })
+}
+
+/// Execute a validated OpenAI-compatible chat-style request against
+/// [`inference`], applying the Synapse per-request timeout and recording
+/// routing outcomes on the Synapse context.
+pub async fn execute_openai_compatible(
+    state: &AppStateData,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
+    validated: ValidatedOpenAICompatibleRequest,
+) -> Result<OpenAICompatibleInference, OpenAICompatibleExecutionError> {
+    let ValidatedOpenAICompatibleRequest {
+        params,
+        mut synapse,
+        response_model_prefix,
+        include_usage,
+        include_raw_usage,
+        include_original_response,
+        include_raw_response,
+    } = validated;
 
     let session = RoutingSession::new(synapse.fallback_disabled);
     let inference_result = Box::pin(run_with_request_timeout(
@@ -197,7 +247,11 @@ pub async fn infer_openai_compatible(
     let output = match inference_result {
         Ok(data) => data.output,
         Err(error) => {
-            return Err(error_response(error, include_raw_response, &synapse));
+            return Err(OpenAICompatibleExecutionError {
+                error,
+                synapse,
+                include_raw_response,
+            });
         }
     };
 
@@ -210,6 +264,36 @@ pub async fn infer_openai_compatible(
         include_original_response,
         include_raw_response,
     })
+}
+
+/// Validate an OpenAI-compatible chat-style body, apply Synapse headers, and
+/// run inference. HTTP-layer errors are returned as already-formatted responses
+/// (with Synapse headers) so callers can `return Ok(response)`.
+pub async fn infer_openai_compatible(
+    state: &AppStateData,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
+    headers: &HeaderMap,
+    openai_compatible_params: OpenAICompatibleParams,
+) -> Result<OpenAICompatibleInference, Response> {
+    let validated = match validate_openai_compatible_request(headers, openai_compatible_params) {
+        Ok(validated) => validated,
+        Err(rejection) => {
+            return Err(error_response(
+                rejection.error,
+                rejection.include_raw_response,
+                &SynapseRequestContext::from_headers(headers),
+            ));
+        }
+    };
+
+    match Box::pin(execute_openai_compatible(state, api_key_ext, validated)).await {
+        Ok(inferred) => Ok(inferred),
+        Err(rejection) => Err(error_response(
+            rejection.error,
+            rejection.include_raw_response,
+            &rejection.synapse,
+        )),
+    }
 }
 
 pub(super) fn error_response(

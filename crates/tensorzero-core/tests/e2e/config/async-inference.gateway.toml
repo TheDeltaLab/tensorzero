@@ -1,0 +1,8 @@
+# Override file enabling the async inference API for e2e tests.
+# Include alongside the tensorzero.*.toml files via a glob like:
+#   {tensorzero,object-storage-disabled,async-inference}.*.toml
+# Requires Postgres (durable task queue) and Valkey (task event streams),
+# via TENSORZERO_POSTGRES_URL and TENSORZERO_VALKEY_URL.
+
+[gateway.async_inference]
+enabled = true

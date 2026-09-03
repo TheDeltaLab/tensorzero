@@ -207,6 +207,7 @@ mod tests {
     use super::*;
     use crate::config::ObservabilityBackend;
     use crate::embeddings::UninitializedEmbeddingModelConfig;
+    use googletest::prelude::*;
 
     /// Old snapshot with deprecated `gateway.observability.disable_automatic_migrations`
     /// should silently migrate to `clickhouse.disable_automatic_migrations`.
@@ -589,5 +590,51 @@ type = "exact_match"
         };
         assert_eq!(gepa.evaluation_name.as_deref(), Some("test_evaluation"));
         assert!(gepa.evaluator_names.is_none());
+    }
+
+    /// Historical snapshots predate `[gateway.async_inference]`. They must
+    /// still parse and convert cleanly with `async_inference = None`, and a
+    /// snapshot written by a newer gateway with the section enabled must
+    /// round-trip into the uninitialized config.
+    #[gtest]
+    fn test_historical_stored_gateway_config_without_async_inference() {
+        let toml_str = r"
+            [gateway]
+            debug = true
+        ";
+
+        let stored: StoredConfig =
+            toml::from_str(toml_str).expect("legacy gateway config should parse from snapshot");
+        let uninit: UninitializedConfig = stored
+            .try_into()
+            .expect("should convert to UninitializedConfig");
+
+        let gateway = uninit.gateway.expect("gateway config should be present");
+        expect_that!(
+            gateway.async_inference,
+            none(),
+            "legacy snapshots without `[gateway.async_inference]` should convert to None"
+        );
+
+        let toml_str = r#"
+            [gateway.async_inference]
+            enabled = true
+            queue_name = "async_inference"
+            concurrency = 4
+            stream_ttl_seconds = 600
+        "#;
+        let stored: StoredConfig =
+            toml::from_str(toml_str).expect("async_inference section should parse");
+        let uninit: UninitializedConfig = stored
+            .try_into()
+            .expect("should convert to UninitializedConfig");
+        let async_inference = uninit
+            .gateway
+            .and_then(|g| g.async_inference)
+            .expect("async_inference config should be present");
+        expect_that!(async_inference.enabled, eq(true));
+        expect_that!(async_inference.queue_name, eq("async_inference"));
+        expect_that!(async_inference.concurrency, eq(4));
+        expect_that!(async_inference.stream_ttl_seconds, eq(600));
     }
 }

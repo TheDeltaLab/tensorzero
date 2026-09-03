@@ -5,7 +5,7 @@ use axum::Extension;
 use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::sse::{Event, Sse};
+use axum::response::sse::Sse;
 use axum::response::{IntoResponse, Response};
 use futures::StreamExt;
 use serde_json::{Value, json};
@@ -14,7 +14,8 @@ use crate::endpoints::inference::{InferenceOutput, InferenceResponseChunk};
 use crate::endpoints::openai_compatible::types::responses::{
     OpenAICompatibleResponsesParams, OpenAICompatibleResponsesResponse, responses_output_items,
 };
-use crate::error::{Error, ErrorDetails};
+use crate::endpoints::openai_compatible::types::streaming::SerializedSseEvent;
+use crate::error::Error;
 use crate::inference::types::{ContentBlockChunk, Usage, current_timestamp};
 use crate::utils::gateway::AppState;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
@@ -55,7 +56,8 @@ pub async fn responses_handler(
         }
         InferenceOutput::Streaming(stream) => {
             let responses_stream =
-                prepare_serialized_openai_responses_events(stream, inferred.response_model_prefix);
+                prepare_serialized_openai_responses_events(stream, inferred.response_model_prefix)
+                    .map(|frame| frame.map(SerializedSseEvent::into_event));
             Sse::new(responses_stream)
                 .keep_alive(axum::response::sse::KeepAlive::new())
                 .into_response()
@@ -65,10 +67,10 @@ pub async fn responses_handler(
     Ok(response)
 }
 
-fn prepare_serialized_openai_responses_events(
+pub(super) fn prepare_serialized_openai_responses_events(
     mut stream: crate::endpoints::inference::InferenceStream,
     response_model_prefix: String,
-) -> impl futures::Stream<Item = Result<Event, Error>> {
+) -> impl futures::Stream<Item = Result<SerializedSseEvent, Error>> {
     async_stream::stream! {
         let mut accumulated = String::new();
         let mut created_emitted = false;
@@ -82,11 +84,7 @@ fn prepare_serialized_openai_responses_events(
                 Ok(chunk) => chunk,
                 Err(e) => {
                     let error_event = e.build_streaming_error_event(true, false);
-                    yield Event::default().json_data(&error_event).map_err(|ser_err| {
-                        Error::new(ErrorDetails::Inference {
-                            message: format!("Failed to convert error to Event: {ser_err}"),
-                        })
-                    });
+                    yield SerializedSseEvent::json(None, &error_event);
                     continue;
                 }
             };
@@ -124,7 +122,7 @@ fn prepare_serialized_openai_responses_events(
                         "output": [],
                     }
                 });
-                yield sse_named_event("response.created", &created_payload);
+                yield sse_named_event_frame("response.created", &created_payload);
                 created_emitted = true;
             }
 
@@ -136,7 +134,7 @@ fn prepare_serialized_openai_responses_events(
                     "content_index": 0,
                     "delta": delta,
                 });
-                yield sse_named_event("response.output_text.delta", &delta_payload);
+                yield sse_named_event_frame("response.output_text.delta", &delta_payload);
             }
 
             if usage.is_some() {
@@ -166,18 +164,14 @@ fn prepare_serialized_openai_responses_events(
                     },
                 }
             });
-            yield sse_named_event("response.completed", &completed);
+            yield sse_named_event_frame("response.completed", &completed);
         }
     }
 }
 
-fn sse_named_event(event_name: &'static str, payload: &Value) -> Result<Event, Error> {
-    Event::default()
-        .event(event_name)
-        .json_data(payload)
-        .map_err(|e| {
-            Error::new(ErrorDetails::Inference {
-                message: format!("Failed to convert chunk to Event: {e}"),
-            })
-        })
+fn sse_named_event_frame(
+    event_name: &'static str,
+    payload: &Value,
+) -> Result<SerializedSseEvent, Error> {
+    SerializedSseEvent::json(Some(event_name.to_string()), payload)
 }

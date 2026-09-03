@@ -46,6 +46,13 @@ See `NOTICE` for the overall attribution statement.
 - `crates/tensorzero-core/tests/load/synapse-compat/bodies/completions.json` — Load-test body (Delta-AI fork).
 - `crates/tensorzero-core/tests/load/synapse-compat/bodies/responses.json` — Load-test body (Delta-AI fork).
 
+- `crates/Cargo.toml` — Added `async-inference` workspace member for the async inference API worker (Delta-AI fork).
+- `crates/Cargo.lock` — Workspace lockfile updated for the `async-inference` crate and its deps (Delta-AI fork).
+- `crates/async-inference/Cargo.toml` — New crate manifest for the async inference durable worker (Delta-AI fork).
+- `crates/durable-tools-spawn/Cargo.toml` — Added chrono for task timing reads used by the async inference status endpoint (Delta-AI fork).
+- `crates/gateway/Cargo.toml` — Added `async-inference` dependency for the embedded async inference worker (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/async-inference.gateway.toml` — E2E config override enabling `[gateway.async_inference]` for the async inference API tests (Delta-AI fork).
+
 ---
 
 _To add an entry: append a bullet item above. The CI workflow (`modification-notice-check`) will verify that every non-source-code file modified in a PR is listed here._

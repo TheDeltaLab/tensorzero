@@ -15,12 +15,12 @@ use crate::{
 use chrono::Duration;
 use serde::{Deserialize, Deserializer, Serialize};
 use tensorzero_stored_config::{
-    StoredAuthConfig, StoredBatchWritesConfig, StoredCredentialLocationWithFallback,
-    StoredDashboardUiConfig, StoredExportConfig, StoredGatewayAuthCacheConfig, StoredGatewayConfig,
-    StoredGatewayMetricsConfig, StoredInferenceCacheBackend, StoredModelInferenceCacheConfig,
-    StoredObservabilityBackend, StoredObservabilityConfig, StoredOtlpConfig,
-    StoredOtlpTracesConfig, StoredOtlpTracesFormat, StoredRelayConfig,
-    StoredValkeyModelInferenceCacheConfig,
+    StoredAsyncInferenceConfig, StoredAuthConfig, StoredBatchWritesConfig,
+    StoredCredentialLocationWithFallback, StoredDashboardUiConfig, StoredExportConfig,
+    StoredGatewayAuthCacheConfig, StoredGatewayConfig, StoredGatewayMetricsConfig,
+    StoredInferenceCacheBackend, StoredModelInferenceCacheConfig, StoredObservabilityBackend,
+    StoredObservabilityConfig, StoredOtlpConfig, StoredOtlpTracesConfig, StoredOtlpTracesFormat,
+    StoredRelayConfig, StoredValkeyModelInferenceCacheConfig,
 };
 use url::Url;
 
@@ -219,6 +219,76 @@ pub fn azure_auth_enabled() -> bool {
     parse_azure_auth_env(std::env::var("TENSORZERO_UI_AZURE_AUTH").ok().as_deref())
 }
 
+pub fn default_async_inference_queue_name() -> String {
+    "async_inference".to_string()
+}
+
+pub fn default_async_inference_concurrency() -> usize {
+    8
+}
+
+pub fn default_async_inference_stream_ttl_seconds() -> u64 {
+    3600
+}
+
+/// Configuration for the async inference API (`[gateway.async_inference]`).
+///
+/// When enabled, the gateway exposes `POST .../async` submit endpoints backed
+/// by the durable Postgres task queue, plus task status / SSE stream-attach
+/// endpoints, and runs an embedded durable worker executing the inference.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AsyncInferenceConfig {
+    /// Master switch for the async inference endpoints and embedded worker.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Durable queue name for async inference tasks. Must match between the
+    /// spawn path and the worker; only ASCII alphanumeric characters and
+    /// underscores are allowed (the name is interpolated into table names).
+    #[serde(default = "default_async_inference_queue_name")]
+    pub queue_name: String,
+    /// Maximum number of concurrent async inference executions in this
+    /// gateway process. With multiple gateway replicas, total concurrency is
+    /// the sum across replicas (they share the same Postgres queue).
+    #[serde(default = "default_async_inference_concurrency")]
+    pub concurrency: usize,
+    /// TTL (in seconds) applied to the per-task Redis Stream
+    /// (`tensorzero:async_inference:{task_id}`) after the task completes.
+    #[serde(default = "default_async_inference_stream_ttl_seconds")]
+    pub stream_ttl_seconds: u64,
+}
+
+impl Default for AsyncInferenceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            queue_name: default_async_inference_queue_name(),
+            concurrency: default_async_inference_concurrency(),
+            stream_ttl_seconds: default_async_inference_stream_ttl_seconds(),
+        }
+    }
+}
+
+impl AsyncInferenceConfig {
+    fn normalized(self) -> Result<Self, Error> {
+        if self.enabled
+            && !self
+                .queue_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        {
+            return Err(Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Invalid `gateway.async_inference.queue_name` `{}`. \
+                     Only ASCII alphanumeric characters and underscores are allowed.",
+                    self.queue_name
+                ),
+            }));
+        }
+        Ok(self)
+    }
+}
+
 #[serde_with::skip_serializing_none]
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -261,6 +331,10 @@ pub struct UninitializedGatewayConfig {
     /// demote an existing admin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ui: Option<DashboardUiConfig>,
+    /// Async inference API (`POST .../async` submit endpoints, task status and
+    /// SSE stream-attach endpoints, embedded durable worker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub async_inference: Option<AsyncInferenceConfig>,
 }
 
 impl UninitializedGatewayConfig {
@@ -328,6 +402,7 @@ impl UninitializedGatewayConfig {
             metrics,
             cache: self.cache.unwrap_or_default(),
             ui: self.ui.unwrap_or_default().normalized()?,
+            async_inference: self.async_inference.unwrap_or_default().normalized()?,
         })
     }
 }
@@ -525,6 +600,19 @@ impl TryFrom<StoredGatewayConfig> for UninitializedGatewayConfig {
             ui: stored.ui.map(|ui| DashboardUiConfig {
                 admin_emails: ui.admin_emails.unwrap_or_default(),
             }),
+            async_inference: stored.async_inference.map(|ai| AsyncInferenceConfig {
+                enabled: ai.enabled.unwrap_or_default(),
+                queue_name: ai
+                    .queue_name
+                    .unwrap_or_else(default_async_inference_queue_name),
+                concurrency: ai
+                    .concurrency
+                    .map(|c| c as usize)
+                    .unwrap_or_else(default_async_inference_concurrency),
+                stream_ttl_seconds: ai
+                    .stream_ttl_seconds
+                    .unwrap_or_else(default_async_inference_stream_ttl_seconds),
+            }),
         })
     }
 }
@@ -626,6 +714,12 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
                 .map(|ui| StoredDashboardUiConfig {
                     admin_emails: Some(ui.admin_emails),
                 }),
+            async_inference: config.async_inference.map(|ai| StoredAsyncInferenceConfig {
+                enabled: Some(ai.enabled),
+                queue_name: Some(ai.queue_name),
+                concurrency: Some(ai.concurrency as u64),
+                stream_ttl_seconds: Some(ai.stream_ttl_seconds),
+            }),
         }
     }
 }
@@ -656,6 +750,7 @@ pub struct GatewayConfig {
     pub metrics: MetricsConfig,
     pub cache: ModelInferenceCacheConfig,
     pub ui: DashboardUiConfig,
+    pub async_inference: AsyncInferenceConfig,
 }
 
 impl Default for GatewayConfig {
@@ -678,6 +773,7 @@ impl Default for GatewayConfig {
             metrics: Default::default(),
             cache: Default::default(),
             ui: Default::default(),
+            async_inference: Default::default(),
         }
     }
 }
@@ -900,6 +996,12 @@ mod tests {
             }),
             ui: Some(DashboardUiConfig {
                 admin_emails: vec!["admin@example.com".to_string()],
+            }),
+            async_inference: Some(AsyncInferenceConfig {
+                enabled: true,
+                queue_name: "async_inference".to_string(),
+                concurrency: 4,
+                stream_ttl_seconds: 600,
             }),
         };
 

@@ -31,6 +31,16 @@ pub struct StoredGatewayConfig {
     pub cache: Option<StoredModelInferenceCacheConfig>,
     #[serde(default)]
     pub ui: Option<StoredDashboardUiConfig>,
+    pub async_inference: Option<StoredAsyncInferenceConfig>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoredAsyncInferenceConfig {
+    pub enabled: Option<bool>,
+    pub queue_name: Option<String>,
+    pub concurrency: Option<u64>,
+    pub stream_ttl_seconds: Option<u64>,
 }
 
 #[serde_with::skip_serializing_none]
