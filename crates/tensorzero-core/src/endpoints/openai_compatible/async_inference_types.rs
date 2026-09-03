@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tensorzero_derive::TensorZeroDeserialize;
 use ts_rs::TS;
 use uuid::Uuid;
 
@@ -49,9 +50,10 @@ pub struct AsyncInferenceLaunchResponse {
 /// `GET /v1/async_tasks/{task_id}` response, internally tagged on `status`.
 ///
 /// Serializes as `{"task_id": ..., "status": "queued", ...}` etc.
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Serialize, TensorZeroDeserialize, TS)]
 #[ts(export, optional_fields)]
-#[serde(tag = "status", rename_all = "snake_case")]
+#[serde(tag = "status")]
+#[serde(rename_all = "snake_case")]
 pub enum AsyncTaskStatusResponse {
     Queued {
         task_id: Uuid,

@@ -51,6 +51,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/async-inference/Cargo.toml` — New crate manifest for the async inference durable worker (Delta-AI fork).
 - `crates/durable-tools-spawn/Cargo.toml` — Added chrono for task timing reads used by the async inference status endpoint (Delta-AI fork).
 - `crates/gateway/Cargo.toml` — Added `async-inference` dependency for the embedded async inference worker (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/async-inference.gateway.toml` — E2E config override enabling `[gateway.async_inference]` for the async inference API tests (Delta-AI fork).
 
 ---
 
