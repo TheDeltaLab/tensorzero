@@ -15,10 +15,11 @@
 //!   (`{ASYNC_INFERENCE_STREAM_KEY_PREFIX}{task_id}`), so clients can attach to
 //!   a running (or recently finished) task.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use axum::Extension;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
@@ -33,6 +34,7 @@ use redis::aio::ConnectionManager;
 use redis::streams::{StreamId, StreamRangeReply, StreamReadOptions, StreamReadReply};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
+use tensorzero_auth::middleware::RequestApiKeyExtension;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -41,6 +43,7 @@ use crate::endpoints::inference::{
     InferenceResponseChunk, InferenceStream, JsonInferenceResponse, JsonInferenceResponseChunk,
 };
 use crate::error::{Error, ErrorDetails};
+use crate::observability_tags::API_KEY_PUBLIC_ID_TAG;
 use crate::utils::gateway::{AppState, AppStateData};
 
 use super::anthropic_messages::{
@@ -98,35 +101,60 @@ pub fn async_inference_stream_key(task_id: Uuid) -> String {
 /// `POST /v1/chat/completions/async` (and `/openai/v1/...`).
 pub async fn chat_completions_async_handler(
     State(state): AppState,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
     headers: HeaderMap,
     OpenAIStructuredJson(body): OpenAIStructuredJson<Value>,
 ) -> Result<Response, OpenAICompatibleError> {
-    submit_async_inference(&state, &headers, AsyncInferenceApiKind::Chat, body).await
+    submit_async_inference(
+        &state,
+        api_key_ext,
+        &headers,
+        AsyncInferenceApiKind::Chat,
+        body,
+    )
+    .await
 }
 
 /// `POST /v1/responses/async` (and `/openai/v1/...`).
 pub async fn responses_async_handler(
     State(state): AppState,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
     headers: HeaderMap,
     OpenAIStructuredJson(body): OpenAIStructuredJson<Value>,
 ) -> Result<Response, OpenAICompatibleError> {
-    submit_async_inference(&state, &headers, AsyncInferenceApiKind::Responses, body).await
+    submit_async_inference(
+        &state,
+        api_key_ext,
+        &headers,
+        AsyncInferenceApiKind::Responses,
+        body,
+    )
+    .await
 }
 
 /// `POST /v1/messages/async` (and `/openai/v1/messages/async`,
 /// `/anthropic/v1/messages/async`).
 pub async fn messages_async_handler(
     State(state): AppState,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
     headers: HeaderMap,
     OpenAIStructuredJson(body): OpenAIStructuredJson<Value>,
 ) -> Result<Response, OpenAICompatibleError> {
-    submit_async_inference(&state, &headers, AsyncInferenceApiKind::Messages, body).await
+    submit_async_inference(
+        &state,
+        api_key_ext,
+        &headers,
+        AsyncInferenceApiKind::Messages,
+        body,
+    )
+    .await
 }
 
-/// Validate the request body, capture compatibility headers, and enqueue the
-/// durable task.
+/// Validate the request body, capture compatibility headers and the API key's
+/// public ID, and enqueue the durable task.
 async fn submit_async_inference(
     state: &AppStateData,
+    api_key_ext: Option<Extension<RequestApiKeyExtension>>,
     headers: &HeaderMap,
     api_kind: AsyncInferenceApiKind,
     body: Value,
@@ -141,6 +169,7 @@ async fn submit_async_inference(
         api_kind,
         request: body,
         headers: capture_headers(headers),
+        api_key_public_id: api_key_public_id(api_key_ext.as_ref()),
     };
     let params_value = serde_json::to_value(&task_params).map_err(|e| {
         Error::new(ErrorDetails::InternalError {
@@ -248,6 +277,25 @@ fn rebuild_headers(captured: &BTreeMap<String, String>) -> Result<HeaderMap, Asy
         headers.append(name, value);
     }
     Ok(headers)
+}
+
+/// Public ID of the authenticated API key, if the submit request carried one.
+/// Only the public ID is stored in the task params, never the secret key.
+fn api_key_public_id(api_key_ext: Option<&Extension<RequestApiKeyExtension>>) -> Option<String> {
+    api_key_ext.map(|ext| ext.0.api_key.get_public_id().to_string())
+}
+
+/// Stamp the submitting API key's public ID onto the inference tags, mirroring
+/// the sync path (`inference()` inserts the same tag when `api_key_ext` is
+/// present), so async-written inference rows appear in API-key-filtered views.
+fn insert_api_key_public_id_tag(
+    tags: &mut HashMap<String, String>,
+    api_key_public_id: Option<&str>,
+) {
+    let Some(public_id) = api_key_public_id else {
+        return;
+    };
+    tags.insert(API_KEY_PUBLIC_ID_TAG.to_string(), public_id.into());
 }
 
 fn require_spawn_client(state: &AppStateData) -> Result<Arc<SpawnClient>, OpenAICompatibleError> {
@@ -621,6 +669,7 @@ pub async fn run_async_inference(
     event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let headers = rebuild_headers(&params.headers)?;
+    let api_key_public_id = params.api_key_public_id.as_deref();
     match params.api_kind {
         AsyncInferenceApiKind::Chat => {
             Box::pin(run_openai_style(
@@ -628,6 +677,7 @@ pub async fn run_async_inference(
                 &headers,
                 params.request,
                 OpenAIStyle::Chat,
+                api_key_public_id,
                 event_tx,
             ))
             .await
@@ -638,6 +688,7 @@ pub async fn run_async_inference(
                 &headers,
                 params.request,
                 OpenAIStyle::Responses,
+                api_key_public_id,
                 event_tx,
             ))
             .await
@@ -647,6 +698,7 @@ pub async fn run_async_inference(
                 state,
                 &headers,
                 params.request,
+                api_key_public_id,
                 event_tx,
             ))
             .await
@@ -665,6 +717,7 @@ async fn run_openai_style(
     headers: &HeaderMap,
     request: Value,
     style: OpenAIStyle,
+    api_key_public_id: Option<&str>,
     event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let mut openai_params: OpenAICompatibleParams = match style {
@@ -684,6 +737,7 @@ async fn run_openai_style(
             AsyncInferenceError::from_error(&rejection.error, rejection.include_raw_response)
         })?;
     validated.params.include_aggregated_response = true;
+    insert_api_key_public_id_tag(&mut validated.params.tags, api_key_public_id);
 
     let include_usage = validated.include_usage;
     let include_raw_usage = validated.include_raw_usage;
@@ -760,6 +814,7 @@ async fn run_messages_style(
     state: &AppStateData,
     headers: &HeaderMap,
     request: Value,
+    api_key_public_id: Option<&str>,
     event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let mut params: AnthropicMessagesParams = deserialize_stored_body(&request)?;
@@ -768,6 +823,7 @@ async fn run_messages_style(
     let mut validated = validate_anthropic_request(headers, params)
         .map_err(|error| AsyncInferenceError::from_error(&error, false))?;
     validated.tz_params.include_aggregated_response = true;
+    insert_api_key_public_id_tag(&mut validated.tz_params.tags, api_key_public_id);
 
     let response_model = validated.response_model.clone();
     let stream_aggregate = validated.synapse.stream_aggregate.clone();
@@ -962,6 +1018,8 @@ mod tests {
     use super::*;
     use googletest::prelude::*;
     use std::collections::HashMap;
+    use tensorzero_auth::key::TensorZeroApiKey;
+    use tensorzero_auth::postgres::KeyInfo;
 
     fn header_map(entries: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
@@ -1086,5 +1144,71 @@ mod tests {
         let error = deserialize_body::<OpenAICompatibleParams>(&body)
             .expect_err("invalid model type should fail");
         expect_that!(error.to_string(), contains_substring("model"));
+    }
+
+    fn test_api_key_ext() -> Extension<RequestApiKeyExtension> {
+        let key = TensorZeroApiKey::parse(
+            "sk-t0-abcdefghijkl-123456789012345678901234567890123456789012345678",
+        )
+        .expect("valid test API key");
+        Extension(RequestApiKeyExtension {
+            api_key: Arc::new(key),
+            key_info: KeyInfo {
+                public_id: "abcdefghijkl".to_string(),
+                organization: "test-org".to_string(),
+                workspace: "test-workspace".to_string(),
+                description: None,
+                created_at: Utc::now(),
+                disabled_at: None,
+                expires_at: None,
+            },
+        })
+    }
+
+    #[gtest]
+    fn submit_params_carry_api_key_public_id_when_authenticated() {
+        let ext = test_api_key_ext();
+        let public_id = api_key_public_id(Some(&ext));
+        expect_that!(public_id.as_deref(), some(eq("abcdefghijkl")));
+
+        let params = AsyncInferenceTaskParams {
+            api_kind: AsyncInferenceApiKind::Chat,
+            request: json!({"model": "openai::gpt-5", "messages": []}),
+            headers: BTreeMap::new(),
+            api_key_public_id: public_id,
+        };
+        let value = serde_json::to_value(&params).expect("should serialize");
+        expect_that!(&value["api_key_public_id"], eq(&json!("abcdefghijkl")));
+    }
+
+    #[gtest]
+    fn submit_params_omit_api_key_public_id_when_unauthenticated() {
+        expect_that!(api_key_public_id(None), none());
+
+        let params = AsyncInferenceTaskParams {
+            api_kind: AsyncInferenceApiKind::Chat,
+            request: json!({"model": "openai::gpt-5", "messages": []}),
+            headers: BTreeMap::new(),
+            api_key_public_id: api_key_public_id(None),
+        };
+        let value = serde_json::to_value(&params).expect("should serialize");
+        expect_that!(value.get("api_key_public_id"), none());
+    }
+
+    #[gtest]
+    fn worker_path_inserts_api_key_public_id_tag_when_present() {
+        let mut tags = HashMap::new();
+        insert_api_key_public_id_tag(&mut tags, Some("abcdefghijkl"));
+        expect_that!(
+            tags.get(API_KEY_PUBLIC_ID_TAG).map(String::as_str),
+            some(eq("abcdefghijkl"))
+        );
+    }
+
+    #[gtest]
+    fn worker_path_leaves_tags_untouched_without_api_key() {
+        let mut tags = HashMap::new();
+        insert_api_key_public_id_tag(&mut tags, None);
+        expect_that!(tags.contains_key(API_KEY_PUBLIC_ID_TAG), eq(false));
     }
 }
