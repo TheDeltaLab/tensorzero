@@ -202,6 +202,10 @@ export default [
   // API Keys
   route("api-keys", "routes/api-keys/route.tsx"),
 
+  // Async Tasks
+  route("async-tasks", "routes/async-tasks/route.tsx"),
+  route("async-tasks/:taskId", "routes/async-tasks/$taskId/route.tsx"),
+
   // Dashboard users (Azure allowlist)
   route("users", "routes/users/route.tsx"),
 
