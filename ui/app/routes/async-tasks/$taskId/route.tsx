@@ -1,6 +1,6 @@
 // Modified by Delta-AI under Apache 2.0
 import type { Route } from "./+types/route";
-import { data } from "react-router";
+import { data, Link } from "react-router";
 import {
   PageHeader,
   PageLayout,
@@ -44,10 +44,30 @@ function PropertyRow({
   );
 }
 
+/// Inference id from a completed task's response payload: a bare UUID for
+/// chat/responses, `msg_`-prefixed for messages. Mirrors the backend's
+/// `extract_inference_id` in `endpoints/internal/async_tasks.rs`.
+function extractInferenceId(response: unknown): string | undefined {
+  if (typeof response !== "object" || response === null) {
+    return undefined;
+  }
+  const raw = (response as Record<string, unknown>).id;
+  if (typeof raw !== "string") {
+    return undefined;
+  }
+  const id = raw.startsWith("msg_") ? raw.slice("msg_".length) : raw;
+  if (id === "") {
+    return undefined;
+  }
+  return id;
+}
+
 export default function AsyncTaskDetailPage({
   loaderData,
 }: Route.ComponentProps) {
   const { task } = loaderData;
+  const inferenceId =
+    task.status === "completed" ? extractInferenceId(task.response) : undefined;
 
   return (
     <PageLayout>
@@ -63,6 +83,16 @@ export default function AsyncTaskDetailPage({
                 {task.status}
               </Badge>
             </PropertyRow>
+            {inferenceId && (
+              <PropertyRow label="Inference">
+                <Link
+                  to={`/observability/inferences/${inferenceId}`}
+                  className="hover:underline"
+                >
+                  <Code>{inferenceId}</Code>
+                </Link>
+              </PropertyRow>
+            )}
             {task.status === "queued" && (
               <PropertyRow label="Queue Position">
                 {task.queue_position !== undefined

@@ -122,6 +122,9 @@ function SkeletonRows() {
           <TableCell>
             <Skeleton className="h-5 w-14" />
           </TableCell>
+          <TableCell>
+            <Skeleton className="h-5 w-24" />
+          </TableCell>
           <TableCell className="w-52 whitespace-nowrap">
             <Skeleton className="h-5 w-36" />
           </TableCell>
@@ -189,6 +192,7 @@ export default function AsyncTasksPage({ loaderData }: Route.ComponentProps) {
               <TableHead>Model</TableHead>
               <TableHead className="w-28">Status</TableHead>
               <TableHead className="w-28">Duration</TableHead>
+              <TableHead className="w-36">Inference</TableHead>
               <TableHead className="w-52 whitespace-nowrap">Enqueued</TableHead>
             </TableRow>
           </TableHeader>
