@@ -198,6 +198,11 @@ where
 pub struct OpenAICompatibleResponseMessage {
     pub role: String,
     pub content: Option<String>,
+    /// Provider-native thinking text (DeepSeek/DashScope style), concatenated
+    /// from all Thought blocks in content order. Omitted when the response
+    /// carries no thinking, mirroring the streaming `delta.reasoning_content`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_content: Option<String>,
     #[serde(skip_serializing_if = "is_none_or_empty")]
     pub tool_calls: Option<Vec<OpenAICompatibleToolCall>>,
     #[serde(skip_serializing_if = "is_none_or_empty")]
@@ -798,6 +803,18 @@ impl From<(InferenceResponse, String, bool, bool)> for OpenAICompatibleResponse 
         match inference_response {
             InferenceResponse::Chat(response) => {
                 let (content, tool_calls, extra_content) = process_chat_content(response.content);
+                // Concatenate Thought texts in content order, mirroring the
+                // streaming path's `delta.reasoning_content` reduce.
+                let reasoning_content = extra_content
+                    .iter()
+                    .filter_map(|block| match block {
+                        ExtraContentBlock::Thought { thought, .. } => thought.text.clone(),
+                        ExtraContentBlock::Unknown { .. } => None,
+                    })
+                    .reduce(|mut acc, piece| {
+                        acc.push_str(&piece);
+                        acc
+                    });
                 let tensorzero_original_response = if include_original_response {
                     response.original_response
                 } else {
@@ -816,6 +833,7 @@ impl From<(InferenceResponse, String, bool, bool)> for OpenAICompatibleResponse 
                         finish_reason: response.finish_reason.unwrap_or(FinishReason::Stop).into(),
                         message: OpenAICompatibleResponseMessage {
                             content,
+                            reasoning_content,
                             tool_calls: Some(tool_calls),
                             role: "assistant".to_string(),
                             tensorzero_extra_content: if extra_content.is_empty() {
@@ -856,6 +874,7 @@ impl From<(InferenceResponse, String, bool, bool)> for OpenAICompatibleResponse 
                         finish_reason: response.finish_reason.unwrap_or(FinishReason::Stop).into(),
                         message: OpenAICompatibleResponseMessage {
                             content: response.output.raw,
+                            reasoning_content: None,
                             tool_calls: None,
                             role: "assistant".to_string(),
                             tensorzero_extra_content: None,
@@ -922,7 +941,9 @@ mod tests {
     use serde_json::json;
 
     use crate::cache::CacheEnabledMode;
+    use crate::endpoints::inference::ChatInferenceResponse;
     use crate::endpoints::openai_compatible::types::tool::OpenAICompatibleFunctionCall;
+    use crate::inference::types::Usage;
     use crate::tool::{InferenceResponseToolCall, ToolCallWrapper};
 
     #[test]
@@ -2758,5 +2779,99 @@ mod tests {
             }
             ExtraContentBlock::Unknown { .. } => panic!("Expected Thought variant"),
         }
+    }
+
+    fn thought(text: Option<&str>) -> ContentBlockChatOutput {
+        ContentBlockChatOutput::Thought(Thought {
+            text: text.map(str::to_string),
+            signature: None,
+            summary: None,
+            provider_type: None,
+            extra_data: None,
+        })
+    }
+
+    fn chat_response_message(
+        content: Vec<ContentBlockChatOutput>,
+    ) -> OpenAICompatibleResponseMessage {
+        let response = OpenAICompatibleResponse::from((
+            InferenceResponse::Chat(ChatInferenceResponse {
+                inference_id: Uuid::now_v7(),
+                episode_id: Uuid::now_v7(),
+                variant_name: "test_variant".to_string(),
+                content,
+                usage: Usage {
+                    input_tokens: Some(1),
+                    output_tokens: Some(2),
+                    ..Default::default()
+                },
+                raw_usage: None,
+                original_response: None,
+                raw_response: None,
+                finish_reason: Some(FinishReason::Stop),
+            }),
+            "tensorzero::model_name::".to_string(),
+            false,
+            false,
+        ));
+        let [choice]: [_; 1] = response.choices.try_into().expect("one choice");
+        choice.message
+    }
+
+    #[googletest::gtest]
+    fn chat_response_message_concatenates_thoughts_into_reasoning_content() {
+        use googletest::prelude::*;
+        use googletest_matchers::matches_json;
+
+        let message = chat_response_message(vec![
+            thought(Some("thinking ")),
+            ContentBlockChatOutput::Text(Text {
+                text: "answer".to_string(),
+            }),
+            thought(Some("hard")),
+            thought(None),
+        ]);
+        expect_that!(
+            message.reasoning_content.as_deref(),
+            some(eq("thinking hard"))
+        );
+        expect_that!(message.content.as_deref(), some(eq("answer")));
+
+        // `tensorzero_extra_content` still carries the thought blocks.
+        let value = serde_json::to_value(&message).expect("should serialize");
+        expect_that!(
+            value,
+            matches_json!({
+                "role": eq("assistant"),
+                "content": eq("answer"),
+                "reasoning_content": eq("thinking hard"),
+                "tensorzero_extra_content": anything(),
+            })
+        );
+        let extra = value["tensorzero_extra_content"]
+            .as_array()
+            .expect("thought blocks should stay in tensorzero_extra_content");
+        expect_that!(extra.len(), eq(3));
+    }
+
+    #[googletest::gtest]
+    fn chat_response_message_omits_reasoning_content_without_thoughts() {
+        use googletest::prelude::*;
+        use googletest_matchers::matches_json;
+
+        let message = chat_response_message(vec![ContentBlockChatOutput::Text(Text {
+            text: "plain answer".to_string(),
+        })]);
+        expect_that!(message.reasoning_content, none());
+
+        let value = serde_json::to_value(&message).expect("should serialize");
+        expect_that!(value.get("reasoning_content"), none());
+        expect_that!(
+            value,
+            matches_json!({
+                "role": eq("assistant"),
+                "content": eq("plain answer"),
+            })
+        );
     }
 }
