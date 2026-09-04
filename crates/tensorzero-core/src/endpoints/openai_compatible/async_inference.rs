@@ -288,6 +288,10 @@ fn api_key_public_id(api_key_ext: Option<&Extension<RequestApiKeyExtension>>) ->
 /// Stamp the submitting API key's public ID onto the inference tags, mirroring
 /// the sync path (`inference()` inserts the same tag when `api_key_ext` is
 /// present), so async-written inference rows appear in API-key-filtered views.
+///
+/// Caller must pass `Params::extra_internal_tags`: the `tensorzero::` prefix is
+/// reserved, and `inference()` rejects it in client-visible `tags` before
+/// merging `extra_internal_tags`.
 fn insert_api_key_public_id_tag(
     tags: &mut HashMap<String, String>,
     api_key_public_id: Option<&str>,
@@ -299,8 +303,11 @@ fn insert_api_key_public_id_tag(
 }
 
 /// Mark the inference as async-executed, stamped with the durable task's UUID.
-/// Inserted after the request body's tags so the worker's values win over any
-/// caller-supplied tags with the same keys.
+///
+/// Caller must pass `Params::extra_internal_tags` (see
+/// [`insert_api_key_public_id_tag`]). `inference()` merges `extra_internal_tags`
+/// with `extend()` after client tag validation, so these worker values win over
+/// any caller-supplied tags with the same keys.
 fn insert_async_tags(tags: &mut HashMap<String, String>, task_id: Uuid) {
     tags.insert(ASYNC_TAG.to_string(), "true".to_string());
     tags.insert(ASYNC_TASK_ID_TAG.to_string(), task_id.to_string());
@@ -750,8 +757,8 @@ async fn run_openai_style(
             AsyncInferenceError::from_error(&rejection.error, rejection.include_raw_response)
         })?;
     validated.params.include_aggregated_response = true;
-    insert_api_key_public_id_tag(&mut validated.params.tags, api_key_public_id);
-    insert_async_tags(&mut validated.params.tags, task_id);
+    insert_api_key_public_id_tag(&mut validated.params.extra_internal_tags, api_key_public_id);
+    insert_async_tags(&mut validated.params.extra_internal_tags, task_id);
 
     let include_usage = validated.include_usage;
     let include_raw_usage = validated.include_raw_usage;
@@ -838,8 +845,11 @@ async fn run_messages_style(
     let mut validated = validate_anthropic_request(headers, params)
         .map_err(|error| AsyncInferenceError::from_error(&error, false))?;
     validated.tz_params.include_aggregated_response = true;
-    insert_api_key_public_id_tag(&mut validated.tz_params.tags, api_key_public_id);
-    insert_async_tags(&mut validated.tz_params.tags, task_id);
+    insert_api_key_public_id_tag(
+        &mut validated.tz_params.extra_internal_tags,
+        api_key_public_id,
+    );
+    insert_async_tags(&mut validated.tz_params.extra_internal_tags, task_id);
 
     let response_model = validated.response_model.clone();
     let stream_aggregate = validated.synapse.stream_aggregate.clone();
@@ -1032,6 +1042,7 @@ fn response_variant_name(response: &InferenceResponse) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::endpoints::validate_tags;
     use googletest::prelude::*;
     use std::collections::HashMap;
     use tensorzero_auth::key::TensorZeroApiKey;
@@ -1242,17 +1253,41 @@ mod tests {
     }
 
     #[gtest]
-    fn openai_style_worker_tags_override_body_tags() {
-        let task_id = Uuid::now_v7();
-        let expected_task_id = task_id.to_string();
+    fn openai_style_forged_async_tags_are_rejected_at_inference_validation() {
         let body = json!({
             "model": "openai::gpt-5",
             "messages": [{"role": "user", "content": "hi"}],
             "tensorzero::tags": {
                 "tensorzero::async": "false",
-                "tensorzero::async_task_id": "caller-supplied",
                 "caller_tag": "kept"
             }
+        });
+        let params: OpenAICompatibleParams =
+            serde_json::from_value(body).expect("should deserialize");
+        let validated = validate_openai_compatible_request(&HeaderMap::new(), params)
+            .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
+
+        // Forged tags survive submit-time validation in the client-visible map,
+        // where `inference()`'s `validate_tags` rejects them: callers cannot
+        // forge the reserved prefix.
+        expect_that!(
+            validated.params.tags.get(ASYNC_TAG).map(String::as_str),
+            some(eq("false"))
+        );
+        expect_that!(
+            validate_tags(&validated.params.tags, false).map_err(|e| e.to_string()),
+            err(contains_substring(ASYNC_TAG))
+        );
+    }
+
+    #[gtest]
+    fn openai_style_worker_tags_pass_validation_and_win_on_merge() {
+        let task_id = Uuid::now_v7();
+        let expected_task_id = task_id.to_string();
+        let body = json!({
+            "model": "openai::gpt-5",
+            "messages": [{"role": "user", "content": "hi"}],
+            "tensorzero::tags": {"caller_tag": "kept"}
         });
         let params: OpenAICompatibleParams =
             serde_json::from_value(body).expect("should deserialize");
@@ -1260,29 +1295,30 @@ mod tests {
             .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
 
         // Same stamping sequence as `run_openai_style`, after validation.
-        insert_api_key_public_id_tag(&mut validated.params.tags, None);
-        insert_async_tags(&mut validated.params.tags, task_id);
+        insert_api_key_public_id_tag(&mut validated.params.extra_internal_tags, None);
+        insert_async_tags(&mut validated.params.extra_internal_tags, task_id);
 
+        // The client-visible map stays clean, so inference-level tag validation passes.
+        expect_that!(validated.params.tags.contains_key(ASYNC_TAG), eq(false));
         expect_that!(
-            validated.params.tags.get(ASYNC_TAG).map(String::as_str),
-            some(eq("true"))
+            validate_tags(&validated.params.tags, false).is_ok(),
+            eq(true)
         );
+
+        // Mirror `inference()`: merge `extra_internal_tags` after validation;
+        // `extend` overwrites, so worker values win on key conflicts.
+        let mut tags = validated.params.tags;
+        tags.extend(std::mem::take(&mut validated.params.extra_internal_tags));
+        expect_that!(tags.get(ASYNC_TAG).map(String::as_str), some(eq("true")));
         expect_that!(
-            validated
-                .params
-                .tags
-                .get(ASYNC_TASK_ID_TAG)
-                .map(String::as_str),
+            tags.get(ASYNC_TASK_ID_TAG).map(String::as_str),
             some(eq(expected_task_id.as_str()))
         );
-        expect_that!(
-            validated.params.tags.get("caller_tag").map(String::as_str),
-            some(eq("kept"))
-        );
+        expect_that!(tags.get("caller_tag").map(String::as_str), some(eq("kept")));
     }
 
     #[gtest]
-    fn messages_style_worker_tags_mark_task_id() {
+    fn messages_style_worker_tags_pass_validation_and_win_on_merge() {
         let task_id = Uuid::now_v7();
         let expected_task_id = task_id.to_string();
         let headers = header_map(&[("x-tensorzero-tags", "env=prod")]);
@@ -1296,24 +1332,24 @@ mod tests {
         let mut validated = validate_anthropic_request(&headers, params).expect("should validate");
 
         // Same stamping sequence as `run_messages_style`, after validation.
-        insert_api_key_public_id_tag(&mut validated.tz_params.tags, None);
-        insert_async_tags(&mut validated.tz_params.tags, task_id);
+        insert_api_key_public_id_tag(&mut validated.tz_params.extra_internal_tags, None);
+        insert_async_tags(&mut validated.tz_params.extra_internal_tags, task_id);
 
+        // The client-visible map stays clean, so inference-level tag validation passes.
+        expect_that!(validated.tz_params.tags.contains_key(ASYNC_TAG), eq(false));
         expect_that!(
-            validated.tz_params.tags.get(ASYNC_TAG).map(String::as_str),
-            some(eq("true"))
+            validate_tags(&validated.tz_params.tags, false).is_ok(),
+            eq(true)
         );
+
+        // Mirror `inference()`: merge `extra_internal_tags` after validation.
+        let mut tags = validated.tz_params.tags;
+        tags.extend(std::mem::take(&mut validated.tz_params.extra_internal_tags));
+        expect_that!(tags.get(ASYNC_TAG).map(String::as_str), some(eq("true")));
         expect_that!(
-            validated
-                .tz_params
-                .tags
-                .get(ASYNC_TASK_ID_TAG)
-                .map(String::as_str),
+            tags.get(ASYNC_TASK_ID_TAG).map(String::as_str),
             some(eq(expected_task_id.as_str()))
         );
-        expect_that!(
-            validated.tz_params.tags.get("env").map(String::as_str),
-            some(eq("prod"))
-        );
+        expect_that!(tags.get("env").map(String::as_str), some(eq("prod")));
     }
 }
