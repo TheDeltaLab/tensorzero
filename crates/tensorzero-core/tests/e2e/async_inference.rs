@@ -26,6 +26,9 @@ use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 use crate::common::get_gateway_endpoint;
+use tensorzero_core::db::clickhouse::test_helpers::{
+    get_clickhouse, select_chat_inference_clickhouse,
+};
 
 /// Model referenced by the async inference tests; served by the dummy provider.
 const TEST_MODEL: &str = "tensorzero::model_name::dummy::good";
@@ -133,6 +136,28 @@ fn chat_completions_body(model: &str) -> Value {
     })
 }
 
+/// Asserts the ClickHouse row for `inference_id` carries the tags the async
+/// worker stamps via `extra_internal_tags`: `tensorzero::async` and
+/// `tensorzero::async_task_id`. Guards against regressions where worker tags
+/// land in the client-visible map and `inference()` rejects the task.
+async fn expect_async_tags_on_inference_row(inference_id: Uuid, task_id: Uuid) {
+    let clickhouse = get_clickhouse().await;
+    let row = select_chat_inference_clickhouse(&clickhouse, inference_id)
+        .await
+        .expect("async-executed inference should be written to ClickHouse");
+    let expected_task_id = task_id.to_string();
+    expect_that!(
+        row["tags"]["tensorzero::async"].as_str(),
+        some(eq("true")),
+        "inference row should be tagged `tensorzero::async`: {row}"
+    );
+    expect_that!(
+        row["tags"]["tensorzero::async_task_id"].as_str(),
+        some(eq(expected_task_id.as_str())),
+        "inference row should be tagged with the durable task id: {row}"
+    );
+}
+
 #[gtest]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_async_chat_completions_submit_and_complete() {
@@ -169,6 +194,13 @@ async fn test_async_chat_completions_submit_and_complete() {
         eq(true),
         "completed response should carry usage"
     );
+
+    let inference_id: Uuid = response["id"]
+        .as_str()
+        .expect("completed response should carry an inference id")
+        .parse()
+        .expect("inference id should be a UUID");
+    expect_async_tags_on_inference_row(inference_id, task_id).await;
 }
 
 #[gtest]
@@ -289,6 +321,14 @@ async fn test_async_messages_anthropic_submit_and_complete() {
         .as_str()
         .expect("completed response should carry a text block");
     expect_that!(text, not(eq("")));
+
+    let inference_id: Uuid = response["id"]
+        .as_str()
+        .and_then(|id| id.strip_prefix("msg_"))
+        .expect("completed response should carry a `msg_<uuid>` id")
+        .parse()
+        .expect("inference id should be a UUID");
+    expect_async_tags_on_inference_row(inference_id, task_id).await;
 }
 
 #[gtest]
