@@ -28,5 +28,10 @@ export type AsyncTaskSummary = {
    * Failure message of the latest run, for failed/cancelled tasks.
    */
   error?: string;
+  /**
+   * Inference written by a completed task, from the stored final response
+   * (`id` for chat/responses, `msg_`-prefixed id for messages).
+   */
+  inference_id?: string;
   attempts: number;
 };

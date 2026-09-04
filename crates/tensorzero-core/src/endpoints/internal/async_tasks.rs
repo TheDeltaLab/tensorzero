@@ -99,6 +99,11 @@ pub struct AsyncTaskSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub error: Option<String>,
+    /// Inference written by a completed task, from the stored final response
+    /// (`id` for chat/responses, `msg_`-prefixed id for messages).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub inference_id: Option<String>,
     pub attempts: i32,
 }
 
@@ -119,6 +124,7 @@ struct AsyncTaskRow {
     enqueue_at: DateTime<Utc>,
     first_started_at: Option<DateTime<Utc>>,
     cancelled_at: Option<DateTime<Utc>>,
+    completed_payload: Option<JsonValue>,
     attempts: i32,
     finished_at: Option<DateTime<Utc>>,
     failure_message: Option<String>,
@@ -174,7 +180,7 @@ fn build_list_query(
 ) -> QueryBuilder<sqlx::Postgres> {
     let mut query = QueryBuilder::new(
         "SELECT t.task_id, t.state, t.params, t.enqueue_at, t.first_started_at, \
-         t.cancelled_at, t.attempts, r.finished_at, r.failure_message \
+         t.cancelled_at, t.completed_payload, t.attempts, r.finished_at, r.failure_message \
          FROM durable.t_",
     );
     query.push(queue_name);
@@ -199,6 +205,17 @@ fn build_list_query(
     query.push(" OFFSET ");
     query.push_bind(offset);
     query
+}
+
+/// Extract the inference id from a completed task's final response payload:
+/// a bare UUID for chat/responses, `msg_`-prefixed for messages. Defensive by
+/// construction — a missing or malformed payload yields `None`, never an
+/// error, so one bad row cannot fail the whole list.
+fn extract_inference_id(payload: Option<&JsonValue>) -> Option<String> {
+    let raw = payload?.get("id")?.as_str()?;
+    let id = raw.strip_prefix("msg_").unwrap_or(raw);
+    let uuid = Uuid::parse_str(id).ok()?;
+    Some(uuid.to_string())
 }
 
 /// Map a raw durable-queue row to the API shape, extracting `api_kind` and
@@ -253,6 +270,7 @@ fn summarize(row: AsyncTaskRow, now: DateTime<Utc>) -> Result<AsyncTaskSummary, 
         started_at: row.first_started_at,
         duration_ms,
         error: row.failure_message,
+        inference_id: extract_inference_id(row.completed_payload.as_ref()),
         attempts: row.attempts,
     })
 }
@@ -282,6 +300,7 @@ mod tests {
             enqueue_at: test_now(),
             first_started_at: None,
             cancelled_at: None,
+            completed_payload: None,
             attempts: 1,
             finished_at: None,
             failure_message: None,
@@ -384,6 +403,58 @@ mod tests {
     }
 
     #[gtest]
+    fn summarize_completed_chat_task_extracts_bare_inference_id() {
+        let mut completed = row("completed", json!({"api_kind": "chat", "request": {}}));
+        completed.completed_payload = Some(
+            json!({"id": "018e5f1c-2b3a-7c4d-8e5f-6a7b8c9d0e1f", "object": "chat.completion"}),
+        );
+        let summary = summarize(completed, test_now()).expect("should summarize");
+        expect_that!(
+            summary.inference_id.as_deref(),
+            some(eq("018e5f1c-2b3a-7c4d-8e5f-6a7b8c9d0e1f"))
+        );
+    }
+
+    #[gtest]
+    fn summarize_completed_messages_task_strips_msg_prefix() {
+        let mut completed = row("completed", json!({"api_kind": "messages", "request": {}}));
+        completed.completed_payload =
+            Some(json!({"id": "msg_018e5f1c-2b3a-7c4d-8e5f-6a7b8c9d0e1f", "type": "message"}));
+        let summary = summarize(completed, test_now()).expect("should summarize");
+        expect_that!(
+            summary.inference_id.as_deref(),
+            some(eq("018e5f1c-2b3a-7c4d-8e5f-6a7b8c9d0e1f"))
+        );
+    }
+
+    #[gtest]
+    fn summarize_treats_missing_or_malformed_payload_as_no_inference() {
+        // Queued/running/failed tasks have no stored payload.
+        let queued = row("pending", json!({"api_kind": "chat", "request": {}}));
+        expect_that!(
+            summarize(queued, test_now())
+                .expect("should summarize")
+                .inference_id,
+            none()
+        );
+
+        for payload in [
+            json!(null),
+            json!({}),
+            json!({"id": 42}),
+            json!({"id": "not-a-uuid"}),
+            json!({"id": "msg_not-a-uuid"}),
+        ] {
+            expect_that!(
+                extract_inference_id(Some(&payload)),
+                none(),
+                "payload {payload} should yield no inference id"
+            );
+        }
+        expect_that!(extract_inference_id(None), none());
+    }
+
+    #[gtest]
     fn summarize_rejects_malformed_api_kind() {
         let bad = row("pending", json!({"api_kind": 42, "request": {}}));
         expect_that!(summarize(bad, test_now()), err(anything()));
@@ -400,6 +471,7 @@ mod tests {
             started_at: None,
             duration_ms: None,
             error: None,
+            inference_id: None,
             attempts: 0,
         };
         let value = serde_json::to_value(&summary).expect("should serialize");
@@ -417,6 +489,7 @@ mod tests {
         expect_that!(value.get("started_at"), none());
         expect_that!(value.get("duration_ms"), none());
         expect_that!(value.get("error"), none());
+        expect_that!(value.get("inference_id"), none());
     }
 
     #[gtest]
@@ -431,6 +504,7 @@ mod tests {
                 started_at: None,
                 duration_ms: None,
                 error: Some("boom".to_string()),
+                inference_id: None,
                 attempts: 3,
             }],
         };

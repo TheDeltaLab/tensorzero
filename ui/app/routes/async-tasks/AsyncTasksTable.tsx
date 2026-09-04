@@ -37,7 +37,7 @@ export function formatDurationMs(durationMs: number): string {
   return `${minutes}m ${remainingSeconds}s`;
 }
 
-export const ASYNC_TASKS_TABLE_COLUMN_COUNT = 6;
+export const ASYNC_TASKS_TABLE_COLUMN_COUNT = 7;
 
 export function AsyncTasksTableRows({ tasks }: { tasks: AsyncTaskSummary[] }) {
   if (tasks.length === 0) {
@@ -68,6 +68,16 @@ export function AsyncTasksTableRows({ tasks }: { tasks: AsyncTaskSummary[] }) {
               ? formatDurationMs(Number(task.duration_ms))
               : "—"}
           </TableCell>
+          <TableCell>
+            {task.inference_id !== undefined ? (
+              <TableItemShortUuid
+                id={task.inference_id}
+                link={`/observability/inferences/${task.inference_id}`}
+              />
+            ) : (
+              "—"
+            )}
+          </TableCell>
           <TableCell className="w-52 whitespace-nowrap">
             <TableItemTime timestamp={task.enqueue_at} />
           </TableCell>
@@ -91,6 +101,7 @@ export default function AsyncTasksTable({
           <TableHead>Model</TableHead>
           <TableHead className="w-28">Status</TableHead>
           <TableHead className="w-28">Duration</TableHead>
+          <TableHead className="w-36">Inference</TableHead>
           <TableHead className="w-52 whitespace-nowrap">Enqueued</TableHead>
         </TableRow>
       </TableHeader>
