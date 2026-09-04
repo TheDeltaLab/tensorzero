@@ -37,7 +37,8 @@ const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(30);
 pub struct AsyncInferenceTask;
 
 /// Params of the (single) `inference` step. `task_id` is included so the step
-/// knows which Redis stream to write to without capturing variables.
+/// knows which Redis stream to write to and which task id to stamp onto the
+/// inference's tags, without capturing variables.
 #[derive(Serialize)]
 struct InferenceStepParams {
     task_id: Uuid,
@@ -90,6 +91,7 @@ async fn execute_inference_step(
     let app_state = state.app_state.load_latest();
     let mut inference = Box::pin(run_async_inference(
         &app_state,
+        step_params.task_id,
         step_params.params,
         event_tx,
     ));

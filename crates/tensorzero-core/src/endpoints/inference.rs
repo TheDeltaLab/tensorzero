@@ -1713,7 +1713,9 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
     // Write the model inferences to the database (dual-write via ModelInferenceQueries trait)
     futures.push(
         async {
-            let _ = database.insert_model_inferences(&model_inferences).await;
+            if let Err(e) = database.insert_model_inferences(&model_inferences).await {
+                tracing::warn!("Failed to write model inferences to the database: {e}");
+            }
         }
         .boxed(),
     );
@@ -1724,13 +1726,17 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
                 let stored_input = input.clone().into_stored_input();
                 let chat_inference =
                     ChatInferenceDatabaseInsert::new(result, Some(stored_input), metadata);
-                let _ = database.insert_chat_inferences(&[chat_inference]).await;
+                if let Err(e) = database.insert_chat_inferences(&[chat_inference]).await {
+                    tracing::warn!("Failed to write chat inference to the database: {e}");
+                }
             }
             InferenceResult::Json(result) => {
                 let stored_input = input.clone().into_stored_input();
                 let json_inference =
                     JsonInferenceDatabaseInsert::new(result, Some(stored_input), metadata);
-                let _ = database.insert_json_inferences(&[json_inference]).await;
+                if let Err(e) = database.insert_json_inferences(&[json_inference]).await {
+                    tracing::warn!("Failed to write json inference to the database: {e}");
+                }
             }
         }
     }));

@@ -38,6 +38,12 @@ pub struct AsyncInferenceTaskParams {
     /// request context in the worker. Credentials (`authorization`, API keys)
     /// are never captured.
     pub headers: BTreeMap<String, String>,
+    /// Public ID of the API key the submit request was authenticated with,
+    /// stamped onto the inference's `tensorzero::api_key_public_id` tag by the
+    /// worker so async inferences stay visible in API-key-filtered views.
+    /// Only the public ID is stored, never the secret key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_public_id: Option<String>,
 }
 
 /// Response of the async submit endpoints (HTTP 202).
@@ -213,9 +219,11 @@ mod tests {
             api_kind: AsyncInferenceApiKind::Chat,
             request: json!({"model": "openai::gpt-5", "messages": []}),
             headers: BTreeMap::from([("x-request-id".to_string(), "req-1".to_string())]),
+            api_key_public_id: Some("abcdefghijkl".to_string()),
         };
         let value = serde_json::to_value(&params).expect("should serialize");
         expect_that!(&value["api_kind"], eq(&json!("chat")));
+        expect_that!(&value["api_key_public_id"], eq(&json!("abcdefghijkl")));
 
         let parsed: AsyncInferenceTaskParams =
             serde_json::from_value(value).expect("should deserialize");
@@ -224,7 +232,32 @@ mod tests {
             parsed.headers.get("x-request-id").map(String::as_str),
             some(eq("req-1"))
         );
+        expect_that!(
+            parsed.api_key_public_id.as_deref(),
+            some(eq("abcdefghijkl"))
+        );
+    }
 
+    #[gtest]
+    fn task_params_omit_and_default_missing_api_key_public_id() {
+        let params = AsyncInferenceTaskParams {
+            api_kind: AsyncInferenceApiKind::Chat,
+            request: json!({"model": "openai::gpt-5", "messages": []}),
+            headers: BTreeMap::new(),
+            api_key_public_id: None,
+        };
+        let value = serde_json::to_value(&params).expect("should serialize");
+        expect_that!(value.get("api_key_public_id"), none());
+
+        // Tasks enqueued before the field existed carry no `api_key_public_id`
+        // and must still deserialize.
+        let parsed: AsyncInferenceTaskParams =
+            serde_json::from_value(value).expect("should deserialize");
+        expect_that!(parsed.api_key_public_id, none());
+    }
+
+    #[gtest]
+    fn api_kind_serializes_snake_case() {
         for (kind, expected) in [
             (AsyncInferenceApiKind::Chat, "chat"),
             (AsyncInferenceApiKind::Responses, "responses"),
