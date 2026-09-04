@@ -43,6 +43,10 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
             get(endpoints::internal::inference_api_keys::list_inference_api_keys_handler),
         )
         .route(
+            "/internal/async_tasks",
+            get(endpoints::internal::async_tasks::list_async_tasks_handler),
+        )
+        .route(
             "/internal/dashboard/session",
             get(endpoints::internal::dashboard::get_dashboard_session_handler),
         )

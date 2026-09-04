@@ -1,4 +1,5 @@
 // Modified by Delta-AI under Apache 2.0
+pub mod async_tasks;
 pub mod autopilot;
 pub mod config;
 pub mod config_toml;

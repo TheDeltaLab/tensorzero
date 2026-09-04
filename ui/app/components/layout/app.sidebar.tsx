@@ -19,6 +19,7 @@ import {
   FileCode2,
   KeyRound,
   LayoutGrid,
+  ListChecks,
   LogOut,
   Plus,
   Users,
@@ -80,6 +81,11 @@ const navigation: NavigationSection[] = [
         title: "Models",
         url: "/observability/models",
         icon: Model,
+      },
+      {
+        title: "Async Tasks",
+        url: "/async-tasks",
+        icon: ListChecks,
       },
       {
         title: "Analysis",
