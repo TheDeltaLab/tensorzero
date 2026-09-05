@@ -60,6 +60,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/.sqlx/query-c285d5cf693d465e61454a15bc0512656418e71fbadb4a905ab401900d417b95.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-d52d769116fa2588c6a1078dd9522333e3824c604cf94fb442e686edc7033c52.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-e5a7e556f0c133cddff0613af6d60cf7f13c688d9f80f6aa92112dcb9796e1a2.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `.github/workflows/general.yml` — Gate lint-rust/rust-build/rust-test/validate-node/validate-python on language-specific path filters in detect-changes (Delta-AI fork).
 
 ---
 

@@ -35,6 +35,9 @@ jobs:
       code: ${{ steps.filter.outputs.code || 'true' }}
       docs: ${{ steps.filter.outputs.docs || 'true' }}
       live-tests: ${{ steps.filter.outputs.live-tests || 'true' }}
+      rust: ${{ steps.filter.outputs.rust || 'true' }}
+      node: ${{ steps.filter.outputs.node || 'true' }}
+      python: ${{ steps.filter.outputs.python || 'true' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         if: github.event_name != 'pull_request'
@@ -71,6 +74,26 @@ jobs:
               - '!examples/**'
               - '!for-agents/**'
               - '!ui/**'
+            # Delta-AI fork: language-specific filters so Rust/Node/Python checks
+            # only run when relevant code (or this workflow) changes.
+            rust:
+              - 'crates/**'
+              - '.github/workflows/general.yml'
+            # Node bindings (ts-rs/NAPI) are generated from Rust, so crates/** triggers this too.
+            node:
+              - 'crates/**'
+              - 'ui/**'
+              - 'clients/**'
+              - 'package.json'
+              - 'pnpm-lock.yaml'
+              - 'pnpm-workspace.yaml'
+              - '.github/workflows/general.yml'
+            # The PyO3 client derives from Rust, and ruff scans the whole repo for *.py.
+            python:
+              - 'crates/**'
+              - '**/*.py'
+              - 'ruff.toml'
+              - '.github/workflows/general.yml'
 
   check-version-consistency:
     name: check-version-consistency
@@ -414,7 +437,7 @@ jobs:
   lint-rust:
     name: lint-rust
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: needs.detect-changes.outputs.rust == 'true'
     permissions:
       contents: read # Required for checkout or repository metadata reads.
       # Permission for rust-cache
@@ -449,7 +472,7 @@ jobs:
   validate-python:
     name: validate-python
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: needs.detect-changes.outputs.python == 'true'
     permissions:
       contents: read # Required for checkout or repository metadata reads.
     runs-on: ubuntu-latest
@@ -520,7 +543,7 @@ jobs:
   validate-node:
     name: validate-node
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: needs.detect-changes.outputs.node == 'true'
     permissions:
       contents: read # Required for checkout or repository metadata reads.
     runs-on: ubuntu-latest
@@ -605,7 +628,7 @@ jobs:
   rust-build:
     name: rust-build
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: needs.detect-changes.outputs.rust == 'true'
     permissions:
       contents: read # Required for checkout or repository metadata reads.
     runs-on: ubuntu-latest
@@ -652,7 +675,7 @@ jobs:
   rust-test:
     name: rust-test
     needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
+    if: needs.detect-changes.outputs.rust == 'true'
     permissions:
       contents: read # Required for checkout or repository metadata reads.
     runs-on: ubuntu-latest
