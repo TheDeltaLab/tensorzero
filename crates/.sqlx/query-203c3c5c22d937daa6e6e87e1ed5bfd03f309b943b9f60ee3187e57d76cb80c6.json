@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE tensorzero.json_inferences\n            SET protected_at = CASE WHEN $2 THEN NOW() ELSE NULL END\n            WHERE id = $1 AND created_at = $3\n            RETURNING protected_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "protected_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.json_inferences",
+            "name": "protected_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "203c3c5c22d937daa6e6e87e1ed5bfd03f309b943b9f60ee3187e57d76cb80c6"
+}

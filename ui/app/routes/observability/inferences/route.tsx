@@ -97,11 +97,15 @@ export async function loader({ request }: Route.LoaderArgs) {
       inferences: InferenceListRow[],
       hasNextPage: boolean,
       hasPreviousPage: boolean,
-    ): Promise<InferencesData> => ({
-      inferences: await attachModelUsage(inferences),
-      hasNextPage,
-      hasPreviousPage,
-    });
+    ): Promise<InferencesData> => {
+      const withUsage = await attachModelUsage(inferences);
+      return {
+        inferences: withUsage,
+        hasNextPage,
+        hasPreviousPage,
+        protection: await fetchProtection(withUsage.map((row) => row.id)),
+      };
+    };
 
     if (isUuid(requestId)) {
       try {
@@ -171,6 +175,21 @@ function storedToRow(inf: StoredInference): InferenceListRow {
     cost: usage.cost,
     currency: usage.currency,
   };
+}
+
+async function fetchProtection(ids: string[]): Promise<Record<string, string>> {
+  if (ids.length === 0) {
+    return {};
+  }
+  try {
+    const response = await getTensorZeroClient().getInferencesProtection(ids);
+    return Object.fromEntries(
+      response.protection.map((entry) => [entry.id, entry.protected_at]),
+    );
+  } catch (error) {
+    logger.error("Failed to fetch inference protection state", error);
+    return {};
+  }
 }
 
 function hasUsageTags(tags: Record<string, string> | undefined): boolean {

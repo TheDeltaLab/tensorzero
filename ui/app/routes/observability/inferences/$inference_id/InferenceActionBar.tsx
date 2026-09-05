@@ -1,7 +1,11 @@
 // Modified by Delta-AI under Apache 2.0
 import { Suspense, useMemo } from "react";
 import { Await } from "react-router";
-import type { StoredInference, Input } from "~/types/tensorzero";
+import type {
+  StoredInference,
+  Input,
+  InferenceProtectionEntry,
+} from "~/types/tensorzero";
 import { DEFAULT_FUNCTION } from "~/utils/constants";
 import { useConfig, useFunctionConfig } from "~/context/config";
 import { getTotalInferenceUsage } from "~/utils/clickhouse/helpers";
@@ -13,6 +17,7 @@ import { AskAutopilotButton } from "~/components/autopilot/AskAutopilotButton";
 import { CopyMessagesButton } from "~/components/inference/CopyMessagesButton";
 import { TryWithVariantAction } from "./TryWithVariantAction";
 import { HumanFeedbackAction } from "./HumanFeedbackAction";
+import { ProtectInferenceAction } from "./ProtectInferenceAction";
 import type { ModelInferencesData } from "./inference-data.server";
 import {
   inferenceKindFromStored,
@@ -21,6 +26,7 @@ import {
 
 interface InferenceActionBarProps {
   inference: StoredInference;
+  protectionPromise: Promise<InferenceProtectionEntry | undefined>;
   usedVariantsPromise: Promise<string[]>;
   hasDemonstrationPromise: Promise<boolean>;
   inputPromise: Promise<Input | undefined>;
@@ -31,6 +37,7 @@ interface InferenceActionBarProps {
 
 export function InferenceActionBar({
   inference,
+  protectionPromise,
   usedVariantsPromise,
   hasDemonstrationPromise,
   inputPromise,
@@ -65,6 +72,11 @@ export function InferenceActionBar({
         inference={inference}
         onFeedbackAdded={onFeedbackAdded}
       />
+      <ProtectInferenceActionStreaming
+        key={`protect-${locationKey}`}
+        inference={inference}
+        protectionPromise={protectionPromise}
+      />
       <AskAutopilotButton
         message={`Inference ID: ${inference.inference_id}\n\n`}
       />
@@ -76,6 +88,27 @@ export function InferenceActionBar({
         />
       )}
     </ActionBar>
+  );
+}
+
+function ProtectInferenceActionStreaming({
+  inference,
+  protectionPromise,
+}: {
+  inference: StoredInference;
+  protectionPromise: Promise<InferenceProtectionEntry | undefined>;
+}) {
+  return (
+    <Suspense fallback={<Skeleton className="h-8 w-36" />}>
+      <Await resolve={protectionPromise} errorElement={<ActionBarAsyncError />}>
+        {(protection) => (
+          <ProtectInferenceAction
+            inferenceId={inference.inference_id}
+            protection={protection}
+          />
+        )}
+      </Await>
+    </Suspense>
   );
 }
 

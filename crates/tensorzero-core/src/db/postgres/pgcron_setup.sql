@@ -1,3 +1,4 @@
+-- Modified by Delta-AI under Apache 2.0
 -- Idempotent setup script for pg_cron extension and partition management jobs.
 -- This is NOT a migration - it runs every time migrations are run.
 
@@ -37,12 +38,12 @@ BEGIN
         );
 
         -- Drop old metadata partitions daily at 00:30 UTC (only acts if retention is configured)
+        -- chat_inferences / json_inferences archive protected rows before dropping.
         PERFORM cron.schedule(
             'tensorzero_drop_old_inference_metadata_partitions',
             '30 0 * * *',
             $$
-            SELECT tensorzero.drop_old_monthly_partitions('chat_inferences', 'inference_metadata_retention_days');
-            SELECT tensorzero.drop_old_monthly_partitions('json_inferences', 'inference_metadata_retention_days');
+            SELECT tensorzero.archive_and_drop_old_metadata_partitions();
             SELECT tensorzero.drop_old_monthly_partitions('model_inferences', 'inference_metadata_retention_days');
             SELECT tensorzero.drop_old_monthly_partitions('batch_requests', 'inference_metadata_retention_days');
             SELECT tensorzero.drop_old_monthly_partitions('batch_model_inferences', 'inference_metadata_retention_days');
@@ -50,12 +51,12 @@ BEGIN
         );
 
         -- Drop old data partitions daily at 00:35 UTC (only acts if retention is configured)
+        -- chat_inference_data / json_inference_data archive protected rows before dropping.
         PERFORM cron.schedule(
             'tensorzero_drop_old_inference_data_partitions',
             '35 0 * * *',
             $$
-            SELECT tensorzero.drop_old_partitions('chat_inference_data', 'inference_data_retention_days');
-            SELECT tensorzero.drop_old_partitions('json_inference_data', 'inference_data_retention_days');
+            SELECT tensorzero.archive_and_drop_old_data_partitions();
             SELECT tensorzero.drop_old_partitions('model_inference_data', 'inference_data_retention_days');
             SELECT tensorzero.drop_old_partitions('batch_request_data', 'inference_data_retention_days');
             SELECT tensorzero.drop_old_partitions('batch_model_inference_data', 'inference_data_retention_days');

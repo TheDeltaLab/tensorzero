@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            UPDATE tensorzero.chat_inferences\n            SET protected_at = CASE WHEN $2 THEN NOW() ELSE NULL END\n            WHERE id = $1 AND created_at = $3\n            RETURNING protected_at\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "protected_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.chat_inferences",
+            "name": "protected_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Bool",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "d52d769116fa2588c6a1078dd9522333e3824c604cf94fb442e686edc7033c52"
+}

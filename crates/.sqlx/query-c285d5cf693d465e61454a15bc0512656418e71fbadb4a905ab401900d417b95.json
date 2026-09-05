@@ -1,0 +1,42 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH tables AS (\n                SELECT * FROM (VALUES\n                    ('chat_inferences'),\n                    ('json_inferences'),\n                    ('model_inferences'),\n                    ('chat_inference_data'),\n                    ('json_inference_data'),\n                    ('model_inference_data'),\n                    ('chat_inferences_archive'),\n                    ('chat_inference_data_archive'),\n                    ('json_inferences_archive'),\n                    ('json_inference_data_archive')\n                ) AS t(name)\n            ),\n            parents AS (\n                SELECT t.name, c.oid\n                FROM tables t\n                JOIN pg_namespace n ON n.nspname = 'tensorzero'\n                JOIN pg_class c ON c.relname = t.name AND c.relnamespace = n.oid\n            )\n            SELECT\n                p.name AS \"name!\",\n                -- `pg_total_relation_size` on a partitioned parent only counts\n                -- the (empty) parent itself, so sum the partitions explicitly.\n                (\n                    pg_total_relation_size(p.oid)\n                    + COALESCE((\n                        SELECT SUM(pg_total_relation_size(i.inhrelid))\n                        FROM pg_inherits i\n                        WHERE i.inhparent = p.oid\n                    ), 0)\n                )::BIGINT AS \"total_bytes!\",\n                (SELECT COUNT(*) FROM pg_inherits WHERE inhparent = p.oid)::BIGINT AS \"partition_count!\",\n                -- `reltuples` is the planner estimate (-1 = never analyzed).\n                GREATEST(COALESCE((\n                    SELECT SUM(c.reltuples)::BIGINT\n                    FROM pg_class c\n                    WHERE c.oid = p.oid\n                       OR c.oid IN (SELECT inhrelid FROM pg_inherits WHERE inhparent = p.oid)\n                ), 0), 0) AS \"estimated_rows!\"\n            FROM parents p\n            ORDER BY p.name\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "name!",
+        "type_info": "Text",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 1,
+        "name": "total_bytes!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 2,
+        "name": "partition_count!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      },
+      {
+        "ordinal": 3,
+        "name": "estimated_rows!",
+        "type_info": "Int8",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "c285d5cf693d465e61454a15bc0512656418e71fbadb4a905ab401900d417b95"
+}

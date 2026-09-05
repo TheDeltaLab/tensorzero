@@ -55,6 +55,7 @@ import type {
   GetFunctionThroughputByVariantResponse,
   GetInferencesRequest,
   GetInferencesResponse,
+  GetInferencesProtectionRequest,
   GetModelInferencesResponse,
   GetModelLatencyResponse,
   GetModelUsageResponse,
@@ -70,7 +71,11 @@ import type {
   OptimizationJobHandle,
   OptimizationJobInfo,
   InferenceCountResponse,
+  InferenceProtectionResponse,
+  InferenceRetentionConfig,
+  InferenceStorageStatsResponse,
   InferenceWithFeedbackCountResponse,
+  InferencesProtectionResponse,
   LatestFeedbackIdByMetricResponse,
   ListAsyncTasksResponse,
   ListDatapointsRequest,
@@ -95,6 +100,7 @@ import type {
   UpdateDatapointsMetadataRequest,
   UpdateDatapointsRequest,
   UpdateDatapointsResponse,
+  UpdateInferenceRetentionRequest,
   ValidateConfigTomlRequest,
   ValidateConfigTomlResponse,
   VariantPerformancesResponse,
@@ -2271,6 +2277,80 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       this.handleHttpError({ message, response });
     }
     return (await response.json()) as OptimizationJobInfo;
+  }
+
+  /**
+   * Gets per-table storage statistics and the inference retention configuration.
+   * Requires Postgres.
+   */
+  async getInferenceStorageStats(): Promise<InferenceStorageStatsResponse> {
+    const response = await this.fetch("/internal/inference_storage/stats", {
+      method: "GET",
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as InferenceStorageStatsResponse;
+  }
+
+  /**
+   * Updates the inference retention configuration. A number keeps data for
+   * that many days; omitting a field keeps data forever (deletes the key).
+   */
+  async updateInferenceRetention(
+    request: UpdateInferenceRetentionRequest,
+  ): Promise<InferenceRetentionConfig> {
+    const response = await this.fetch("/internal/inference_storage/retention", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as InferenceRetentionConfig;
+  }
+
+  /**
+   * Protects (or unprotects) an inference from retention cleanup.
+   * @param inferenceId - The inference UUID
+   * @param protected_ - Whether the inference should be protected
+   */
+  async setInferenceProtection(
+    inferenceId: string,
+    protected_: boolean,
+  ): Promise<InferenceProtectionResponse> {
+    const response = await this.fetch(
+      `/internal/inferences/${encodeURIComponent(inferenceId)}/protection`,
+      {
+        method: "POST",
+        body: JSON.stringify({ protected: protected_ }),
+      },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as InferenceProtectionResponse;
+  }
+
+  /**
+   * Gets the protection state for a batch of inferences (max 1000 ids).
+   * Only protected inferences are returned.
+   */
+  async getInferencesProtection(
+    ids: string[],
+  ): Promise<InferencesProtectionResponse> {
+    const response = await this.fetch("/internal/inferences/protection", {
+      method: "POST",
+      body: JSON.stringify({ ids } satisfies GetInferencesProtectionRequest),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as InferencesProtectionResponse;
   }
 
   /**

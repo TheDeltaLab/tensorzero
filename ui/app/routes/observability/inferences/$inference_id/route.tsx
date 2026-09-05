@@ -20,6 +20,7 @@ import {
 } from "~/components/layout/PageLayout";
 import { SectionErrorNotice } from "~/components/ui/error/ErrorContentPrimitives";
 import { getPageErrorInfo } from "~/utils/tensorzero/errors";
+import { logger } from "~/utils/logger";
 import { AlertTriangle } from "lucide-react";
 import { useToast } from "~/hooks/use-toast";
 import { ChatOutputElement } from "~/components/input_output/ChatOutputElement";
@@ -64,7 +65,9 @@ export function shouldRevalidate({
   if (
     formAction?.startsWith("/api/feedback") ||
     formAction?.startsWith("/api/datasets/datapoints/from-inference") ||
-    formAction?.startsWith("/api/tensorzero/inference")
+    formAction?.startsWith("/api/tensorzero/inference") ||
+    (formAction?.startsWith("/api/inference/") &&
+      formAction?.endsWith("/protection"))
   ) {
     return false;
   }
@@ -109,6 +112,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     inference,
     variantType,
     newFeedbackId,
+    protection: tensorZeroClient
+      .getInferencesProtection([inference_id])
+      .then((response) =>
+        response.protection.find((entry) => entry.id === inference_id),
+      )
+      .catch((error) => {
+        logger.error("Failed to fetch inference protection state", error);
+        return undefined;
+      }),
     modelInferences: fetchModelInferences(inference_id),
     usedVariants: fetchUsedVariants(inference.function_name),
     hasDemonstration: fetchHasDemonstration(inference_id),
@@ -127,6 +139,7 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
     inference,
     variantType,
     newFeedbackId,
+    protection,
     modelInferences,
     usedVariants,
     hasDemonstration,
@@ -194,6 +207,7 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
         />
         <InferenceActionBar
           inference={inference}
+          protectionPromise={protection}
           usedVariantsPromise={usedVariants}
           hasDemonstrationPromise={hasDemonstration}
           inputPromise={input}

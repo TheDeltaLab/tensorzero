@@ -52,6 +52,14 @@ See `NOTICE` for the overall attribution statement.
 - `crates/durable-tools-spawn/Cargo.toml` — Added chrono for task timing reads used by the async inference status endpoint (Delta-AI fork).
 - `crates/gateway/Cargo.toml` — Added `async-inference` dependency for the embedded async inference worker (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/async-inference.gateway.toml` — E2E config override enabling `[gateway.async_inference]` for the async inference API tests (Delta-AI fork).
+- `crates/.sqlx/query-163a79b376e88675aa684f9d7c9ece4dbcce1e739931950d83e5bb63b9cc7337.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-203c3c5c22d937daa6e6e87e1ed5bfd03f309b943b9f60ee3187e57d76cb80c6.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-3eb37353d1fed4eddc84bfb252ab9e998911167292de1afdea4cc82266bf918b.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-5f9e9a43f47eff49fa1b9db80fa1e61b192425c3315b37fca58ea3be58ee021e.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-6c68ff37b0cceda3789e94dbf8c7a34d077f5f852b88d4d6ba82c4c7bd3b266a.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-c285d5cf693d465e61454a15bc0512656418e71fbadb4a905ab401900d417b95.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-d52d769116fa2588c6a1078dd9522333e3824c604cf94fb442e686edc7033c52.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-e5a7e556f0c133cddff0613af6d60cf7f13c688d9f80f6aa92112dcb9796e1a2.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 
 ---
 
