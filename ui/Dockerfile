@@ -46,7 +46,9 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml /build/
 COPY crates/ /build/crates/
 WORKDIR /build/crates/tensorzero-node
 
-RUN pnpm install --frozen-lockfile && if [ "$DEBUG_BUILD" = "1" ]; then pnpm run build:debug; else pnpm run build; fi
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/build/crates/target,sharing=locked \
+    pnpm install --frozen-lockfile && if [ "$DEBUG_BUILD" = "1" ]; then pnpm run build:debug; else pnpm run build; fi
 
 # ========== build-env ==========
 
