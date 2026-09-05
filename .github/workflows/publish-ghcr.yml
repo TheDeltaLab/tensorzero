@@ -35,7 +35,8 @@ jobs:
   gateway:
     name: Build gateway
     if: github.repository == 'TheDeltaLab/tensorzero'
-    runs-on: ubuntu-latest
+    # Self-hosted runner (CI builder VM, data disk on /mnt/runner) with host-disk build cache.
+    runs-on: tensorzero-ci
     timeout-minutes: 90
     permissions:
       contents: read # Required for checkout or repository metadata reads.
@@ -47,7 +48,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # Persistent named builder so BuildKit state (including the RUN --mount=type=cache
+      # cargo caches in the Dockerfiles) survives across runs on this machine.
+      - name: Set up buildx
+        run: |
+          docker version
+          docker buildx create --name tz-builder --driver docker-container --use --bootstrap 2>/dev/null || docker buildx use tz-builder
+          docker buildx inspect --bootstrap
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -75,13 +82,14 @@ jobs:
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/mnt/runner/buildx-cache/tensorzero/gateway
+          cache-to: type=local,dest=/mnt/runner/buildx-cache/tensorzero/gateway,mode=max
 
   ui:
     name: Build UI
     if: github.repository == 'TheDeltaLab/tensorzero'
-    runs-on: ubuntu-latest
+    # Self-hosted runner (CI builder VM, data disk on /mnt/runner) with host-disk build cache.
+    runs-on: tensorzero-ci
     timeout-minutes: 90
     permissions:
       contents: read # Required for checkout or repository metadata reads.
@@ -93,7 +101,13 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # Persistent named builder so BuildKit state (including the RUN --mount=type=cache
+      # cargo caches in the Dockerfiles) survives across runs on this machine.
+      - name: Set up buildx
+        run: |
+          docker version
+          docker buildx create --name tz-builder --driver docker-container --use --bootstrap 2>/dev/null || docker buildx use tz-builder
+          docker buildx inspect --bootstrap
 
       - name: Log in to GHCR
         if: github.event_name != 'pull_request'
@@ -121,5 +135,5 @@ jobs:
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=local,src=/mnt/runner/buildx-cache/tensorzero/ui
+          cache-to: type=local,dest=/mnt/runner/buildx-cache/tensorzero/ui,mode=max
