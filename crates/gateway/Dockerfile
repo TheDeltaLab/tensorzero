@@ -16,6 +16,10 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 ARG CARGO_BUILD_FLAGS
 ARG PROFILE
+# Cap cargo parallelism: the CI runner is an 8-core VM shared by concurrent
+# image builds, and uncapped parallel rustc + fat LTO exhausted it (Delta-AI fork).
+ARG CARGO_BUILD_JOBS=4
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 WORKDIR /tensorzero
 ENV CARGO_INCREMENTAL=0
 RUN apt-get update && apt-get install -y clang libc++-dev && rm -rf /var/lib/apt/lists/*
