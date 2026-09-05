@@ -35,6 +35,10 @@ RUN pnpm install --frozen-lockfile --prod
 
 FROM rust:1.94.0 AS tensorzero-node-build-env
 ARG DEBUG_BUILD
+# Cap cargo parallelism: the CI runner is an 8-core VM shared by concurrent
+# image builds, and uncapped parallel rustc exhausted it (Delta-AI fork).
+ARG CARGO_BUILD_JOBS=4
+ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 
 # Install Node.js 24 (required by @napi-rs/cli v3)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
