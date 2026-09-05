@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT protected_at AS \"protected_at!\"\n            FROM tensorzero.json_inferences_archive\n            WHERE id = $1 AND created_at = $2\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "protected_at!",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.json_inferences_archive",
+            "name": "protected_at"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "163a79b376e88675aa684f9d7c9ece4dbcce1e739931950d83e5bb63b9cc7337"
+}

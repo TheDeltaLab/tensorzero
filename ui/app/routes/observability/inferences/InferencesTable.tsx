@@ -15,7 +15,7 @@ import { TableItemTime } from "~/components/ui/TableItems";
 import { toInferenceUrl, toEpisodeUrl, toFunctionUrl } from "~/utils/urls";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
-import { Eye, Layers } from "lucide-react";
+import { Eye, Layers, ShieldCheck } from "lucide-react";
 import { Suspense, type ReactNode } from "react";
 import {
   Link,
@@ -64,6 +64,8 @@ export type InferencesData = {
   inferences: InferenceListRow[];
   hasNextPage: boolean;
   hasPreviousPage: boolean;
+  /** inference id → protected_at, for inferences protected from cleanup */
+  protection: Record<string, string>;
 };
 
 const COLUMN_COUNT = 14;
@@ -156,9 +158,24 @@ function TableRows({ data }: { data: InferencesData }) {
             onClick={() => navigate(inferenceUrl)}
           >
             <TableCell className="text-sm">
-              <TableItemTime
-                timestamp={uuidv7ToTimestamp(inference.id).toISOString()}
-              />
+              <span className="inline-flex items-center gap-1">
+                <TableItemTime
+                  timestamp={uuidv7ToTimestamp(inference.id).toISOString()}
+                />
+                {data.protection[inference.id] !== undefined && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <ShieldCheck
+                        className="text-muted-foreground h-4 w-4"
+                        aria-label="Protected from cleanup"
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      Protected from cleanup — archived permanently
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </span>
             </TableCell>
             <TableCell>
               {provider ? (

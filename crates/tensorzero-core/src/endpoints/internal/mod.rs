@@ -9,6 +9,8 @@ pub mod evaluations;
 pub mod inference_api_keys;
 pub mod inference_count;
 pub mod inference_metadata;
+pub mod inference_protection;
+pub mod inference_storage;
 pub mod model_inferences;
 pub mod models;
 pub mod resolve_uuid;

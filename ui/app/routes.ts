@@ -63,6 +63,11 @@ export default [
     ),
 
     route(
+      "inference/:inference_id/protection",
+      "routes/api/inference/$inference_id/protection/route.ts",
+    ),
+
+    route(
       "datasets/datapoints/from-inference",
       "routes/api/datasets/datapoints/from-inference/route.ts",
     ),
@@ -201,6 +206,9 @@ export default [
 
   // API Keys
   route("api-keys", "routes/api-keys/route.tsx"),
+
+  // Inference storage management
+  route("storage", "routes/storage/route.tsx"),
 
   // Async Tasks
   route("async-tasks", "routes/async-tasks/route.tsx"),

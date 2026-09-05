@@ -17,6 +17,7 @@ import {
 import {
   BarChart3,
   FileCode2,
+  HardDrive,
   KeyRound,
   LayoutGrid,
   ListChecks,
@@ -136,6 +137,11 @@ const navigation: NavigationSection[] = [
         title: "API Keys",
         url: "/api-keys",
         icon: KeyRound,
+      },
+      {
+        title: "Storage",
+        url: "/storage",
+        icon: HardDrive,
       },
       {
         title: "Users",

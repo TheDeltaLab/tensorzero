@@ -108,6 +108,24 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
             "/internal/inference_metadata",
             get(endpoints::internal::inference_metadata::get_inference_metadata_handler),
         )
+        // Inference storage stats and retention endpoints
+        .route(
+            "/internal/inference_storage/stats",
+            get(endpoints::internal::inference_storage::get_inference_storage_stats_handler),
+        )
+        .route(
+            "/internal/inference_storage/retention",
+            post(endpoints::internal::inference_storage::update_inference_retention_handler),
+        )
+        // Inference protection endpoints
+        .route(
+            "/internal/inferences/{inference_id}/protection",
+            post(endpoints::internal::inference_protection::set_inference_protection_handler),
+        )
+        .route(
+            "/internal/inferences/protection",
+            post(endpoints::internal::inference_protection::get_inferences_protection_handler),
+        )
         .route(
             "/internal/ui_config",
             get(endpoints::ui::get_config::ui_config_handler),

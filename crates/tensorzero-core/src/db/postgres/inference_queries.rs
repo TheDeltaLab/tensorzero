@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Inference queries for Postgres.
 //!
 //! This module implements read and write operations for inference tables in Postgres.
@@ -847,6 +848,52 @@ fn build_inference_metadata_query(
 
 // ===== Helper functions for chat inference queries =====
 
+// FROM-clause fragments that UNION ALL each live inference table with its
+// archive table. Used only by the get-inferences-by-ids path (detail page
+// reads) so that protected inferences remain fully readable after retention
+// drops the live partitions. Explicit column lists are required because the
+// archive metadata tables carry an extra trailing `protected_at` column.
+const CHAT_INFERENCES_WITH_ARCHIVE: &str = r"
+    (
+        SELECT id, function_name, variant_name, episode_id,
+               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+        FROM tensorzero.chat_inferences
+        UNION ALL
+        SELECT id, function_name, variant_name, episode_id,
+               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+        FROM tensorzero.chat_inferences_archive
+    )";
+const CHAT_INFERENCE_DATA_WITH_ARCHIVE: &str = r"
+    (
+        SELECT id, input, output, inference_params, extra_body, dynamic_tools,
+               dynamic_provider_tools, allowed_tools, tool_choice, parallel_tool_calls, created_at
+        FROM tensorzero.chat_inference_data
+        UNION ALL
+        SELECT id, input, output, inference_params, extra_body, dynamic_tools,
+               dynamic_provider_tools, allowed_tools, tool_choice, parallel_tool_calls, created_at
+        FROM tensorzero.chat_inference_data_archive
+    )";
+const JSON_INFERENCES_WITH_ARCHIVE: &str = r"
+    (
+        SELECT id, function_name, variant_name, episode_id,
+               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+        FROM tensorzero.json_inferences
+        UNION ALL
+        SELECT id, function_name, variant_name, episode_id,
+               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+        FROM tensorzero.json_inferences_archive
+    )";
+const JSON_INFERENCE_DATA_WITH_ARCHIVE: &str = r"
+    (
+        SELECT id, input, output, output_schema, inference_params, extra_body,
+               auxiliary_content, created_at
+        FROM tensorzero.json_inference_data
+        UNION ALL
+        SELECT id, input, output, output_schema, inference_params, extra_body,
+               auxiliary_content, created_at
+        FROM tensorzero.json_inference_data_archive
+    )";
+
 /// Builds the query for listing chat inferences.
 /// This is separated from execution to allow unit testing of the generated SQL.
 fn build_chat_inferences_query(
@@ -865,6 +912,20 @@ fn build_chat_inferences_query(
         InferenceOutputSource::Demonstration => {
             "demo_f.value AS output, io.output as dispreferred_output"
         }
+    };
+
+    // When querying by explicit ids (detail page reads), also read from the
+    // archive tables so protected inferences survive retention.
+    let include_archive = params.ids.is_some();
+    let inferences_table = if include_archive {
+        CHAT_INFERENCES_WITH_ARCHIVE
+    } else {
+        "tensorzero.chat_inferences"
+    };
+    let data_table = if include_archive {
+        CHAT_INFERENCE_DATA_WITH_ARCHIVE
+    } else {
+        "tensorzero.chat_inference_data"
     };
 
     let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
@@ -888,8 +949,8 @@ fn build_chat_inferences_query(
             i.processing_time_ms,
             i.ttft_ms,
             i.snapshot_hash
-        FROM tensorzero.chat_inferences i
-        LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
+        FROM {inferences_table} i
+        LEFT JOIN {data_table} io ON io.id = i.id AND io.created_at = i.created_at
         "
     ));
 
@@ -1012,6 +1073,20 @@ fn build_json_inferences_query(
         }
     };
 
+    // When querying by explicit ids (detail page reads), also read from the
+    // archive tables so protected inferences survive retention.
+    let include_archive = params.ids.is_some();
+    let inferences_table = if include_archive {
+        JSON_INFERENCES_WITH_ARCHIVE
+    } else {
+        "tensorzero.json_inferences"
+    };
+    let data_table = if include_archive {
+        JSON_INFERENCE_DATA_WITH_ARCHIVE
+    } else {
+        "tensorzero.json_inference_data"
+    };
+
     let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
         r"
         SELECT
@@ -1029,8 +1104,8 @@ fn build_json_inferences_query(
             i.processing_time_ms,
             i.ttft_ms,
             i.snapshot_hash
-        FROM tensorzero.json_inferences i
-        LEFT JOIN tensorzero.json_inference_data io ON io.id = i.id AND io.created_at = i.created_at
+        FROM {inferences_table} i
+        LEFT JOIN {data_table} io ON io.id = i.id AND io.created_at = i.created_at
         "
     ));
 
@@ -1366,6 +1441,26 @@ fn build_inferences_union_query(
         ""
     };
 
+    // When querying by explicit ids (detail page reads), also read from the
+    // archive tables so protected inferences survive retention.
+    let include_archive = params.ids.is_some();
+    let (chat_inferences_table, chat_data_table, json_inferences_table, json_data_table) =
+        if include_archive {
+            (
+                CHAT_INFERENCES_WITH_ARCHIVE,
+                CHAT_INFERENCE_DATA_WITH_ARCHIVE,
+                JSON_INFERENCES_WITH_ARCHIVE,
+                JSON_INFERENCE_DATA_WITH_ARCHIVE,
+            )
+        } else {
+            (
+                "tensorzero.chat_inferences",
+                "tensorzero.chat_inference_data",
+                "tensorzero.json_inferences",
+                "tensorzero.json_inference_data",
+            )
+        };
+
     // Build the entire query using a single QueryBuilder to properly handle bind parameters
     let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
         r"
@@ -1391,8 +1486,8 @@ fn build_inferences_union_query(
                 i.processing_time_ms,
                 i.ttft_ms,
                 i.snapshot_hash
-            FROM tensorzero.chat_inferences i
-            LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
+            FROM {chat_inferences_table} i
+            LEFT JOIN {chat_data_table} io ON io.id = i.id AND io.created_at = i.created_at
             {demo_join}
             WHERE TRUE"
     ));
@@ -1430,8 +1525,8 @@ fn build_inferences_union_query(
                 i.processing_time_ms,
                 i.ttft_ms,
                 i.snapshot_hash
-            FROM tensorzero.json_inferences i
-            LEFT JOIN tensorzero.json_inference_data io ON io.id = i.id AND io.created_at = i.created_at
+            FROM {json_inferences_table} i
+            LEFT JOIN {json_data_table} io ON io.id = i.id AND io.created_at = i.created_at
             {demo_join}
             WHERE TRUE"
     ));

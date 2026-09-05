@@ -28,7 +28,9 @@ pub mod feedback;
 mod file_writes;
 pub mod function_config_writes;
 mod howdy_queries;
+pub mod inference_protection;
 pub mod inference_queries;
+pub mod inference_storage;
 pub mod model_inferences;
 pub mod postgres_setup;
 pub mod rate_limiting;
@@ -249,6 +251,9 @@ impl PostgresConnectionInfo {
 
     /// Writes retention configuration to the `tensorzero.retention_config` table.
     /// This is called on gateway startup to sync config from tensorzero.toml to Postgres.
+    /// Values explicitly set in tensorzero.toml take precedence and overwrite the
+    /// database. Keys absent from tensorzero.toml are left untouched so that
+    /// values configured via the dashboard survive restarts.
     pub async fn write_retention_config(
         &self,
         inference_metadata_retention_days: Option<u32>,
@@ -297,39 +302,28 @@ impl PostgresConnectionInfo {
         key: &str,
         value: Option<u32>,
     ) -> Result<(), DelayedError> {
-        match value {
-            Some(days) => {
-                sqlx::query!(
-                    r"
+        // When the key is absent from tensorzero.toml, leave any existing
+        // database value in place: it may have been configured via the
+        // dashboard. Use the internal retention API to clear it.
+        let Some(days) = value else {
+            return Ok(());
+        };
+        sqlx::query!(
+            r"
                     INSERT INTO tensorzero.retention_config (key, value, updated_at)
                     VALUES ($1, $2, NOW())
                     ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
                     ",
-                    key,
-                    days.to_string(),
-                )
-                .execute(pool)
-                .await
-                .map_err(|e| {
-                    DelayedError::new(ErrorDetails::PostgresQuery {
-                        message: format!("Failed to write `{key}` config: {e}"),
-                    })
-                })?;
-            }
-            None => {
-                sqlx::query!(
-                    "DELETE FROM tensorzero.retention_config WHERE key = $1",
-                    key
-                )
-                .execute(pool)
-                .await
-                .map_err(|e| {
-                    DelayedError::new(ErrorDetails::PostgresQuery {
-                        message: format!("Failed to clear `{key}` config: {e}"),
-                    })
-                })?;
-            }
-        }
+            key,
+            days.to_string(),
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            DelayedError::new(ErrorDetails::PostgresQuery {
+                message: format!("Failed to write `{key}` config: {e}"),
+            })
+        })?;
         Ok(())
     }
 }

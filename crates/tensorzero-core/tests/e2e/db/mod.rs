@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Database E2E tests and helpers.
 //!
 //! This module provides connection helpers for e2e tests against ClickHouse and Postgres.
@@ -40,7 +41,7 @@ mod inference_count_queries;
 mod inference_queries;
 mod model_inference_queries;
 mod model_provider_statistics_queries;
-mod postgres;
+pub mod postgres;
 mod rate_limit_queries;
 mod variant_statistics_queries;
 mod workflow_evaluation_queries;
