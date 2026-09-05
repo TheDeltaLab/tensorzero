@@ -45,6 +45,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/tensorzero-core/tests/load/synapse-compat/bodies/rerank.json` — Load-test body (Delta-AI fork).
 - `crates/tensorzero-core/tests/load/synapse-compat/bodies/completions.json` — Load-test body (Delta-AI fork).
 - `crates/tensorzero-core/tests/load/synapse-compat/bodies/responses.json` — Load-test body (Delta-AI fork).
+- `.github/workflows/codeql.yml` — Disabled automatic push/PR/scheduled triggers; manual `workflow_dispatch` only (Delta-AI fork).
 
 - `crates/Cargo.toml` — Added `async-inference` workspace member for the async inference API worker (Delta-AI fork).
 - `crates/Cargo.lock` — Workspace lockfile updated for the `async-inference` crate and its deps (Delta-AI fork).

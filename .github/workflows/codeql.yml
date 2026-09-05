@@ -1,15 +1,9 @@
 name: "CodeQL Advanced"
 
+# Manual trigger only (Delta-AI fork): automatic push/PR/scheduled CodeQL runs are disabled.
 on:
-  push:
-    branches: ["main"]
-  pull_request:
-    branches: ["main"]
-  schedule:
-    - cron: "0 6 * * 1"
+  workflow_dispatch:
 
-# Don't cancel in-progress runs: cancelling can abort the SARIF upload mid-flight,
-# leaving the PR head SHA with no Code Scanning results and blocking branch protection.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
