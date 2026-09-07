@@ -15,12 +15,28 @@ on:
       - ".github/workflows/publish-ghcr.yml"
   release:
     types: [published]
+  schedule:
+    # 03:00 Asia/Shanghai (19:00 UTC): backfill a fat-LTO gateway image for the
+    # latest release if none was published (Delta-AI fork).
+    - cron: "0 19 * * *"
   workflow_dispatch:
     inputs:
       push:
         description: "Push images to GHCR"
         type: boolean
         default: true
+      lto:
+        description: "LTO level for the gateway build (none = fastest build, fat = best runtime)"
+        type: choice
+        options:
+          - none
+          - thin
+          - fat
+        default: none
+      ref:
+        description: "Git ref to build (branch, tag, or SHA; empty = current ref)"
+        type: string
+        default: ""
 
 concurrency:
   group: publish-ghcr-${{ github.ref }}
@@ -34,7 +50,7 @@ env:
 jobs:
   gateway:
     name: Build gateway
-    if: github.repository == 'TheDeltaLab/tensorzero'
+    if: github.repository == 'TheDeltaLab/tensorzero' && github.event_name != 'schedule'
     # Self-hosted runner (CI builder VM, data disk on /mnt/runner) with host-disk build cache.
     runs-on: tensorzero-ci
     timeout-minutes: 90
@@ -46,7 +62,30 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
+
+      # Map the requested LTO level to a cargo profile. `push` builds skip LTO
+      # entirely (plain `release`): fat LTO + codegen-units=1 takes ~20 min of
+      # single-threaded work on this crate and its gains are negligible for an
+      # I/O-bound gateway (Delta-AI fork).
+      - name: Resolve gateway build profile
+        id: gw
+        run: |
+          case "${{ github.event_name }}" in
+            release) lto=thin ;;
+            workflow_dispatch) lto="${{ inputs.lto }}" ;;
+            *) lto=none ;;
+          esac
+          case "$lto" in
+            thin) profile=thin ;;
+            fat) profile=performance ;;
+            *) lto=none; profile=release ;;
+          esac
+          suffix=""
+          if [ "$lto" != "none" ]; then suffix="-$lto"; fi
+          echo "profile=$profile" >> "$GITHUB_OUTPUT"
+          echo "suffix=$suffix" >> "$GITHUB_OUTPUT"
 
       # Persistent named builder so BuildKit state (including the RUN --mount=type=cache
       # cargo caches in the Dockerfiles) survives across runs on this machine.
@@ -71,7 +110,7 @@ jobs:
           tags: |
             type=raw,value=nightly,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
-            type=sha,prefix=sha-,format=short
+            type=sha,prefix=sha-,format=short,suffix=${{ steps.gw.outputs.suffix }}
             type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
 
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -80,6 +119,8 @@ jobs:
           file: crates/gateway/Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'workflow_dispatch' || inputs.push }}
+          build-args: |
+            PROFILE=${{ steps.gw.outputs.profile }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/mnt/runner/buildx-cache/tensorzero/gateway
@@ -87,7 +128,7 @@ jobs:
 
   ui:
     name: Build UI
-    if: github.repository == 'TheDeltaLab/tensorzero'
+    if: github.repository == 'TheDeltaLab/tensorzero' && github.event_name != 'schedule'
     # Self-hosted runner (CI builder VM, data disk on /mnt/runner) with host-disk build cache.
     runs-on: tensorzero-ci
     timeout-minutes: 90
@@ -99,6 +140,7 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
       # Persistent named builder so BuildKit state (including the RUN --mount=type=cache
@@ -137,3 +179,42 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/mnt/runner/buildx-cache/tensorzero/ui
           cache-to: type=local,dest=/mnt/runner/buildx-cache/tensorzero/ui,mode=max
+
+  # Scheduled backfill: if the latest GitHub release has no fat-LTO gateway
+  # image (`sha-<short>-fat` tag), dispatch this same workflow to build one
+  # from the release tag (Delta-AI fork).
+  ensure-release-fat:
+    name: Ensure latest release has fat gateway image
+    if: github.event_name == 'schedule' && github.repository == 'TheDeltaLab/tensorzero'
+    runs-on: tensorzero-ci
+    timeout-minutes: 15
+    permissions:
+      contents: read # Required to resolve the latest release tag to a commit.
+      packages: read # Required to check whether the fat image tag exists in GHCR.
+      actions: write # Required to dispatch this workflow when the image is missing.
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@74a5d142397b4f367a81961eba4e8cd7edddf772 # v3.4.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check for fat image of latest release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name)"
+          echo "Latest release: $tag"
+          sha="$(gh api "repos/${{ github.repository }}/commits/$tag" --jq .sha)"
+          short="${sha:0:7}"
+          image="${{ env.REGISTRY }}/thedeltalab/tensorzero/gateway:sha-${short}-fat"
+          if docker manifest inspect "$image" > /dev/null 2>&1; then
+            echo "Fat image already exists: $image"
+            exit 0
+          fi
+          echo "Fat image missing for release $tag ($short); dispatching fat build"
+          gh workflow run publish-ghcr.yml \
+            --repo "${{ github.repository }}" \
+            -f push=true -f lto=fat -f ref="$tag"
