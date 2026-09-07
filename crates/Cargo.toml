@@ -226,3 +226,10 @@ inherits = "release"
 lto = "fat"
 codegen-units = 1
 incremental = false
+
+# Thin-LTO release build for GHCR images: recovers most of fat LTO's runtime
+# benefit in a fraction of the compile time (Delta-AI fork).
+[profile.thin]
+inherits = "release"
+lto = "thin"
+incremental = false

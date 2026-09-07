@@ -17,7 +17,7 @@ See `NOTICE` for the overall attribution statement.
 - `docs/synapse-migration-plan.md` — Synapse → TensorZero migration plan (Delta-AI fork).
 - `docs/superpowers/plans/2026-06-22-model-alias.md` — Model alias implementation plan (Delta-AI fork).
 - `.github/workflows/general.yml` — Changed lint-rust from 4-partition `cargo hack --each-feature` to single `cargo clippy --all-features` (Delta-AI fork).
-- `.github/workflows/publish-ghcr.yml` — Publish gateway and UI images to GHCR for this fork; runs on self-hosted `tensorzero-ci` runner with host-disk buildx layer cache under `/mnt/runner/buildx-cache` and a persistent named builder (Delta-AI fork).
+- `.github/workflows/publish-ghcr.yml` — Publish gateway and UI images to GHCR for this fork; runs on self-hosted `tensorzero-ci` runner with host-disk buildx layer cache under `/mnt/runner/buildx-cache` and a persistent named builder (Delta-AI fork). Gateway LTO level is selectable: `push` builds use plain `release` (no LTO), release builds use thin LTO, and `workflow_dispatch` accepts `lto` (none/thin/fat) and `ref` inputs; non-default LTO builds get `-thin`/`-fat` image tag suffixes. A 03:00 Asia/Shanghai schedule backfills a fat-LTO image for the latest release when missing.
 - `crates/gateway/Dockerfile` — Default container bind address `0.0.0.0:3720`; cargo registry/target BuildKit cache mounts for faster rebuilds; `CARGO_BUILD_JOBS=4` default to cap parallelism on the shared CI runner (Delta-AI fork).
 - `ui/Dockerfile` — Default UI listen port `3721`; cargo registry/target BuildKit cache mounts in the tensorzero-node build stage; `CARGO_BUILD_JOBS=4` default to cap parallelism on the shared CI runner (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.model_aliases.toml` — E2E alias failover fixtures (Delta-AI fork).
@@ -25,6 +25,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/Cargo.lock` — Workspace lockfile for Synapse-compat auth (bcrypt) and HTTP timeout deps (Delta-AI fork).
 - `.github/workflows/modification-notice-check.yml` — Exclude generated ts-rs bindings from header notice check (Delta-AI fork).
 - `crates/Cargo.toml` — Added chrono-tz for peak/off-peak cost windows (Delta-AI fork).
+- `crates/Cargo.toml` — Added `profile.thin` (thin LTO release build) for faster GHCR image builds (Delta-AI fork).
 - `crates/tensorzero-core/Cargo.toml` — Added chrono-tz for peak/off-peak cost windows (Delta-AI fork).
 - `docs/operations/track-usage-and-cost.mdx` — Documented per-provider usage pointers, peak windows, pointer lists, token-length tiers, currency, and tag filters (Delta-AI fork).
 - `docs/gateway/api-reference/inference-openai-compatible.mdx` — Documented `x-tensorzero-*` header aliases, episode-id header, and `x-tensorzero-tags` (Delta-AI fork).
