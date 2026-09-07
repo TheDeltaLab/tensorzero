@@ -297,6 +297,7 @@ export class TensorZeroClient extends BaseTensorZeroClient {
     apiKey?: string;
     model?: string;
     cacheMissOnly?: boolean;
+    tagKey?: string;
   }): Promise<AnalysisResponse> {
     const params = new URLSearchParams({
       range: options.range,
@@ -310,6 +311,9 @@ export class TensorZeroClient extends BaseTensorZeroClient {
     }
     if (options.cacheMissOnly) {
       params.set("cache_miss_only", "true");
+    }
+    if (options.tagKey?.trim()) {
+      params.set("tag_key", options.tagKey.trim());
     }
     const response = await this.fetch(
       `/internal/synapse/analysis?${params.toString()}`,

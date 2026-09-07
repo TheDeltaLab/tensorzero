@@ -17,8 +17,10 @@ import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { ChartContainer, ChartTooltip } from "~/components/ui/chart";
 import { CHART_COLORS } from "~/utils/chart";
+import { formatCost } from "~/utils/cost";
 import {
   formatBucketLabel,
+  type AnalysisCostByTag,
   type AnalysisCountPoint,
   type AnalysisModelStats,
   type AnalysisPercentilePoint,
@@ -645,6 +647,126 @@ export function EmbeddingModelBars({ data }: { data: AnalysisModelStats[] }) {
             <ChartTooltip />
             <Bar dataKey="count" name="Requests" fill="var(--color-count)" />
           </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+function costByTagRows(data: AnalysisCostByTag[], currency: string) {
+  return data
+    .filter((row) => row.currency === currency)
+    .sort((left, right) => right.total - left.total)
+    .map((row, index) => ({
+      name: row.tag_value,
+      value: row.total,
+      fill: CHART_COLORS[index % CHART_COLORS.length],
+    }));
+}
+
+export function CostByTagBarChart({
+  data,
+  tagKey,
+  currency,
+}: {
+  data: AnalysisCostByTag[];
+  tagKey: string;
+  currency: string;
+}) {
+  const chartData = costByTagRows(data, currency);
+  if (chartData.length === 0) {
+    return <EmptyChart title={`Cost by ${tagKey} (${currency})`} />;
+  }
+  const config = Object.fromEntries(
+    chartData.map((row) => [row.name, { label: row.name, color: row.fill }]),
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          Cost by {tagKey} ({currency})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer className="h-[300px]" config={config}>
+          <BarChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" />
+            <XAxis
+              dataKey="name"
+              tick={{ fontSize: 12 }}
+              interval={0}
+              angle={chartData.length > 5 ? -25 : 0}
+              textAnchor={chartData.length > 5 ? "end" : "middle"}
+              height={chartData.length > 5 ? 60 : 30}
+            />
+            <YAxis
+              tick={{ fontSize: 12 }}
+              tickFormatter={(value: number) => formatCost(value, currency)}
+              width={90}
+            />
+            <ChartTooltip
+              formatter={(value) => formatCost(Number(value), currency)}
+            />
+            <Bar dataKey="value" name={currency}>
+              {chartData.map((row) => (
+                <Cell key={row.name} fill={row.fill} />
+              ))}
+            </Bar>
+          </BarChart>
+        </ChartContainer>
+      </CardContent>
+    </Card>
+  );
+}
+
+export function CostByTagPieChart({
+  data,
+  tagKey,
+  currency,
+}: {
+  data: AnalysisCostByTag[];
+  tagKey: string;
+  currency: string;
+}) {
+  const chartData = costByTagRows(data, currency);
+  if (chartData.length === 0) {
+    return <EmptyChart title={`Cost Share by ${tagKey} (${currency})`} />;
+  }
+  const config = Object.fromEntries(
+    chartData.map((row) => [row.name, { label: row.name, color: row.fill }]),
+  );
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">
+          Cost Share by {tagKey} ({currency})
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <ChartContainer className="h-[300px]" config={config}>
+          <PieChart>
+            <Pie
+              data={chartData}
+              dataKey="value"
+              nameKey="name"
+              cx="50%"
+              cy="50%"
+              innerRadius={60}
+              outerRadius={100}
+              paddingAngle={2}
+              label={({ name, percent }: { name?: string; percent?: number }) =>
+                `${name ?? ""} (${((percent ?? 0) * 100).toFixed(0)}%)`
+              }
+            >
+              {chartData.map((row) => (
+                <Cell key={row.name} fill={row.fill} />
+              ))}
+            </Pie>
+            <ChartTooltip
+              formatter={(value) => formatCost(Number(value), currency)}
+            />
+            <Legend />
+          </PieChart>
         </ChartContainer>
       </CardContent>
     </Card>

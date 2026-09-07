@@ -11,6 +11,7 @@ export type AnalysisQueryValues = {
   apiKey: string;
   model: string;
   cacheMissOnly: boolean;
+  tagKey: string;
 };
 
 export const DEFAULT_ANALYSIS_QUERY: AnalysisQueryValues = {
@@ -19,6 +20,7 @@ export const DEFAULT_ANALYSIS_QUERY: AnalysisQueryValues = {
   apiKey: "",
   model: "",
   cacheMissOnly: false,
+  tagKey: "",
 };
 
 export type AnalysisProviderStats = {
@@ -58,6 +60,12 @@ export type AnalysisTokenPoint = {
   count: number;
 };
 
+export type AnalysisCostByTag = {
+  tag_value: string;
+  currency: string;
+  total: number;
+};
+
 export type AnalysisResponse = {
   total_requests: number;
   total_responses: number;
@@ -80,6 +88,8 @@ export type AnalysisResponse = {
   latency_over_time: AnalysisPercentilePoint[];
   ttft_over_time: AnalysisPercentilePoint[];
   output_tps_over_time: AnalysisPercentilePoint[];
+  tag_keys: string[];
+  cost_by_tag: AnalysisCostByTag[];
 };
 
 export function parseAnalysisQuery(
@@ -98,6 +108,7 @@ export function parseAnalysisQuery(
     apiKey: params.get("api_key") ?? "",
     model: params.get("model") ?? "",
     cacheMissOnly: cacheMiss === "true",
+    tagKey: params.get("tag_key") ?? "",
   };
 }
 
@@ -119,6 +130,9 @@ export function analysisSearchParams(
   }
   if (query.cacheMissOnly) {
     params.set("cache_miss_only", "true");
+  }
+  if (query.tagKey.trim()) {
+    params.set("tag_key", query.tagKey.trim());
   }
   return params;
 }

@@ -29,6 +29,18 @@ END";
 
 const CANONICAL_MODEL_NAME_SQL: &str = "regexp_replace(mi.model_name, '^.*::', '')";
 
+/// Billed currency, normalized for display: missing/empty defaults to `USD`,
+/// and the legacy `RMB` spelling is normalized to `CNY`. Currencies are never
+/// converted; each is summed independently.
+const CURRENCY_SQL: &str = "UPPER(CASE \
+    WHEN mi.currency IS NULL OR btrim(mi.currency) = '' THEN 'USD' \
+    WHEN UPPER(mi.currency) = 'RMB' THEN 'CNY' \
+    ELSE mi.currency \
+END)";
+
+/// Tag value bucket for inferences that do not carry the requested tag key.
+const NO_TAG_BUCKET: &str = "(no tag)";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalysisRange {
     FifteenMinutes,
@@ -56,6 +68,8 @@ pub struct AnalysisQuery {
     pub model: Option<String>,
     #[serde(default)]
     pub cache_miss_only: bool,
+    #[serde(default)]
+    pub tag_key: Option<String>,
 }
 
 fn default_range() -> String {
@@ -132,6 +146,20 @@ pub struct AnalysisResponse {
     pub latency_over_time: Vec<AnalysisPercentilePoint>,
     pub ttft_over_time: Vec<AnalysisPercentilePoint>,
     pub output_tps_over_time: Vec<AnalysisPercentilePoint>,
+    /// Distinct user tag keys (excluding `tensorzero::` system keys) seen in
+    /// the selected time window, for the cost-by-tag dropdown.
+    pub tag_keys: Vec<String>,
+    /// Cost grouped by the requested `tag_key` value, split per billed
+    /// currency. Empty when no `tag_key` was requested. Rows without the tag
+    /// are bucketed as `(no tag)`.
+    pub cost_by_tag: Vec<AnalysisCostByTag>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AnalysisCostByTag {
+    pub tag_value: String,
+    pub currency: String,
+    pub total: f64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -149,6 +177,13 @@ struct TotalsRow {
 
 #[derive(sqlx::FromRow)]
 struct CostByCurrencyRow {
+    currency: String,
+    total: f64,
+}
+
+#[derive(sqlx::FromRow)]
+struct CostByTagRow {
+    tag_value: String,
     currency: String,
     total: f64,
 }
@@ -196,6 +231,7 @@ struct AnalysisParams {
     api_key: Option<String>,
     model: Option<String>,
     cache_miss_only: bool,
+    tag_key: Option<String>,
 }
 
 impl AnalysisRange {
@@ -259,6 +295,12 @@ fn canonical_model_name(name: &str) -> &str {
         Some((_, rest)) if !rest.is_empty() => rest,
         _ => name,
     }
+}
+
+/// Trimmed, non-empty tag key requested for cost grouping.
+fn normalize_tag_key(raw: Option<String>) -> Option<String> {
+    let key = raw?.trim().to_string();
+    if key.is_empty() { None } else { Some(key) }
 }
 
 /// Input cache hit rate as a percentage: cache-read input tokens / prompt input tokens.
@@ -375,14 +417,9 @@ async fn fetch_costs_by_currency(
     pool: &sqlx::PgPool,
     params: &AnalysisParams,
 ) -> Result<BTreeMap<String, f64>, Error> {
-    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
-        "SELECT UPPER(CASE \
-            WHEN mi.currency IS NULL OR btrim(mi.currency) = '' THEN 'USD' \
-            WHEN UPPER(mi.currency) = 'RMB' THEN 'CNY' \
-            ELSE mi.currency \
-        END) as currency, \
-        COALESCE(SUM(mi.cost), 0)::FLOAT8 as total",
-    );
+    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
+        "SELECT {CURRENCY_SQL} as currency, COALESCE(SUM(mi.cost), 0)::FLOAT8 as total"
+    ));
     push_from_and_filters(&mut query_builder, params, true);
     query_builder.push(" AND mi.cost IS NOT NULL GROUP BY 1 ORDER BY 1");
     let rows: Vec<CostByCurrencyRow> = query_builder
@@ -398,6 +435,91 @@ async fn fetch_costs_by_currency(
         .into_iter()
         .map(|row| (row.currency, row.total))
         .collect())
+}
+
+/// Distinct user tag keys (excluding `tensorzero::` system keys) in the time
+/// window. Reads the inference tables directly, so the `model` and
+/// `cache_miss_only` filters (defined on `model_inferences`) do not apply.
+async fn fetch_tag_keys(
+    pool: &sqlx::PgPool,
+    params: &AnalysisParams,
+) -> Result<Vec<String>, Error> {
+    let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+        "SELECT DISTINCT k.key FROM ( \
+            SELECT tags, function_name, created_at FROM tensorzero.chat_inferences \
+            UNION ALL \
+            SELECT tags, function_name, created_at FROM tensorzero.json_inferences \
+         ) i \
+         CROSS JOIN LATERAL jsonb_object_keys(i.tags) AS k(key) \
+         WHERE i.created_at >= ",
+    );
+    query_builder.push_bind(params.from);
+    query_builder.push(" AND i.created_at < ");
+    query_builder.push_bind(params.to);
+    match params.kind {
+        AnalysisKind::Chat => {
+            query_builder.push(" AND i.function_name <> ");
+            query_builder.push_bind(EMBEDDING_FUNCTION_NAME);
+            query_builder.push(" AND i.function_name <> ");
+            query_builder.push_bind(RERANK_FUNCTION_NAME);
+        }
+        AnalysisKind::Embedding => {
+            query_builder.push(" AND i.function_name = ");
+            query_builder.push_bind(EMBEDDING_FUNCTION_NAME);
+        }
+    }
+    if let Some(api_key) = params
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
+        query_builder.push(" AND i.tags ->> ");
+        query_builder.push_bind(API_KEY_PUBLIC_ID_TAG);
+        query_builder.push(" = ");
+        query_builder.push_bind(api_key);
+    }
+    query_builder.push(" AND k.key NOT LIKE 'tensorzero::%' ORDER BY k.key LIMIT 200");
+    query_builder
+        .build_query_scalar::<String>()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            Error::new(ErrorDetails::PostgresQuery {
+                message: format!("Failed to load Analysis tag keys: {e}"),
+            })
+        })
+}
+
+/// Cost grouped by the requested tag key value, split per billed currency.
+/// Inferences without the tag fall into the `(no tag)` bucket.
+async fn fetch_costs_by_tag(
+    pool: &sqlx::PgPool,
+    params: &AnalysisParams,
+) -> Result<Vec<CostByTagRow>, Error> {
+    let Some(tag_key) = params.tag_key.as_deref() else {
+        return Ok(Vec::new());
+    };
+    let mut query_builder: QueryBuilder<sqlx::Postgres> =
+        QueryBuilder::new("SELECT COALESCE(i.tags ->> ");
+    query_builder.push_bind(tag_key);
+    query_builder.push(", ");
+    query_builder.push_bind(NO_TAG_BUCKET);
+    query_builder.push(format!(
+        ") as tag_value, {CURRENCY_SQL} as currency, \
+         COALESCE(SUM(mi.cost), 0)::FLOAT8 as total"
+    ));
+    push_from_and_filters(&mut query_builder, params, true);
+    query_builder.push(" AND mi.cost IS NOT NULL GROUP BY 1, 2 ORDER BY 1, 2");
+    query_builder
+        .build_query_as()
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            Error::new(ErrorDetails::PostgresQuery {
+                message: format!("Failed to load Analysis costs by tag: {e}"),
+            })
+        })
 }
 
 async fn fetch_providers(
@@ -511,15 +633,18 @@ pub async fn analysis_handler(
         api_key: query.api_key,
         model: query.model,
         cache_miss_only: query.cache_miss_only,
+        tag_key: normalize_tag_key(query.tag_key),
     };
     let pool = require_pool(&app_state)?;
 
-    let (totals, providers, models, series, total_cost_by_currency) = tokio::try_join!(
+    let (totals, providers, models, series, total_cost_by_currency, tag_keys, cost_by_tag_rows) = tokio::try_join!(
         fetch_totals(pool, &params),
         fetch_providers(pool, &params),
         fetch_models(pool, &params),
         fetch_series(pool, &params),
         fetch_costs_by_currency(pool, &params),
+        fetch_tag_keys(pool, &params),
+        fetch_costs_by_tag(pool, &params),
     )?;
 
     let total_requests = totals.total_requests;
@@ -627,6 +752,15 @@ pub async fn analysis_handler(
         latency_over_time,
         ttft_over_time,
         output_tps_over_time,
+        tag_keys,
+        cost_by_tag: cost_by_tag_rows
+            .into_iter()
+            .map(|row| AnalysisCostByTag {
+                tag_value: row.tag_value,
+                currency: row.currency,
+                total: row.total,
+            })
+            .collect(),
     }))
 }
 
@@ -693,5 +827,16 @@ mod tests {
             AnalysisKind::Embedding
         );
         expect_true!(AnalysisKind::parse("rerank").is_err());
+    }
+
+    #[gtest]
+    fn normalize_tag_key_trims_and_drops_empty() {
+        expect_eq!(normalize_tag_key(None), None);
+        expect_eq!(normalize_tag_key(Some(String::new())), None);
+        expect_eq!(normalize_tag_key(Some("   ".to_string())), None);
+        expect_eq!(
+            normalize_tag_key(Some("  feature ".to_string())),
+            Some("feature".to_string())
+        );
     }
 }
