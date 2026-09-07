@@ -800,6 +800,7 @@ async fn run_openai_style(
             (OpenAIStyle::Responses, _) => Box::pin(prepare_serialized_openai_responses_events(
                 stream,
                 response_model_prefix.clone(),
+                stream_aggregate,
             )),
         };
 
