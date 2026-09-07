@@ -18,12 +18,13 @@ describe("parseAnalysisQuery", () => {
       apiKey: "",
       model: "",
       cacheMissOnly: false,
+      tagKey: "",
     });
   });
 
   test("reads filters and rejects unknown range/kind", () => {
     const params = new URLSearchParams(
-      "range=7d&kind=embedding&api_key=abc&model=deepseek-v4-flash&cache_miss_only=true",
+      "range=7d&kind=embedding&api_key=abc&model=deepseek-v4-flash&cache_miss_only=true&tag_key=feature",
     );
     expect(parseAnalysisQuery(params)).toEqual({
       range: "7d",
@@ -31,6 +32,7 @@ describe("parseAnalysisQuery", () => {
       apiKey: "abc",
       model: "deepseek-v4-flash",
       cacheMissOnly: true,
+      tagKey: "feature",
     });
     expect(
       parseAnalysisQuery(new URLSearchParams("range=year&kind=rerank")),
@@ -40,6 +42,7 @@ describe("parseAnalysisQuery", () => {
       apiKey: "",
       model: "",
       cacheMissOnly: false,
+      tagKey: "",
     });
   });
 });
@@ -53,6 +56,7 @@ describe("analysisSearchParams", () => {
         apiKey: "",
         model: "",
         cacheMissOnly: false,
+        tagKey: "",
       }).toString(),
     ).toBe("");
     expect(
@@ -62,9 +66,10 @@ describe("analysisSearchParams", () => {
         apiKey: "o6bTIwfcUBKV",
         model: "text-embedding-3-small",
         cacheMissOnly: true,
+        tagKey: "feature",
       }).toString(),
     ).toBe(
-      "range=15m&kind=embedding&api_key=o6bTIwfcUBKV&model=text-embedding-3-small&cache_miss_only=true",
+      "range=15m&kind=embedding&api_key=o6bTIwfcUBKV&model=text-embedding-3-small&cache_miss_only=true&tag_key=feature",
     );
   });
 });

@@ -29,6 +29,8 @@ import {
 } from "~/components/ui/select";
 import { StatCard } from "~/components/analysis/StatCard";
 import {
+  CostByTagBarChart,
+  CostByTagPieChart,
   EmbeddingModelBars,
   LatencyChart,
   ModelTable,
@@ -75,6 +77,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       apiKey: query.apiKey,
       model: query.model,
       cacheMissOnly: query.cacheMissOnly,
+      tagKey: query.tagKey,
     })
     .catch((error) => {
       logger.error(error);
@@ -403,6 +406,90 @@ function AnalysisBody({
           <ProviderChart data={data.provider_stats} />
           <ModelTable data={data.model_stats} />
           <TokenUsageChart data={data.token_usage_over_time} />
+        </div>
+      )}
+
+      <CostByTagSection query={query} data={data} />
+    </section>
+  );
+}
+
+function CostByTagSection({
+  query,
+  data,
+}: {
+  query: AnalysisQueryValues;
+  data: AnalysisResponse;
+}) {
+  const navigate = useNavigate();
+  if (data.tag_keys.length === 0) {
+    return null;
+  }
+  const selectTagKey = (tagKey: string) => {
+    const params = analysisSearchParams({ ...query, tagKey });
+    const qs = params.toString();
+    navigate(qs ? `?${qs}` : ".", { preventScrollReset: true });
+  };
+  // Cost is billed per currency (e.g. USD and CNY are independent totals,
+  // never converted), so each currency gets its own bar chart and pie chart.
+  const currencies = [
+    ...new Set(data.cost_by_tag.map((row) => row.currency)),
+  ].sort();
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">Cost by Tag</h2>
+          <p className="text-muted-foreground text-sm">
+            Billed cost grouped by a tag value, one chart per currency.
+          </p>
+        </div>
+        <label className="space-y-2 text-sm font-medium">
+          Group by tag
+          <Select value={query.tagKey} onValueChange={selectTagKey}>
+            <SelectTrigger className="w-full min-w-[240px] sm:w-[280px]">
+              <SelectValue placeholder="Select a tag key" />
+            </SelectTrigger>
+            <SelectContent>
+              {data.tag_keys.map((key) => (
+                <SelectItem key={key} value={key}>
+                  {key}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </label>
+      </div>
+      {!query.tagKey ? (
+        <Card>
+          <CardContent className="text-muted-foreground flex h-[120px] items-center justify-center text-sm">
+            Select a tag key (e.g. feature) to see cost grouped by its values
+          </CardContent>
+        </Card>
+      ) : currencies.length === 0 ? (
+        <Card>
+          <CardContent className="text-muted-foreground flex h-[120px] items-center justify-center text-sm">
+            No billed usage for tag `{query.tagKey}` in this range
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {currencies.map((currency) => (
+            <CostByTagBarChart
+              key={`bar-${currency}`}
+              data={data.cost_by_tag}
+              tagKey={query.tagKey}
+              currency={currency}
+            />
+          ))}
+          {currencies.map((currency) => (
+            <CostByTagPieChart
+              key={`pie-${currency}`}
+              data={data.cost_by_tag}
+              tagKey={query.tagKey}
+              currency={currency}
+            />
+          ))}
         </div>
       )}
     </section>
