@@ -5,7 +5,7 @@
 //! into TensorZero chat inference and map the result back to a Responses
 //! object. It is not an upstream pass-through.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as _};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -19,10 +19,84 @@ use crate::endpoints::openai_compatible::types::chat_completions::{
     process_chat_content,
 };
 use crate::endpoints::openai_compatible::types::tool::{
-    ChatCompletionToolChoiceOption, OpenAICompatibleTool, OpenAICompatibleToolCall,
+    ChatCompletionToolChoiceOption, OpenAICompatibleFunctionTool, OpenAICompatibleTool,
+    OpenAICompatibleToolCall,
 };
 use crate::error::{Error, ErrorDetails};
 use crate::inference::types::current_timestamp;
+use crate::tool::OpenAICustomTool;
+
+/// Tool definition accepted by the OpenAI Responses API adapter.
+///
+/// The Responses API uses a flat tool shape
+/// (`{"type": "function", "name": ..., "description": ..., "parameters": ..., "strict": ...}`),
+/// unlike chat completions which wraps the definition in a `function` object. Both shapes are
+/// accepted here so callers of either API style work against `/openai/v1/responses`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenAICompatibleResponsesTool {
+    Flat(OpenAICompatibleResponsesFlatTool),
+    Chat(OpenAICompatibleTool),
+}
+
+/// Flat Responses-API tool shape, tagged on `type`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OpenAICompatibleResponsesFlatTool {
+    Function(OpenAICompatibleResponsesFunctionTool),
+    Custom(OpenAICustomTool),
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenAICompatibleResponsesFunctionTool {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub parameters: Option<Value>,
+    #[serde(default)]
+    pub strict: Option<bool>,
+}
+
+impl<'de> Deserialize<'de> for OpenAICompatibleResponsesTool {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = Value::deserialize(deserializer)?;
+        // The chat-completions shape wraps the definition under `function` / `custom`;
+        // the Responses-API shape is flat. Pick the parser based on which is present.
+        if value.get("function").is_some() || value.get("custom").is_some() {
+            let tool: OpenAICompatibleTool =
+                serde_json::from_value(value).map_err(D::Error::custom)?;
+            Ok(OpenAICompatibleResponsesTool::Chat(tool))
+        } else {
+            let tool: OpenAICompatibleResponsesFlatTool =
+                serde_json::from_value(value).map_err(D::Error::custom)?;
+            Ok(OpenAICompatibleResponsesTool::Flat(tool))
+        }
+    }
+}
+
+impl From<OpenAICompatibleResponsesTool> for OpenAICompatibleTool {
+    fn from(tool: OpenAICompatibleResponsesTool) -> Self {
+        match tool {
+            OpenAICompatibleResponsesTool::Chat(tool) => tool,
+            OpenAICompatibleResponsesTool::Flat(OpenAICompatibleResponsesFlatTool::Function(
+                function,
+            )) => OpenAICompatibleTool::Function {
+                function: OpenAICompatibleFunctionTool {
+                    name: function.name,
+                    description: function.description,
+                    parameters: function.parameters.unwrap_or(Value::Null),
+                    strict: function.strict.unwrap_or(false),
+                },
+            },
+            OpenAICompatibleResponsesTool::Flat(OpenAICompatibleResponsesFlatTool::Custom(
+                custom,
+            )) => OpenAICompatibleTool::Custom { custom },
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct OpenAICompatibleResponsesParams {
@@ -37,7 +111,7 @@ pub struct OpenAICompatibleResponsesParams {
     pub presence_penalty: Option<f32>,
     pub frequency_penalty: Option<f32>,
     pub seed: Option<u32>,
-    pub tools: Option<Vec<OpenAICompatibleTool>>,
+    pub tools: Option<Vec<OpenAICompatibleResponsesTool>>,
     pub tool_choice: Option<ChatCompletionToolChoiceOption>,
     pub parallel_tool_calls: Option<bool>,
     pub stream_options: Option<OpenAICompatibleStreamOptions>,
@@ -82,7 +156,9 @@ impl OpenAICompatibleResponsesParams {
             stream_options: self.stream_options,
             temperature: self.temperature,
             top_p: self.top_p,
-            tools: self.tools,
+            tools: self
+                .tools
+                .map(|tools| tools.into_iter().map(Into::into).collect()),
             tool_choice: self.tool_choice,
             parallel_tool_calls: self.parallel_tool_calls,
             tensorzero_dryrun: self.tensorzero_dryrun,
@@ -313,6 +389,7 @@ pub fn responses_output_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::prelude::*;
 
     #[test]
     fn test_string_input_with_instructions() {
@@ -358,5 +435,135 @@ mod tests {
     fn test_empty_input_errors() {
         let err = responses_input_to_messages(json!([]), None).unwrap_err();
         assert!(err.to_string().contains("`input` must not be empty"));
+    }
+
+    #[gtest]
+    fn test_flat_responses_function_tool_deserializes() {
+        // Regression test: the OpenAI Responses API sends tools in a flat shape
+        // (`{"type": "function", "name": ...}`), which previously failed with
+        // `tools[0]: missing field 'function'`.
+        let body = json!({
+            "model": "gpt-5",
+            "input": "What's the weather in Paris?",
+            "tools": [{
+                "type": "function",
+                "name": "get_weather",
+                "description": "Get the current weather",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "location": {"type": "string"}
+                    },
+                    "required": ["location"]
+                },
+                "strict": true
+            }],
+            "tool_choice": "auto"
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("flat Responses tool body should deserialize");
+        let tools = params.tools.as_deref().expect("tools should be present");
+        let [tool] = tools else {
+            panic!("expected exactly one tool, got {tools:?}");
+        };
+        let OpenAICompatibleResponsesTool::Flat(OpenAICompatibleResponsesFlatTool::Function(
+            function,
+        )) = tool
+        else {
+            panic!("expected flat function tool, got {tool:?}");
+        };
+        expect_that!(&function.name, eq("get_weather"));
+        expect_that!(
+            function.description.as_deref(),
+            some(eq("Get the current weather"))
+        );
+        expect_that!(function.strict, some(eq(true)));
+        expect_that!(
+            function.parameters.as_ref(),
+            some(eq(&json!({
+                "type": "object",
+                "properties": {
+                    "location": {"type": "string"}
+                },
+                "required": ["location"]
+            })))
+        );
+
+        let chat_params = params
+            .into_chat_params()
+            .expect("into_chat_params should succeed");
+        let chat_tools = chat_params.tools.expect("chat params should carry tools");
+        let [chat_tool] = chat_tools.as_slice() else {
+            panic!("expected exactly one chat tool, got {chat_tools:?}");
+        };
+        let OpenAICompatibleTool::Function { function } = chat_tool else {
+            panic!("expected chat function tool, got {chat_tool:?}");
+        };
+        expect_that!(&function.name, eq("get_weather"));
+        expect_that!(function.strict, eq(true));
+    }
+
+    #[gtest]
+    fn test_nested_chat_tool_shape_still_accepted() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": "What's the weather in Paris?",
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "get_weather",
+                    "parameters": {"type": "object"}
+                }
+            }]
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("nested chat tool body should deserialize");
+        let tools = params.tools.as_deref().expect("tools should be present");
+        let [tool] = tools else {
+            panic!("expected exactly one tool, got {tools:?}");
+        };
+        let OpenAICompatibleResponsesTool::Chat(OpenAICompatibleTool::Function { function }) = tool
+        else {
+            panic!("expected nested chat function tool, got {tool:?}");
+        };
+        expect_that!(&function.name, eq("get_weather"));
+    }
+
+    #[gtest]
+    fn test_flat_responses_custom_tool_deserializes() {
+        let tool: OpenAICompatibleResponsesTool = serde_json::from_value(json!({
+            "type": "custom",
+            "name": "code_exec",
+            "description": "Executes code"
+        }))
+        .expect("flat custom tool should deserialize");
+        let OpenAICompatibleResponsesTool::Flat(OpenAICompatibleResponsesFlatTool::Custom(custom)) =
+            &tool
+        else {
+            panic!("expected flat custom tool, got {tool:?}");
+        };
+        expect_that!(&custom.name, eq("code_exec"));
+
+        let chat_tool: OpenAICompatibleTool = tool.into();
+        let OpenAICompatibleTool::Custom { custom } = &chat_tool else {
+            panic!("expected chat custom tool, got {chat_tool:?}");
+        };
+        expect_that!(&custom.name, eq("code_exec"));
+    }
+
+    #[gtest]
+    fn test_flat_function_tool_without_parameters_or_strict() {
+        // `parameters` and `strict` are optional in the Responses API.
+        let tool: OpenAICompatibleResponsesTool = serde_json::from_value(json!({
+            "type": "function",
+            "name": "noop"
+        }))
+        .expect("flat tool without parameters/strict should deserialize");
+        let chat_tool: OpenAICompatibleTool = tool.into();
+        let OpenAICompatibleTool::Function { function } = &chat_tool else {
+            panic!("expected chat function tool, got {chat_tool:?}");
+        };
+        expect_that!(&function.name, eq("noop"));
+        expect_that!(function.strict, eq(false));
     }
 }
