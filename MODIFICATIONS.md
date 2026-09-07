@@ -53,6 +53,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/durable-tools-spawn/Cargo.toml` — Added chrono for task timing reads used by the async inference status endpoint (Delta-AI fork).
 - `crates/gateway/Cargo.toml` — Added `async-inference` dependency for the embedded async inference worker (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/async-inference.gateway.toml` — E2E config override enabling `[gateway.async_inference]` for the async inference API tests (Delta-AI fork).
+- `crates/Cargo.toml` — Enabled redis `tls-rustls-insecure` feature so `rediss://...#insecure` URLs work for Aliyun Tair, whose TLS cert is signed by an internal CA (Delta-AI fork).
 - `crates/.sqlx/query-163a79b376e88675aa684f9d7c9ece4dbcce1e739931950d83e5bb63b9cc7337.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-203c3c5c22d937daa6e6e87e1ed5bfd03f309b943b9f60ee3187e57d76cb80c6.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-3eb37353d1fed4eddc84bfb252ab9e998911167292de1afdea4cc82266bf918b.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
