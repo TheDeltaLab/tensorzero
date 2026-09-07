@@ -1,10 +1,11 @@
+// Modified by Delta-AI under Apache 2.0
 //! Tool types and conversions for OpenAI-compatible API.
 //!
 //! This module provides types for tool calling functionality in the OpenAI-compatible API,
 //! including tool definitions, tool calls, tool choice options, and conversion logic
 //! between OpenAI's tool format and TensorZero's internal tool representations.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error as _};
 use serde_json::Value;
 
 use crate::tool::{InferenceResponseToolCall, OpenAICustomTool, ToolCallWrapper, ToolChoice};
@@ -63,11 +64,11 @@ pub enum OpenAICompatibleTool {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct OpenAICompatibleFunctionTool {
-    description: Option<String>,
-    name: String,
-    parameters: Value,
+    pub description: Option<String>,
+    pub name: String,
+    pub parameters: Value,
     #[serde(default)]
-    strict: bool,
+    pub strict: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -76,11 +77,42 @@ pub struct FunctionName {
 }
 
 /// Specifies a tool the model should use. Use to force the model to call a specific function.
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+///
+/// Accepts both the chat-completions shape (`{"type": "function", "function": {"name": ...}}`)
+/// and the flat Responses-API shape (`{"type": "function", "name": ...}`).
+#[derive(Clone, Debug, PartialEq)]
 pub struct OpenAICompatibleNamedToolChoice {
     /// The type of the tool. Currently, only `function` is supported.
     pub r#type: String,
     pub function: FunctionName,
+}
+
+impl<'de> Deserialize<'de> for OpenAICompatibleNamedToolChoice {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct NamedToolChoiceHelper {
+            r#type: String,
+            function: FunctionName,
+        }
+
+        let mut value = Value::deserialize(deserializer)?;
+        // The Responses API sends the function name flat (`{"type": "function", "name": ...}`);
+        // normalize it to the nested chat-completions shape before parsing.
+        if value.get("function").is_none()
+            && let Some(name) = value.get("name").cloned()
+        {
+            value["function"] = serde_json::json!({ "name": name });
+        }
+        let helper: NamedToolChoiceHelper =
+            serde_json::from_value(value).map_err(D::Error::custom)?;
+        Ok(OpenAICompatibleNamedToolChoice {
+            r#type: helper.r#type,
+            function: helper.function,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
@@ -273,6 +305,9 @@ impl From<InferenceResponseToolCall> for OpenAICompatibleToolCall {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::assert_that;
+    use googletest::gtest;
+    use googletest::matchers::eq;
     use serde_json::json;
 
     #[test]
@@ -507,6 +542,34 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "Tool choice field must have a 'type' field if it is an object"
+        );
+    }
+
+    #[gtest]
+    fn test_named_tool_choice_accepts_flat_responses_shape() {
+        // The Responses API sends named tool choice flat (`{"type": "function", "name": ...}`);
+        // chat completions nest it under `function`. Both must parse.
+        let flat = json!({
+            "type": "function",
+            "name": "get_weather"
+        });
+        let tool_choice: ChatCompletionToolChoiceOption =
+            serde_json::from_value(flat).expect("flat named tool choice should deserialize");
+        assert_that!(
+            tool_choice,
+            eq(&ChatCompletionToolChoiceOption::Named(
+                OpenAICompatibleNamedToolChoice {
+                    r#type: "function".to_string(),
+                    function: FunctionName {
+                        name: "get_weather".to_string()
+                    }
+                }
+            ))
+        );
+        let params = tool_choice.into_tool_params();
+        assert_that!(
+            params.tool_choice,
+            eq(&Some(ToolChoice::Specific("get_weather".to_string())))
         );
     }
 
