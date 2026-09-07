@@ -152,6 +152,7 @@ redis = { version = "1.2.1", features = [
     "tokio-comp",
     "connection-manager",
     "tls-rustls",
+    "tls-rustls-insecure",
     "tokio-rustls-comp",
 ] }
 redis-test = { version = "1.0.3", features = ["aio"] }
