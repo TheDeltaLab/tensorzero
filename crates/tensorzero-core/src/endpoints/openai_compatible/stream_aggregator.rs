@@ -41,6 +41,7 @@ pub struct StreamAggregateRule {
 enum WireStyle {
     OpenAI,
     Anthropic,
+    OpenAIResponses,
 }
 
 #[derive(Clone, Debug)]
@@ -197,6 +198,11 @@ fn emit_merged(pending: PendingBuffer) -> (Option<String>, Value) {
                 delta.insert(pending.field, json!(pending.text));
             }
         }
+        WireStyle::OpenAIResponses => {
+            if let Some(obj) = json.as_object_mut() {
+                obj.insert(pending.field, json!(pending.text));
+            }
+        }
     }
     (pending.event_name, json)
 }
@@ -207,7 +213,32 @@ fn classify(event_name: Option<&str>, json: Value) -> Option<ClassifiedDelta> {
     {
         return classify_anthropic(json);
     }
+    if let Some(classified) = classify_openai_responses(&json) {
+        return Some(classified);
+    }
     classify_openai(json)
+}
+
+/// OpenAI Responses API deltas: `response.output_text.delta` (content) and
+/// `response.reasoning_summary_text.delta` (thinking) carry their text in a
+/// top-level `delta` field.
+fn classify_openai_responses(json: &Value) -> Option<ClassifiedDelta> {
+    let event_type = json.get("type")?.as_str()?;
+    let part = match event_type {
+        "response.output_text.delta" => AggregatePart::Content,
+        "response.reasoning_summary_text.delta" => AggregatePart::Thinking,
+        _ => return None,
+    };
+    let text = json.get("delta")?.as_str()?.to_string();
+    Some(ClassifiedDelta {
+        part,
+        field: "delta".to_string(),
+        index: json.get("output_index").and_then(Value::as_i64),
+        text,
+        skeleton: json.clone(),
+        event_name: Some(event_type.to_string()),
+        style: WireStyle::OpenAIResponses,
+    })
 }
 
 fn classify_openai(json: Value) -> Option<ClassifiedDelta> {
@@ -461,6 +492,41 @@ mod tests {
         );
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].1["choices"][0]["delta"]["content"], "A");
+    }
+
+    #[test]
+    fn merges_openai_responses_text_delta() {
+        let rules = vec![StreamAggregateRule {
+            part: AggregatePart::Content,
+            start_delay_ms: 0,
+            interval_ms: 10_000,
+            max_chars: 500,
+        }];
+        let mut agg = StreamAggregator::new(rules);
+        let now = Instant::now();
+        let a = agg.push(
+            Some("response.output_text.delta"),
+            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"Hel"}"#,
+            now,
+        );
+        assert!(a.is_empty(), "first aggregatable chunk is buffered");
+        let b = agg.push(
+            Some("response.output_text.delta"),
+            r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"lo"}"#,
+            now,
+        );
+        assert!(b.is_empty());
+        // A non-delta lifecycle frame flushes the pending buffer first.
+        let out = agg.push(
+            Some("response.output_text.done"),
+            r#"{"type":"response.output_text.done","item_id":"msg_1","output_index":0,"content_index":0,"text":"Hello"}"#,
+            now,
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].0, Some("response.output_text.delta".to_string()));
+        assert_eq!(out[0].1["delta"], "Hello");
+        assert_eq!(out[0].1["item_id"], "msg_1");
+        assert_eq!(out[1].0, Some("response.output_text.done".to_string()));
     }
 
     #[test]
