@@ -1,6 +1,8 @@
 # Global build args
+# PROFILE defaults to plain `release` (no LTO) so ad-hoc local builds stay fast;
+# CI passes an explicit PROFILE for thin/fat LTO images (Delta-AI fork).
 ARG CARGO_BUILD_FLAGS=""
-ARG PROFILE="performance"
+ARG PROFILE="release"
 
 # ========== builder ==========
 
