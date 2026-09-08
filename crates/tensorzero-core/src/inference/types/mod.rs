@@ -69,11 +69,7 @@ pub use resolved_input::{
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{
-    collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 use tensorzero_derive::TensorZeroDeserialize;
 pub use tensorzero_types::{Input, InputMessage, InputMessageContent, TextKind, ToolCallWrapper};
 use uuid::Uuid;
@@ -1848,43 +1844,16 @@ impl JsonInferenceDatabaseInsert {
     }
 }
 
-// Function to get the current timestamp in seconds
-#[expect(clippy::missing_panics_doc)]
-pub fn current_timestamp() -> u64 {
-    #[expect(clippy::expect_used)]
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards")
-        .as_secs()
-}
-
-/// Serializes a value that implements `Serialize` into a JSON string.
-/// If serialization fails, it logs the error and returns an empty string.
-///
-/// # Arguments
-///
-/// * `value` - A reference to the value to be serialized.
-///
-/// # Returns
-///
-/// A `String` containing the serialized JSON, or an empty string if serialization fails.
-pub fn serialize_or_log<T: Serialize>(value: &T) -> String {
-    match serde_json::to_string(value) {
-        Ok(serialized) => serialized,
-        Err(e) => {
-            Error::new(ErrorDetails::Serialization {
-                message: format!("Failed to serialize value: {e}"),
-            });
-            String::new()
-        }
-    }
-}
+// Modified by Delta-AI under Apache 2.0
+// Moved to `tensorzero-inference-types` so the providers crate can use them
+// without depending on tensorzero-core; re-exported here for existing callers.
+pub use tensorzero_inference_types::utils::{current_timestamp, serialize_or_log};
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::jsonschema_util::JSONSchema;
-    use crate::providers::test_helpers::get_temperature_tool_config;
+    use crate::test_helpers::get_temperature_tool_config;
     use crate::tool::{DynamicToolConfig, FunctionToolConfig, ToolChoice};
     use serde_json::json;
 

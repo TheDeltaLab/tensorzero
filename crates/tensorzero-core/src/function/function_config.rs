@@ -992,6 +992,7 @@ mod tests {
     use crate::inference::types::Text;
     use crate::inference::types::Thought;
     use crate::inference::types::Usage;
+    use crate::jsonschema_util;
     use crate::jsonschema_util::JSONSchema;
     use crate::minijinja_util::TemplateConfig;
     use crate::tool::ToolCall;
@@ -1015,7 +1016,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new().expect("Failed to create temporary file");
         write!(temp_file, "{schema}").expect("Failed to write schema to temporary file");
 
-        JSONSchema::from_path(ResolvedTomlPathData::new_for_tests(
+        jsonschema_util::from_path(ResolvedTomlPathData::new_for_tests(
             temp_file.path().to_owned(),
             None,
         ))

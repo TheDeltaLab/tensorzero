@@ -1,0 +1,106 @@
+# Modified by Delta-AI under Apache 2.0
+[package]
+name = "tensorzero-providers"
+version.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# Model provider implementations extracted from `tensorzero-core` (Delta-AI fork).
+# Keeping providers in their own crate means a provider-only change no longer
+# recompiles all ~250k lines of tensorzero-core.
+
+[features]
+default = []
+e2e_tests = [
+    "tensorzero-types/e2e_tests",
+    "tensorzero-error/e2e_tests",
+    "tensorzero-inference-types/e2e_tests",
+    "tensorzero-stored-config/e2e_tests",
+    "tensorzero-http/e2e_tests",
+]
+# Exposes `providers::test_helpers` (shared test fixtures) to dependent crates'
+# test builds. Enabled by tensorzero-core as a dev-dependency feature.
+test-helpers = []
+pyo3 = ["dep:pyo3", "tensorzero-types/pyo3", "tensorzero-inference-types/pyo3"]
+
+[lints]
+workspace = true
+
+[dependencies]
+async-stream = { workspace = true }
+async-trait = { workspace = true }
+aws-config = { version = "1.8", default-features = false, features = [
+    "behavior-version-latest",
+    "default-https-client",
+    "rt-tokio",
+    "credentials-process",
+    "sso",
+] }
+aws-smithy-types = { version = "1.4.7", features = [
+    "serde-deserialize",
+    "serde-serialize",
+] }
+aws-types = "1.3.6"
+aws-credential-types = { version = "1.2.2", features = [
+    "hardcoded-credentials",
+] }
+aws-sigv4 = "1.3"
+aws-smithy-eventstream = "0.60"
+aws-smithy-runtime-api = "1.11.0"
+base64 = "0.22.1"
+bytes = "1.11.1"
+chrono = { workspace = true }
+futures = { workspace = true }
+google-cloud-auth = { workspace = true }
+http = { workspace = true }
+itertools = "0.14.0"
+jsonwebtoken = { version = "10.4", features = ["aws_lc_rs"] }
+jsonschema = "0.46.5"
+lazy_static = { workspace = true }
+mime = { workspace = true }
+mime_guess = "2.0.5"
+object_store = { workspace = true }
+pyo3 = { workspace = true, optional = true }
+reqwest = { workspace = true }
+reqwest-sse-stream = { workspace = true }
+rust_decimal = { workspace = true }
+schemars = { workspace = true, features = ["uuid1"] }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+serde_path_to_error = { workspace = true }
+strum = { version = "0.28.0", features = ["derive"] }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing.workspace = true
+tracing-futures = { version = "0.2.5", features = ["futures-03"] }
+tracing-subscriber = { version = "0.3.23", features = [
+    "env-filter",
+    "fmt",
+    "json",
+] }
+ts-rs.workspace = true
+url = { workspace = true, features = ["serde"] }
+urlencoding = "2.1.3"
+uuid = { workspace = true }
+tensorzero-auth = { path = "../tensorzero-auth" }
+tensorzero-derive = { path = "../tensorzero-derive" }
+tensorzero-error = { path = "../tensorzero-error", features = ["axum", "otel", "sqlx", "redis", "autopilot-client"] }
+tensorzero-http.workspace = true
+tensorzero-inference-types = { path = "../tensorzero-inference-types" }
+tensorzero-stored-config = { path = "../tensorzero-stored-config" }
+tensorzero-types = { path = "../tensorzero-types" }
+tensorzero-types-providers = { path = "../tensorzero-types-providers" }
+tensorzero-unsafe-helpers = { path = "../tensorzero-unsafe-helpers" }
+
+[dev-dependencies]
+# Circular dev-dependency (allowed by cargo): this turns on our own `e2e_tests`
+# feature during test builds via core's feature forwarding, which keeps the
+# `Dummy` provider variants in sync across crates — mirroring how things worked
+# when providers lived inside core (Delta-AI fork).
+tensorzero-core = { path = "../tensorzero-core", features = ["e2e_tests"] }
+googletest = { workspace = true }
+tempfile = { workspace = true }
+googletest-matchers = { path = "../googletest-matchers" }

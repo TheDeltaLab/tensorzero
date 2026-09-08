@@ -59,7 +59,7 @@ use crate::function::{FunctionConfig, FunctionConfigChat, FunctionConfigJson, ge
 use crate::function::{FunctionConfigChatPyClass, FunctionConfigJsonPyClass};
 use crate::inference::types::Usage;
 use crate::inference::types::storage::StorageKind;
-use crate::jsonschema_util::{JSONSchema, SchemaWithMetadata};
+use crate::jsonschema_util::{self, JSONSchema, SchemaWithMetadata};
 use crate::minijinja_util::TemplateConfig;
 use crate::model::{
     CredentialLocationWithFallback, ModelConfig, ModelTable, UninitializedModelConfig,
@@ -85,7 +85,8 @@ pub mod editable;
 pub mod gateway;
 pub mod namespace;
 pub mod path;
-pub mod provider_types;
+// Modified by Delta-AI under Apache 2.0
+pub use tensorzero_providers::provider_types;
 pub mod rate_limiting;
 pub mod rehydrate;
 pub mod rerank;
@@ -2728,7 +2729,7 @@ impl SchemaData {
                 .insert(
                     name.clone(),
                     SchemaWithMetadata {
-                        schema: JSONSchema::from_path(schema.path)?,
+                        schema: jsonschema_util::from_path(schema.path)?,
                         legacy_definition: false,
                     },
                 )
@@ -2886,14 +2887,17 @@ impl UninitializedFunctionConfig {
                 propagate_timeout_s_to_candidates(function_name, &mut params.variants)?;
 
                 let schema_data = SchemaData::load(
-                    params.user_schema.map(JSONSchema::from_path).transpose()?,
+                    params
+                        .user_schema
+                        .map(jsonschema_util::from_path)
+                        .transpose()?,
                     params
                         .assistant_schema
-                        .map(JSONSchema::from_path)
+                        .map(jsonschema_util::from_path)
                         .transpose()?,
                     params
                         .system_schema
-                        .map(JSONSchema::from_path)
+                        .map(jsonschema_util::from_path)
                         .transpose()?,
                     params.schemas,
                     function_name,
@@ -2961,20 +2965,23 @@ impl UninitializedFunctionConfig {
                 propagate_timeout_s_to_candidates(function_name, &mut params.variants)?;
 
                 let schema_data = SchemaData::load(
-                    params.user_schema.map(JSONSchema::from_path).transpose()?,
+                    params
+                        .user_schema
+                        .map(jsonschema_util::from_path)
+                        .transpose()?,
                     params
                         .assistant_schema
-                        .map(JSONSchema::from_path)
+                        .map(jsonschema_util::from_path)
                         .transpose()?,
                     params
                         .system_schema
-                        .map(JSONSchema::from_path)
+                        .map(jsonschema_util::from_path)
                         .transpose()?,
                     params.schemas,
                     function_name,
                 )?;
                 let output_schema = match params.output_schema {
-                    Some(path) => JSONSchema::from_path(path)?,
+                    Some(path) => jsonschema_util::from_path(path)?,
                     None => JSONSchema::default(),
                 };
                 let json_mode_tool_call_config =
@@ -3192,7 +3199,7 @@ impl UninitializedToolConfig {
     }
 
     pub fn load(self, key: String) -> Result<StaticToolConfig, Error> {
-        let parameters = JSONSchema::from_path(self.parameters)?;
+        let parameters = jsonschema_util::from_path(self.parameters)?;
         Ok(StaticToolConfig {
             name: self.name.unwrap_or_else(|| key.clone()),
             key,

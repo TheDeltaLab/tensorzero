@@ -875,6 +875,7 @@ pub fn validate_all_schemas_have_templates(
 
 #[cfg(test)]
 mod tests {
+    use crate::jsonschema_util;
     use crate::rate_limiting::ScopeInfo;
     use indexmap::IndexMap;
     use std::collections::HashMap;
@@ -912,8 +913,8 @@ mod tests {
     use crate::model::{ModelConfig, ModelProvider, ProviderConfig};
     use crate::model_table::ProviderTypeDefaultCredentials;
     use crate::providers::dummy::{DUMMY_JSON_RESPONSE_RAW, DummyProvider};
-    use crate::providers::test_helpers::get_temperature_tool_config;
     use crate::rate_limiting::RateLimitingManager;
+    use crate::test_helpers::get_temperature_tool_config;
     use crate::tool::{ToolCallConfig, ToolChoice};
     use crate::{
         error::Error,
@@ -2949,7 +2950,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_template_and_schema_both_some() {
         let templates = get_test_template_config().await;
-        let schema = JSONSchema::from_path(ResolvedTomlPathData::new_for_tests(
+        let schema = jsonschema_util::from_path(ResolvedTomlPathData::new_for_tests(
             "fixtures/config/functions/templates_with_variables/system_schema.json".into(),
             None,
         ))
@@ -3027,7 +3028,7 @@ mod tests {
     #[tokio::test]
     async fn test_validate_template_and_schema_schema_some_template_none() {
         let templates = get_test_template_config().await; // Default TemplateConfig
-        let schema = JSONSchema::from_path(ResolvedTomlPathData::new_for_tests(
+        let schema = jsonschema_util::from_path(ResolvedTomlPathData::new_for_tests(
             "fixtures/config/functions/templates_with_variables/system_schema.json".into(),
             None,
         ))

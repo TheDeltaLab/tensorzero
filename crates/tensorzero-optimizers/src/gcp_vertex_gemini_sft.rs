@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! GCP Vertex Gemini Supervised Fine-Tuning (SFT) optimizer implementation
 
 use futures::{future::try_join_all, try_join};
@@ -19,16 +20,17 @@ use tensorzero_core::{
     },
     providers::gcp_vertex_gemini::{
         GCPVertexGeminiSupervisedRow, PROVIDER_TYPE, location_subdomain_prefix,
-        optimization::{
-            EncryptionSpec, GCPVertexGeminiFineTuningJob, GCPVertexGeminiFineTuningRequest,
-            SupervisedHyperparameters, SupervisedTuningSpec, convert_to_optimizer_status,
-        },
         upload_rows_to_gcp_object_store,
     },
     stored_inference::RenderedSample,
     utils::mock::{get_mock_provider_api_base, is_mock_mode},
 };
 
+use crate::gcp_vertex_gemini_api::{
+    EncryptionSpec, GCPVertexGeminiFineTuningJob, GCPVertexGeminiFineTuningRequest,
+    SupervisedHyperparameters, SupervisedTuningSpec, convert_to_optimizer_status,
+    supervised_row_from_rendered_sample as from_rendered_sample_impl,
+};
 use crate::{JobHandle, Optimizer};
 
 pub fn gcp_vertex_gemini_base_url(project_id: &str, region: &str) -> Result<Url, url::ParseError> {
@@ -91,22 +93,11 @@ impl Optimizer for GCPVertexGeminiSFTConfig {
         });
 
         // TODO(#2642): improve error handling here so we know what index of example failed
-        let train_rows: Vec<GCPVertexGeminiSupervisedRow> = try_join_all(
-            train_examples
-                .iter()
-                .map(GCPVertexGeminiSupervisedRow::from_rendered_sample),
-        )
-        .await?;
+        let train_rows: Vec<GCPVertexGeminiSupervisedRow> =
+            try_join_all(train_examples.iter().map(from_rendered_sample_impl)).await?;
 
         let val_rows = if let Some(examples) = val_examples.as_ref() {
-            Some(
-                try_join_all(
-                    examples
-                        .iter()
-                        .map(GCPVertexGeminiSupervisedRow::from_rendered_sample),
-                )
-                .await?,
-            )
+            Some(try_join_all(examples.iter().map(from_rendered_sample_impl)).await?)
         } else {
             None
         };
