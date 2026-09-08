@@ -1,5 +1,5 @@
 {
-  "name": "@delta-ai/tensorzero-sdk",
+  "name": "@thedeltalab/tensorzero-sdk",
   "version": "0.1.0",
   "description": "TypeScript client for the TensorZero gateway async inference API",
   "license": "Apache-2.0",

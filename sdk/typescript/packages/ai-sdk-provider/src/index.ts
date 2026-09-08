@@ -13,10 +13,10 @@ export type {
 export {
   createTensorZeroClient,
   isTerminalTaskStatus,
-} from "@delta-ai/tensorzero-sdk";
+} from "@thedeltalab/tensorzero-sdk";
 export type {
   AsyncTaskStatus,
   TerminalAsyncTaskStatus,
   TensorZeroClient,
   TensorZeroClientOptions,
-} from "@delta-ai/tensorzero-sdk";
+} from "@thedeltalab/tensorzero-sdk";
