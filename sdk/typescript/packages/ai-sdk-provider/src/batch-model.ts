@@ -11,7 +11,7 @@ import type {
   LanguageModelV4GenerateResult,
   SharedV4Warning,
 } from "@ai-sdk/provider";
-import type { AsyncTaskStatus, TensorZeroClient } from "@delta-ai/tensorzero-sdk";
+import type { AsyncTaskStatus, TensorZeroClient } from "@thedeltalab/tensorzero-sdk";
 import { decodeBatchId, encodeBatchId } from "./batch-reference.js";
 import { chatCompletionToGenerateResult } from "./convert-response.js";
 

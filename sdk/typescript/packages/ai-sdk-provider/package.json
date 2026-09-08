@@ -1,5 +1,5 @@
 {
-  "name": "@delta-ai/ai-sdk-provider",
+  "name": "@thedeltalab/ai-sdk-provider",
   "version": "0.1.0",
   "description": "Vercel AI SDK provider for the TensorZero gateway, with async batch inference",
   "license": "Apache-2.0",
@@ -29,7 +29,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.0",
     "@ai-sdk/provider": "^4.0.0",
-    "@delta-ai/tensorzero-sdk": "workspace:*"
+    "@thedeltalab/tensorzero-sdk": "workspace:*"
   },
   "peerDependencies": {
     "ai": "^6.0.0 || ^7.0.0"

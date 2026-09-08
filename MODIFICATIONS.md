@@ -97,7 +97,8 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `sdk/typescript/pnpm-lock.yaml` — New TypeScript SDK lockfile (Delta-AI fork).
 - `sdk/typescript/tsconfig.base.json` — New TypeScript SDK shared tsconfig (Delta-AI fork).
 - `sdk/typescript/README.md` — New TypeScript SDK README (Delta-AI fork).
-- `sdk/typescript/packages/tensorzero-sdk/package.json` — New package `@delta-ai/tensorzero-sdk`, published to GitHub Packages (Delta-AI fork).
+- `sdk/typescript/packages/tensorzero-sdk/package.json` — New package `@thedeltalab/tensorzero-sdk`, published to GitHub Packages (Delta-AI fork).
 - `sdk/typescript/packages/tensorzero-sdk/tsconfig.json` — New package tsconfig (Delta-AI fork).
-- `sdk/typescript/packages/ai-sdk-provider/package.json` — New package `@delta-ai/ai-sdk-provider`, published to GitHub Packages (Delta-AI fork).
+- `sdk/typescript/packages/ai-sdk-provider/package.json` — New package `@thedeltalab/ai-sdk-provider`, published to GitHub Packages (Delta-AI fork).
 - `sdk/typescript/packages/ai-sdk-provider/tsconfig.json` — New package tsconfig (Delta-AI fork).
+- `.github/workflows/publish-sdk-typescript.yml` — Publish `@thedeltalab/tensorzero-sdk` and `@thedeltalab/ai-sdk-provider` to GitHub Packages on `sdk/ts/v*` tags (Delta-AI fork).

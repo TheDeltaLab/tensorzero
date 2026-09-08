@@ -7,10 +7,14 @@ endpoints.
 ## Install
 
 The SDK is a Go submodule of the public `TheDeltaLab/tensorzero` repository,
-versioned with subdirectory tags:
+released as subdirectory tags of the form `sdk/go/vX.Y.Z`. Reference the plain
+semver when fetching (the proxy protocol rejects the full subdirectory path as
+a non-canonical version):
 
 ```sh
-go get github.com/TheDeltaLab/tensorzero/sdk/go@sdk/go/v0.1.0
+go get github.com/TheDeltaLab/tensorzero/sdk/go@v0.1.0
+# or track the latest release:
+go get github.com/TheDeltaLab/tensorzero/sdk/go@latest
 ```
 
 ## Quick start
