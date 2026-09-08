@@ -33,12 +33,12 @@ import {
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
-  const before = url.searchParams.get("before");
-  const after = url.searchParams.get("after");
   const limit = Number(url.searchParams.get("limit")) || 10;
   if (limit > 100) {
     throw data("Limit cannot exceed 100", { status: 400 });
   }
+  const page = Math.max(1, Number(url.searchParams.get("page")) || 1);
+  const offset = (page - 1) * limit;
 
   const function_name = url.searchParams.get("function_name") || undefined;
   const variant_name = url.searchParams.get("variant_name") || undefined;
@@ -83,8 +83,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       filters?: InferenceFilter;
     }) =>
       listInferencesWithPagination({
-        before: before || undefined,
-        after: after || undefined,
+        offset,
         limit,
         function_name,
         variant_name,
