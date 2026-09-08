@@ -383,6 +383,7 @@ impl EmbeddingProvider for OpenRouterProvider {
         let request_body = OpenRouterEmbeddingRequest::new(
             &self.model_name,
             &request.input,
+            request.dimensions,
             request.encoding_format,
         );
         let request_url = get_embedding_url(&OPENROUTER_DEFAULT_BASE_URL)?;
@@ -614,7 +615,8 @@ pub(super) fn handle_openrouter_error(
 struct OpenRouterEmbeddingRequest<'a> {
     model: &'a str,
     input: &'a EmbeddingInput,
-    // Note: OpenRouter doesn't support the dimensions parameter
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<u32>,
     encoding_format: EmbeddingEncodingFormat,
 }
 
@@ -622,11 +624,13 @@ impl<'a> OpenRouterEmbeddingRequest<'a> {
     fn new(
         model: &'a str,
         input: &'a EmbeddingInput,
+        dimensions: Option<u32>,
         encoding_format: EmbeddingEncodingFormat,
     ) -> Self {
         Self {
             model,
             input,
+            dimensions,
             encoding_format,
         }
     }
@@ -2104,6 +2108,28 @@ mod tests {
             unjoinable_url.unwrap().as_str(),
             "https://example.com/foo/chat/completions"
         );
+    }
+
+    #[test]
+    fn test_openrouter_embedding_request_dimensions() {
+        let input = EmbeddingInput::Single("hello".to_string());
+        let request = OpenRouterEmbeddingRequest::new(
+            "qwen/qwen3-embedding-4b",
+            &input,
+            Some(1024),
+            EmbeddingEncodingFormat::default(),
+        );
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["dimensions"], json!(1024));
+
+        let request_without_dimensions = OpenRouterEmbeddingRequest::new(
+            "qwen/qwen3-embedding-4b",
+            &input,
+            None,
+            EmbeddingEncodingFormat::default(),
+        );
+        let value = serde_json::to_value(&request_without_dimensions).unwrap();
+        assert!(value.get("dimensions").is_none());
     }
 
     #[test]
