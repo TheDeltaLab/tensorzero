@@ -1,0 +1,48 @@
+{
+  "name": "@delta-ai/ai-sdk-provider",
+  "version": "0.1.0",
+  "description": "Vercel AI SDK provider for the TensorZero gateway, with async batch inference",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com",
+    "access": "restricted"
+  },
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.0",
+    "@ai-sdk/provider": "^4.0.0",
+    "@delta-ai/tensorzero-sdk": "workspace:*"
+  },
+  "peerDependencies": {
+    "ai": "^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "ai": "^7.0.93",
+    "tsup": "^8.3.5",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}
