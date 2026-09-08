@@ -56,7 +56,7 @@ pub struct AsyncInferenceLaunchResponse {
 /// `GET /v1/async_tasks/{task_id}` response, internally tagged on `status`.
 ///
 /// Serializes as `{"task_id": ..., "status": "queued", ...}` etc.
-#[derive(Clone, Debug, Serialize, TensorZeroDeserialize, TS)]
+#[derive(Clone, Debug, PartialEq, Serialize, TensorZeroDeserialize, TS)]
 #[ts(export, optional_fields)]
 #[serde(tag = "status")]
 #[serde(rename_all = "snake_case")]

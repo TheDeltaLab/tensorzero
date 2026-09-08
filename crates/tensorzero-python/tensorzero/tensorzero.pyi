@@ -1,3 +1,4 @@
+# Modified by Delta-AI under Apache 2.0
 from typing import (
     Any,
     AsyncIterator,
@@ -35,8 +36,13 @@ from tensorzero.internal import ModelInput, ToolCallConfigDatabaseInsert
 
 # TODO: clean these up.
 from tensorzero.types import (
+    AsyncInferenceApiKind,
+    AsyncInferenceLaunchResponse,
+    AsyncTaskStatusResponse,
+    AsyncTaskStreamEvent,
     EvaluatorStatsDict,
     JsonInferenceOutput,
+    StatusResponse,
 )
 
 # Generated types
@@ -846,6 +852,88 @@ class TensorZeroGateway(BaseTensorZeroGateway):
         :return: A `GetInferencesResponse` object.
         """
 
+    def submit_async_inference(
+        self,
+        *,
+        kind: AsyncInferenceApiKind,
+        request: Dict[str, Any],
+    ) -> AsyncInferenceLaunchResponse:
+        """
+        Submit an async inference job to the gateway (HTTP-mode clients only; the
+        gateway must have async inference enabled).
+
+        :param kind: The API shape of the request: "chat" (OpenAI chat completions),
+                     "responses" (OpenAI responses), or "messages" (Anthropic messages).
+        :param request: The request body of the corresponding synchronous API, as a dict.
+                        The `stream` field is ignored by the gateway.
+        :return: A dict `{"task_id": str}` with the durable task ID.
+        """
+
+    def get_async_task(
+        self,
+        *,
+        task_id: Union[str, UUID, uuid_utils.UUID],
+    ) -> AsyncTaskStatusResponse:
+        """
+        Fetch the current status of an async inference task.
+
+        :param task_id: The task ID returned by `submit_async_inference`.
+        :return: A dict with `task_id`, `status` ("queued" / "running" / "completed" /
+                 "failed" / "cancelled"), and status-dependent fields (e.g. `response`
+                 for completed tasks, in the wire shape of the submitted API).
+        """
+
+    def wait_for_async_task(
+        self,
+        *,
+        task_id: Union[str, UUID, uuid_utils.UUID],
+        initial_interval_ms: Optional[int] = None,
+        max_interval_ms: Optional[int] = None,
+        timeout_ms: Optional[int] = None,
+    ) -> AsyncTaskStatusResponse:
+        """
+        Poll an async inference task with exponential backoff until it reaches a
+        terminal state (completed / failed / cancelled).
+
+        :param task_id: The task ID returned by `submit_async_inference`.
+        :param initial_interval_ms: Delay before the first re-poll, in milliseconds (default 500).
+        :param max_interval_ms: Upper bound for the backoff between polls, in milliseconds (default 5000).
+        :param timeout_ms: Total time budget in milliseconds (default 300000); raises if the task is not terminal by then.
+        :return: The terminal task status dict (same shape as `get_async_task`).
+        """
+
+    def stream_async_task(
+        self,
+        *,
+        task_id: Union[str, UUID, uuid_utils.UUID],
+    ) -> Iterator[AsyncTaskStreamEvent]:
+        """
+        Attach to the SSE event stream of an async inference task, replaying events
+        written so far and then following the task live until it terminates.
+
+        :param task_id: The task ID returned by `submit_async_inference`.
+        :return: An iterator of dicts `{"event": Optional[str], "data": str}`, where
+                 `data` is the raw JSON payload string in the wire shape of the API the
+                 task was submitted to. A terminal error marker raises `TensorZeroError`
+                 during iteration.
+        """
+
+    def status(self) -> StatusResponse:
+        """
+        Fetch the gateway's liveness status (`GET /status`).
+
+        :return: A dict `{"status": str, "version": str, "config_hash": str}`.
+        """
+
+    def health(self) -> Dict[str, str]:
+        """
+        Fetch the gateway's health report (`GET /health`), covering the gateway and its
+        ClickHouse / Postgres / Valkey dependencies.
+
+        :return: A dict mapping service names to "ok" / "error". Raises `TensorZeroError`
+                 (HTTP 503) when any dependency is unhealthy.
+        """
+
     @deprecated(
         "`experimental_render_samples` will be removed in a future release (2026.6+ / #6745). Please use `experimental_launch_optimization_workflow` instead."
     )
@@ -1318,6 +1406,88 @@ class AsyncTensorZeroGateway(BaseTensorZeroGateway):
 
         :param request: A `ListInferencesRequest` object with filter parameters.
         :return: A `GetInferencesResponse` object.
+        """
+
+    async def submit_async_inference(
+        self,
+        *,
+        kind: AsyncInferenceApiKind,
+        request: Dict[str, Any],
+    ) -> AsyncInferenceLaunchResponse:
+        """
+        Submit an async inference job to the gateway (HTTP-mode clients only; the
+        gateway must have async inference enabled).
+
+        :param kind: The API shape of the request: "chat" (OpenAI chat completions),
+                     "responses" (OpenAI responses), or "messages" (Anthropic messages).
+        :param request: The request body of the corresponding synchronous API, as a dict.
+                        The `stream` field is ignored by the gateway.
+        :return: A dict `{"task_id": str}` with the durable task ID.
+        """
+
+    async def get_async_task(
+        self,
+        *,
+        task_id: Union[str, UUID, uuid_utils.UUID],
+    ) -> AsyncTaskStatusResponse:
+        """
+        Fetch the current status of an async inference task.
+
+        :param task_id: The task ID returned by `submit_async_inference`.
+        :return: A dict with `task_id`, `status` ("queued" / "running" / "completed" /
+                 "failed" / "cancelled"), and status-dependent fields (e.g. `response`
+                 for completed tasks, in the wire shape of the submitted API).
+        """
+
+    async def wait_for_async_task(
+        self,
+        *,
+        task_id: Union[str, UUID, uuid_utils.UUID],
+        initial_interval_ms: Optional[int] = None,
+        max_interval_ms: Optional[int] = None,
+        timeout_ms: Optional[int] = None,
+    ) -> AsyncTaskStatusResponse:
+        """
+        Poll an async inference task with exponential backoff until it reaches a
+        terminal state (completed / failed / cancelled).
+
+        :param task_id: The task ID returned by `submit_async_inference`.
+        :param initial_interval_ms: Delay before the first re-poll, in milliseconds (default 500).
+        :param max_interval_ms: Upper bound for the backoff between polls, in milliseconds (default 5000).
+        :param timeout_ms: Total time budget in milliseconds (default 300000); raises if the task is not terminal by then.
+        :return: The terminal task status dict (same shape as `get_async_task`).
+        """
+
+    async def stream_async_task(
+        self,
+        *,
+        task_id: Union[str, UUID, uuid_utils.UUID],
+    ) -> AsyncIterator[AsyncTaskStreamEvent]:
+        """
+        Attach to the SSE event stream of an async inference task, replaying events
+        written so far and then following the task live until it terminates.
+
+        :param task_id: The task ID returned by `submit_async_inference`.
+        :return: An async iterator of dicts `{"event": Optional[str], "data": str}`, where
+                 `data` is the raw JSON payload string in the wire shape of the API the
+                 task was submitted to. A terminal error marker raises `TensorZeroError`
+                 during iteration.
+        """
+
+    async def status(self) -> StatusResponse:
+        """
+        Fetch the gateway's liveness status (`GET /status`).
+
+        :return: A dict `{"status": str, "version": str, "config_hash": str}`.
+        """
+
+    async def health(self) -> Dict[str, str]:
+        """
+        Fetch the gateway's health report (`GET /health`), covering the gateway and its
+        ClickHouse / Postgres / Valkey dependencies.
+
+        :return: A dict mapping service names to "ok" / "error". Raises `TensorZeroError`
+                 (HTTP 503) when any dependency is unhealthy.
         """
 
     @deprecated(

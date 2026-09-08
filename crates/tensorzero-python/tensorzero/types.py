@@ -1,3 +1,4 @@
+# Modified by Delta-AI under Apache 2.0
 import warnings
 from abc import ABC
 from dataclasses import dataclass, fields, is_dataclass
@@ -257,6 +258,56 @@ class EvaluatorStatsDict(TypedDict):
     mean: float
     stderr: float
     count: int
+
+
+# Async inference API types (Delta-AI fork)
+
+AsyncInferenceApiKind = Literal["chat", "responses", "messages"]
+"""The API shape of an async inference job submitted via `submit_async_inference`."""
+
+
+class AsyncInferenceLaunchResponse(TypedDict):
+    """Response of `submit_async_inference` (HTTP 202)."""
+
+    task_id: str
+
+
+class AsyncTaskStatusResponse(TypedDict):
+    """Status of an async inference task, as returned by `get_async_task` /
+    `wait_for_async_task` (`GET /v1/async_tasks/{task_id}`).
+
+    `status` selects which optional fields are present: `queue_position`
+    (queued), `started_at` / `elapsed_ms` (running), `response` (completed,
+    in the wire shape of the submitted API), `error` (failed / cancelled).
+    """
+
+    task_id: str
+    status: Literal["queued", "running", "completed", "failed", "cancelled"]
+    queue_position: NotRequired[int]
+    started_at: NotRequired[str]
+    elapsed_ms: NotRequired[int]
+    response: NotRequired[Any]
+    error: NotRequired[Any]
+
+
+class AsyncTaskStreamEvent(TypedDict):
+    """One SSE event from `stream_async_task`.
+
+    `data` is the raw JSON payload string in the wire shape of the API the
+    task was submitted to (e.g. OpenAI chat completion chunks); `event` is the
+    SSE event name when the event has one (e.g. named responses-API events).
+    """
+
+    event: Optional[str]
+    data: str
+
+
+class StatusResponse(TypedDict):
+    """Gateway liveness status, as returned by `status()` (`GET /status`)."""
+
+    status: str
+    version: str
+    config_hash: str
 
 
 InferenceResponse = Union[ChatInferenceResponse, JsonInferenceResponse]

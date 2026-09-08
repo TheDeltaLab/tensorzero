@@ -260,6 +260,15 @@ retries = { backoff = "fixed", count = 2, delay = "5s", jitter = true }
 slow-timeout = { period = "60s", terminate-after = 2 }
 
 [[profile.default.overrides]]
+# Live-gateway async inference e2e tests, env-gated on TZ_E2E_KEY/TZ_E2E_GATEWAY
+# (Delta-AI fork). The remote worker picks tasks up with limited concurrency,
+# so allow for queue wait plus model latency. This must come before the
+# `kind(lib)` override below: for each setting, the first matching override
+# wins.
+filter = 'test(client::async_inference::tests::e2e::)'
+slow-timeout = { period = "60s", terminate-after = 2 }
+
+[[profile.default.overrides]]
 # Settings for running unit tests
 filter = 'kind(lib)'
 retries = 0

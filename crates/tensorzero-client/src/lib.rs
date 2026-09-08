@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![recursion_limit = "256"]
 
 use std::{collections::HashMap, sync::Arc};
@@ -42,6 +43,16 @@ pub use tensorzero_core::client::{
     ClientBuilderError, TensorZeroError, TensorZeroInternalError, err_to_http,
     with_embedded_timeout,
 };
+
+// Async inference client types (Delta-AI fork: `POST .../async` submit,
+// `GET /v1/async_tasks/{task_id}` status and SSE stream)
+pub use tensorzero_core::client::{
+    AsyncTaskEventStream, AsyncTaskStreamEvent, AsyncTaskWaitOptions,
+};
+pub use tensorzero_core::endpoints::openai_compatible::async_inference_types::{
+    AsyncInferenceApiKind, AsyncInferenceLaunchResponse, AsyncTaskStatusResponse,
+};
+pub use tensorzero_core::endpoints::status::StatusResponse;
 
 // Client input types
 pub use tensorzero_core::client::{
