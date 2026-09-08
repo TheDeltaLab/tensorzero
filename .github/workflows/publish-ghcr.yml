@@ -186,7 +186,9 @@ jobs:
   ensure-release-fat:
     name: Ensure latest release has fat gateway image
     if: github.event_name == 'schedule' && github.repository == 'TheDeltaLab/tensorzero'
-    runs-on: tensorzero-ci
+    # GitHub-hosted runner: needs `gh` and `docker` CLIs, which the self-hosted
+    # tensorzero-ci image does not have; this job only calls APIs, no builds.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
       contents: read # Required to resolve the latest release tag to a commit.
