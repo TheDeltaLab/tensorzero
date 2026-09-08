@@ -15,8 +15,14 @@ import { TableItemTime } from "~/components/ui/TableItems";
 import { toInferenceUrl, toEpisodeUrl, toFunctionUrl } from "~/utils/urls";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
-import { Eye, Layers, ShieldCheck } from "lucide-react";
-import { Suspense, type ReactNode } from "react";
+import {
+  Eye,
+  Layers,
+  ShieldCheck,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
+import { Suspense, useEffect, useState, type ReactNode } from "react";
 import {
   Link,
   useNavigate,
@@ -25,7 +31,14 @@ import {
   Await,
 } from "react-router";
 import { Skeleton } from "~/components/ui/skeleton";
-import PageButtons from "~/components/utils/PageButtons";
+import { Input } from "~/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import {
   Tooltip,
   TooltipContent,
@@ -70,10 +83,10 @@ export type InferencesData = {
 
 const COLUMN_COUNT = 14;
 
-function SkeletonRows() {
+function SkeletonRows({ count }: { count: number }) {
   return (
     <>
-      {Array.from({ length: 10 }).map((_, i) => (
+      {Array.from({ length: count }).map((_, i) => (
         <TableRow key={i}>
           <TableCell>
             <Skeleton className="h-5 w-36" />
@@ -389,55 +402,123 @@ function totalTokens(inference: InferenceListRow): number | undefined {
   return (inference.input_tokens ?? 0) + (inference.output_tokens ?? 0);
 }
 
-function PaginationButtons({
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100];
+
+function PaginationControls({
   data,
   limit,
 }: {
   data: InferencesData;
   limit: number;
 }) {
-  const { inferences, hasNextPage, hasPreviousPage } = data;
+  const { hasNextPage, hasPreviousPage } = data;
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const page = Math.max(1, Number(searchParams.get("page")) || 1);
+  const [pageInput, setPageInput] = useState(String(page));
 
-  const topInference = inferences.at(0);
-  const bottomInference = inferences.at(inferences.length - 1);
+  useEffect(() => {
+    setPageInput(String(page));
+  }, [page]);
 
   const buildSearchParams = () => {
     const params = new URLSearchParams(searchParams);
     params.set("limit", String(limit));
+    // Clean up legacy cursor params when navigating by page number
     params.delete("before");
     params.delete("after");
     return params;
   };
 
-  const handleNextPage = () => {
-    if (bottomInference) {
-      const params = buildSearchParams();
-      params.set("before", bottomInference.id);
-      navigate(`?${params.toString()}`, {
-        preventScrollReset: true,
-      });
+  const goToPage = (target: number) => {
+    const params = buildSearchParams();
+    if (target > 1) {
+      params.set("page", String(target));
+    } else {
+      params.delete("page");
     }
+    navigate(`?${params.toString()}`, {
+      preventScrollReset: true,
+    });
   };
 
-  const handlePreviousPage = () => {
-    if (topInference) {
-      const params = buildSearchParams();
-      params.set("after", topInference.id);
-      navigate(`?${params.toString()}`, {
-        preventScrollReset: true,
-      });
+  const handlePageSizeChange = (value: string) => {
+    const params = new URLSearchParams(searchParams);
+    params.set("limit", value);
+    params.delete("page");
+    params.delete("before");
+    params.delete("after");
+    navigate(`?${params.toString()}`, {
+      preventScrollReset: true,
+    });
+  };
+
+  const handleJump = () => {
+    const target = Number(pageInput);
+    if (!Number.isInteger(target) || target < 1 || target === page) {
+      setPageInput(String(page));
+      return;
     }
+    goToPage(target);
   };
 
   return (
-    <PageButtons
-      onPreviousPage={handlePreviousPage}
-      onNextPage={handleNextPage}
-      disablePrevious={!hasPreviousPage}
-      disableNext={!hasNextPage}
-    />
+    <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <span>Rows per page</span>
+        <Select value={String(limit)} onValueChange={handlePageSizeChange}>
+          <SelectTrigger className="h-8 w-[70px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PAGE_SIZE_OPTIONS.map((size) => (
+              <SelectItem key={size} value={String(size)}>
+                {size}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => goToPage(page - 1)}
+          disabled={!hasPreviousPage}
+          className="h-8 w-8 rounded-md bg-white p-2"
+          aria-label="Previous page"
+        >
+          <ChevronLeft className="h-4 w-4" />
+        </Button>
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <span>Page</span>
+          <Input
+            className="h-8 w-16 px-2 text-center"
+            value={pageInput}
+            inputMode="numeric"
+            aria-label="Go to page"
+            onChange={(event) => setPageInput(event.target.value)}
+            onBlur={handleJump}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                handleJump();
+              }
+            }}
+          />
+        </div>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={() => goToPage(page + 1)}
+          disabled={!hasNextPage}
+          className="h-8 w-8 rounded-md bg-white p-2"
+          aria-label="Next page"
+        >
+          <ChevronRight className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -488,7 +569,10 @@ export default function InferencesTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          <Suspense key={location.key} fallback={<SkeletonRows />}>
+          <Suspense
+            key={location.key}
+            fallback={<SkeletonRows count={limit} />}
+          >
             <Await
               resolve={data}
               errorElement={
@@ -504,10 +588,10 @@ export default function InferencesTable({
         </TableBody>
       </Table>
 
-      <Suspense key={location.key} fallback={<PageButtons disabled />}>
-        <Await resolve={data} errorElement={<PageButtons disabled />}>
+      <Suspense key={location.key} fallback={<div className="mt-4 h-8" />}>
+        <Await resolve={data} errorElement={<div className="mt-4 h-8" />}>
           {(resolvedData) => (
-            <PaginationButtons data={resolvedData} limit={limit} />
+            <PaginationControls data={resolvedData} limit={limit} />
           )}
         </Await>
       </Suspense>

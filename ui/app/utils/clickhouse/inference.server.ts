@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { data } from "react-router";
 import type { StoredInference, InferenceFilter } from "~/types/tensorzero";
 import { logger } from "~/utils/logger";
@@ -25,6 +26,7 @@ export async function listInferencesWithPagination(params: {
   limit: number;
   before?: string; // UUIDv7 string - get inferences before this ID (going to older)
   after?: string; // UUIDv7 string - get inferences after this ID (going to newer)
+  offset?: number; // number of inferences to skip (page-number based pagination)
   function_name?: string;
   variant_name?: string;
   episode_id?: string;
@@ -35,6 +37,7 @@ export async function listInferencesWithPagination(params: {
     limit,
     before,
     after,
+    offset,
     function_name,
     variant_name,
     episode_id,
@@ -44,6 +47,9 @@ export async function listInferencesWithPagination(params: {
 
   if (before && after) {
     throw new Error("Cannot specify both 'before' and 'after' parameters");
+  }
+  if (offset !== undefined && (before || after)) {
+    throw new Error("Cannot specify 'offset' together with 'before'/'after'");
   }
 
   try {
@@ -55,12 +61,22 @@ export async function listInferencesWithPagination(params: {
       limit: limit + 1,
       before,
       after,
+      offset,
       function_name,
       variant_name,
       episode_id,
       filters,
       search_query_experimental: search_query,
     });
+
+    if (offset !== undefined) {
+      const hasMore = response.inferences.length > limit;
+      return {
+        inferences: response.inferences.slice(0, limit),
+        hasNextPage: hasMore,
+        hasPreviousPage: offset > 0,
+      };
+    }
 
     const {
       items: inferences,
