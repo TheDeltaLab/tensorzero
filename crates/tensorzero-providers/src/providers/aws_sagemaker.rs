@@ -1,4 +1,5 @@
 //! AWS SageMaker model provider using direct HTTP calls.
+// Modified by Delta-AI under Apache 2.0
 
 use aws_config::SdkConfig;
 use aws_smithy_eventstream::frame::{DecodedFrame, MessageFrameDecoder};

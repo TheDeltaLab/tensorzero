@@ -4,6 +4,7 @@
 //! providing shared types and helper functions for preparing tools and tool choices
 //! in OpenAI's chat completions format. These types are used by providers such as
 //! OpenAI, Azure, Groq, and OpenRouter.
+// Modified by Delta-AI under Apache 2.0
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

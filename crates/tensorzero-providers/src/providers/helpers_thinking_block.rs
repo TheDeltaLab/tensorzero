@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use tensorzero_error::{Error, ErrorDetails};
 use tensorzero_types::ApiType;
 

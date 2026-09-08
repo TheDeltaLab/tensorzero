@@ -1,4 +1,5 @@
 #![expect(
+// Modified by Delta-AI under Apache 2.0
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::print_stdout,

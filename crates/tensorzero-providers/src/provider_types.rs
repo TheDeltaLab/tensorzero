@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use serde::{Deserialize, Serialize};
 use tensorzero_inference_types::credentials::{CredentialLocation, CredentialLocationWithFallback};
 use tensorzero_stored_config::{
