@@ -13,7 +13,8 @@
 //! - `GET /v1/async_tasks/{task_id}/stream` replays and follows the SSE event
 //!   stream via a Redis stream written by the worker
 //!   (`{ASYNC_INFERENCE_STREAM_KEY_PREFIX}{task_id}`), so clients can attach to
-//!   a running (or recently finished) task.
+//!   a running (or recently finished) task. Every stream ends with an explicit
+//!   terminal frame: `data: [DONE]` on success, `event: error` on failure.
 
 use std::collections::{BTreeMap, HashMap};
 use std::pin::Pin;
@@ -432,6 +433,14 @@ async fn task_status_response(
 /// Replays the events the worker has written so far, then follows the Redis
 /// stream live until the worker writes a terminal `done`/`error` marker (or
 /// the task reaches a terminal state without one, e.g. after a worker crash).
+/// Every successful (200) stream ends with an explicit terminal frame:
+/// `data: [DONE]` on success, `event: error` on failure.
+///
+/// Uses the dedicated async inference stream connection
+/// (`ValkeyConnectionInfo::get_async_inference_stream_connection`): the
+/// shared manager's redis-rs default response timeout (500ms) is too tight for
+/// a full-stream `XRANGE` replay on a loaded Valkey and surfaced here as
+/// intermittent 500s.
 pub async fn stream_async_task_handler(
     State(state): AppState,
     Path(task_id): Path<Uuid>,
@@ -439,7 +448,7 @@ pub async fn stream_async_task_handler(
     let spawn_client = require_spawn_client(&state)?;
     let conn = state
         .valkey_connection_info
-        .get_connection()
+        .get_async_inference_stream_connection()
         .cloned()
         .ok_or_else(|| {
             OpenAICompatibleError(Error::new(ErrorDetails::Config {
@@ -451,13 +460,26 @@ pub async fn stream_async_task_handler(
     let key = async_inference_stream_key(task_id);
 
     let mut replay_conn = conn.clone();
-    let replay: StreamRangeReply = replay_conn.xrange(&key, "-", "+").await.map_err(|e| {
-        Error::new(ErrorDetails::InternalError {
-            message: format!(
-                "Failed to read async inference event stream for task `{task_id}`: {e}"
-            ),
-        })
-    })?;
+    let replay: StreamRangeReply = match replay_conn.xrange(&key, "-", "+").await {
+        Ok(replay) => replay,
+        Err(e) => {
+            // A terminal task whose event stream cannot be read (expired key,
+            // Valkey error) is semantically `gone`: point the client at the
+            // status endpoint instead of answering a bare 500.
+            if poll.status.is_terminal() {
+                tracing::warn!(
+                    "Failed to read async inference event stream for terminal task `{task_id}`: {e}"
+                );
+                return Ok(async_stream_gone_response(task_id));
+            }
+            return Err(Error::new(ErrorDetails::InternalError {
+                message: format!(
+                    "Failed to read async inference event stream for task `{task_id}`: {e}"
+                ),
+            })
+            .into());
+        }
+    };
 
     if replay.ids.is_empty() && poll.status.is_terminal() {
         return Ok(async_stream_gone_response(task_id));
@@ -471,8 +493,9 @@ pub async fn stream_async_task_handler(
     )
 }
 
-/// 410 Gone response for tasks whose event stream is gone (expired or never
-/// written because the worker crashed before the first event).
+/// 410 Gone response for tasks whose event stream is gone: the key expired,
+/// the worker crashed before the first event, or the stream could not be read
+/// back for a task that already finished.
 fn async_stream_gone_response(task_id: Uuid) -> Response {
     let body = json!({
         "error": {
@@ -489,10 +512,17 @@ fn async_stream_gone_response(task_id: Uuid) -> Response {
 enum StreamEntryAction {
     /// Yield the event and continue.
     Event(Event),
-    /// Yield the event, then end the stream (terminal `error` marker).
+    /// Yield the event, then end the stream (terminal `done`/`error` marker).
     TerminalEvent(Event),
-    /// End the stream without yielding (terminal `done` marker).
-    End,
+}
+
+/// SSE `data:` payload of the terminal frame emitted for the `done` marker,
+/// matching the OpenAI streaming convention (and the sync streaming APIs).
+const STREAM_DONE_SENTINEL: &str = "[DONE]";
+
+/// The terminal frame for the `done` marker: `data: [DONE]`.
+fn done_sentinel_event() -> Event {
+    SerializedSseEvent::new(None, STREAM_DONE_SENTINEL.to_string()).into_event()
 }
 
 fn parse_stream_entry(entry: &StreamId) -> Result<StreamEntryAction, Error> {
@@ -513,9 +543,10 @@ fn parse_stream_entry(entry: &StreamId) -> Result<StreamEntryAction, Error> {
             .transpose()
     };
     let marker = read_field(STREAM_FIELD_MARKER)?;
-    // The `done` marker carries no payload.
+    // The `done` marker carries no payload; emit the `[DONE]` sentinel frame
+    // so clients can tell a successful end apart from a dropped connection.
     if marker.as_deref() == Some(STREAM_MARKER_DONE) {
-        return Ok(StreamEntryAction::End);
+        return Ok(StreamEntryAction::TerminalEvent(done_sentinel_event()));
     }
     let data = read_field(STREAM_FIELD_DATA)?.ok_or_else(|| {
         Error::new(ErrorDetails::InternalError {
@@ -567,10 +598,6 @@ fn async_task_event_stream(
                     finished = true;
                     break;
                 }
-                StreamEntryAction::End => {
-                    finished = true;
-                    break;
-                }
             }
         }
 
@@ -581,11 +608,12 @@ fn async_task_event_stream(
                 .await
             {
                 Ok(reply) => reply,
-                // The shared valkey `ConnectionManager` times commands out
-                // after 500ms by default, below `XREAD_BLOCK_MS`, so an idle
-                // blocking read always ends in a client-side timeout. Treat
-                // that like an empty blocking read: fall through to the task
-                // status re-check below.
+                // An idle blocking read normally returns empty server-side
+                // after `XREAD_BLOCK_MS` (the dedicated stream connection's
+                // response timeout is comfortably above it). A client-side
+                // timeout can still fire on a network hiccup; treat that like
+                // an empty blocking read and fall through to the task status
+                // re-check below.
                 Err(e) if e.is_timeout() => None,
                 Err(e) => Err(Error::new(ErrorDetails::InternalError {
                     message: format!(
@@ -598,12 +626,28 @@ fn async_task_event_stream(
                 // Block timed out with no new entries. Re-check the task status:
                 // if the worker crashed before writing a terminal marker, the
                 // task is terminal in Postgres and we end the stream here.
+                // Still emit the terminal frame the marker would have
+                // produced, so every exit path ends the stream deliberately
+                // instead of with a bare EOF.
                 let poll = spawn_client.get_task_result(task_id).await.map_err(|e| {
                     Error::new(ErrorDetails::InternalError {
                         message: format!("Failed to poll async inference task `{task_id}`: {e}"),
                     })
                 })?;
                 if poll.status.is_terminal() {
+                    match poll.status {
+                        TaskStatus::Completed => yield done_sentinel_event(),
+                        _ => {
+                            let body = poll
+                                .error
+                                .map(|error| error.to_string())
+                                .unwrap_or_else(|| {
+                                    json!({"error": {"message": format!("Async inference task `{task_id}` terminated without a stream marker")}})
+                                        .to_string()
+                                });
+                            yield Event::default().event("error").data(body);
+                        }
+                    }
                     break;
                 }
                 continue;
@@ -618,7 +662,6 @@ fn async_task_event_stream(
                             yield event;
                             finished = true;
                         }
-                        StreamEntryAction::End => finished = true,
                     }
                     if finished {
                         break;
@@ -1140,10 +1183,14 @@ mod tests {
     }
 
     #[gtest]
-    fn parse_stream_entry_done_marker_ends_stream() {
+    fn parse_stream_entry_done_marker_emits_done_sentinel() {
         let entry = stream_entry(&[(STREAM_FIELD_MARKER, STREAM_MARKER_DONE)]);
         let action = parse_stream_entry(&entry).expect("should parse");
-        assert_that!(action, matches_pattern!(StreamEntryAction::End));
+        let StreamEntryAction::TerminalEvent(event) = action else {
+            panic!("expected a terminal event");
+        };
+        let debug = format!("{event:?}");
+        expect_that!(debug, contains_substring("[DONE]"));
     }
 
     #[gtest]
