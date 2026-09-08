@@ -56,7 +56,7 @@ pub async fn get_test_valkey_cache() -> ValkeyCacheClient {
         .await
         .expect("Failed to connect to Valkey");
     match info {
-        ValkeyConnectionInfo::Enabled { connection } => {
+        ValkeyConnectionInfo::Enabled { connection, .. } => {
             ValkeyCacheClient::new(connection, VALKEY_CACHE_TTL_S)
         }
         ValkeyConnectionInfo::Disabled => {

@@ -97,7 +97,7 @@ impl CacheManager {
                     }));
                 }
                 match valkey_connection_info {
-                    ValkeyConnectionInfo::Enabled { connection } => Ok(Self::new(Arc::new(
+                    ValkeyConnectionInfo::Enabled { connection, .. } => Ok(Self::new(Arc::new(
                         ValkeyCacheClient::new(connection.clone(), cache_config.valkey.as_ref().map(|v| v.ttl_s).unwrap_or_else(|| ValkeyModelInferenceCacheConfig::default().ttl_s)),
                     ))),
                     ValkeyConnectionInfo::Disabled => Ok(Self::disabled()),
@@ -114,7 +114,7 @@ impl CacheManager {
                 Ok(Self::new(Arc::new(clickhouse_connection_info.clone())))
             }
             Some(InferenceCacheBackend::Valkey) => match valkey_connection_info {
-                ValkeyConnectionInfo::Enabled { connection } => Ok(Self::new(Arc::new(
+                ValkeyConnectionInfo::Enabled { connection, .. } => Ok(Self::new(Arc::new(
                     ValkeyCacheClient::new(connection.clone(), cache_config.valkey.as_ref().map(|v| v.ttl_s).unwrap_or_else(|| ValkeyModelInferenceCacheConfig::default().ttl_s)),
                 ))),
                 ValkeyConnectionInfo::Disabled => Err(DelayedError::new(ErrorDetails::AppState {

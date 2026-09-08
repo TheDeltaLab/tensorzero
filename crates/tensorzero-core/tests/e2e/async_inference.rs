@@ -362,6 +362,48 @@ async fn test_async_chat_completions_unknown_model_fails() {
         not(eq("")),
         "the task error should carry a message: {error}"
     );
+
+    // The event stream should end with an explicit `event: error` terminal
+    // frame carrying the error payload, not a bare EOF.
+    let stream_path = format!("/v1/async_tasks/{}/stream", launch.task_id);
+    let mut events = client
+        .get(get_gateway_endpoint(&stream_path))
+        .header("Accept", "text/event-stream")
+        .eventsource()
+        .await
+        .expect("stream request should succeed");
+    let collect = async {
+        let mut terminal: Option<String> = None;
+        while let Some(event) = events.next().await {
+            let event = event.expect("SSE event should be valid");
+            match event {
+                Event::Open => continue,
+                Event::Message(message) => {
+                    if message.event == "error" {
+                        terminal = Some(message.data);
+                        break;
+                    }
+                }
+            }
+        }
+        terminal
+    };
+    let terminal_data = tokio::time::timeout(STREAM_TIMEOUT, collect)
+        .await
+        .expect("failed task stream should terminate")
+        .expect("failed task stream should end with an `event: error` frame");
+    let body: Value =
+        serde_json::from_str(&terminal_data).expect("error frame should carry a JSON payload");
+    let frame_message = body
+        .pointer("/error/message")
+        .or_else(|| body.get("message"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    expect_that!(
+        frame_message,
+        not(eq("")),
+        "the error frame should carry a message: {body}"
+    );
 }
 
 #[gtest]

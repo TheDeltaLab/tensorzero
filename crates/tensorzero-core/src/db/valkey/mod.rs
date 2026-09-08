@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 pub mod cache;
 mod rate_limiting;
 #[cfg(test)]
@@ -6,12 +7,21 @@ mod tests;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use redis::aio::ConnectionManager;
+use redis::aio::{ConnectionManager, ConnectionManagerConfig};
 use redis::{AsyncCommands, Client, RedisResult};
 use tokio::time::timeout;
 
 use crate::db::HealthCheckable;
 use crate::error::{DelayedError, ErrorDetails};
+
+/// Response timeout for the dedicated async inference event-stream connection.
+///
+/// The shared manager keeps the redis-rs default (500ms) so request hot-path
+/// users like rate limiting fail fast. Async inference stream commands need
+/// more headroom: the initial `XRANGE` replay can straddle a loaded Valkey,
+/// and the follow loop's blocking `XREAD` waits up to `XREAD_BLOCK_MS` (5s)
+/// server-side before returning empty, so this must comfortably exceed that.
+const ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connection info for Valkey (Redis-compatible) rate limiting backend.
 ///
@@ -21,7 +31,14 @@ use crate::error::{DelayedError, ErrorDetails};
 /// - No connection pool management needed
 #[derive(Clone)]
 pub enum ValkeyConnectionInfo {
-    Enabled { connection: Box<ConnectionManager> },
+    Enabled {
+        connection: Box<ConnectionManager>,
+        /// Dedicated manager for the async inference event-stream endpoints
+        /// (`GET /v1/async_tasks/{task_id}/stream`), configured with
+        /// [`ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT`] instead of the redis-rs
+        /// 500ms default. `None` for cache-only connections.
+        async_inference_stream_connection: Option<Box<ConnectionManager>>,
+    },
     Disabled,
 }
 
@@ -33,7 +50,19 @@ impl ValkeyConnectionInfo {
             })
         })?;
 
-        let mut connection = ConnectionManager::new(client).await.map_err(|e| {
+        let mut connection = ConnectionManager::new(client.clone()).await.map_err(|e| {
+            DelayedError::new(ErrorDetails::ValkeyConnection {
+                message: format!("Failed to connect to Valkey: {e}"),
+            })
+        })?;
+
+        let async_inference_stream_connection = ConnectionManager::new_with_config(
+            client,
+            ConnectionManagerConfig::new()
+                .set_response_timeout(Some(ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT)),
+        )
+        .await
+        .map_err(|e| {
             DelayedError::new(ErrorDetails::ValkeyConnection {
                 message: format!("Failed to connect to Valkey: {e}"),
             })
@@ -47,6 +76,7 @@ impl ValkeyConnectionInfo {
 
         Ok(Self::Enabled {
             connection: Box::new(connection),
+            async_inference_stream_connection: Some(Box::new(async_inference_stream_connection)),
         })
     }
 
@@ -68,6 +98,7 @@ impl ValkeyConnectionInfo {
 
         Ok(Self::Enabled {
             connection: Box::new(connection),
+            async_inference_stream_connection: None,
         })
     }
 
@@ -78,6 +109,19 @@ impl ValkeyConnectionInfo {
     pub fn get_connection(&self) -> Option<&ConnectionManager> {
         match self {
             Self::Enabled { connection, .. } => Some(connection),
+            Self::Disabled => None,
+        }
+    }
+
+    /// The dedicated connection for the async inference event-stream
+    /// endpoints, with a larger response timeout than the shared manager.
+    /// `None` when Valkey is disabled or this is a cache-only connection.
+    pub fn get_async_inference_stream_connection(&self) -> Option<&ConnectionManager> {
+        match self {
+            Self::Enabled {
+                async_inference_stream_connection,
+                ..
+            } => async_inference_stream_connection.as_deref(),
             Self::Disabled => None,
         }
     }
