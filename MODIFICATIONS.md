@@ -76,3 +76,26 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `crates/tensorzero-optimizers/Cargo.toml` — Depends on `tensorzero-providers` for GCP Vertex Gemini fine-tuning API types (Delta-AI fork).
 - `crates/tensorzero-core/src/providers/AGENTS.md` — Moved to `crates/tensorzero-providers/src/providers/AGENTS.md` with the providers split (Delta-AI fork).
 - `crates/tensorzero-core/src/providers/CLAUDE.md` — Moved to `crates/tensorzero-providers/src/providers/CLAUDE.md` with the providers split (Delta-AI fork).
+- `sdk/go/client.go` — New Go SDK: async-task HTTP client (submit/getTask) (Delta-AI fork).
+- `sdk/go/errors.go` — New Go SDK: typed errors (TaskNotFoundError, HTTPError) (Delta-AI fork).
+- `sdk/go/sse.go` — New Go SDK: SSE parser over the raw response body (Delta-AI fork).
+- `sdk/go/stream.go` — New Go SDK: wire-faithful StreamTask with reconnect/dedup and 410 poll fallback (Delta-AI fork).
+- `sdk/go/tasks.go` — New Go SDK: TaskStatus discriminated union types (Delta-AI fork).
+- `sdk/go/wait.go` — New Go SDK: WaitForCompletion exponential-backoff polling (Delta-AI fork).
+- `sdk/go/sse_test.go` — New Go SDK: SSE parser unit tests (Delta-AI fork).
+- `sdk/go/stream_test.go` — New Go SDK: StreamTask unit tests (Delta-AI fork).
+- `sdk/go/tasks_test.go` — New Go SDK: task status parsing unit tests (Delta-AI fork).
+- `sdk/go/wait_test.go` — New Go SDK: WaitForCompletion unit tests (Delta-AI fork).
+- `sdk/go/e2e_test.go` — New Go SDK: env-gated e2e tests (TZ_E2E_GATEWAY + TZ_E2E_KEY required) (Delta-AI fork).
+- `sdk/go/go.mod` — New Go SDK submodule `github.com/TheDeltaLab/tensorzero/sdk/go` (Delta-AI fork).
+- `sdk/go/README.md` — New Go SDK README (Delta-AI fork).
+- `sdk/typescript/.gitignore` — New TypeScript SDK workspace gitignore (node_modules/dist) (Delta-AI fork).
+- `sdk/typescript/package.json` — New TypeScript SDK private workspace root (Delta-AI fork).
+- `sdk/typescript/pnpm-workspace.yaml` — New TypeScript SDK pnpm workspace (Delta-AI fork).
+- `sdk/typescript/pnpm-lock.yaml` — New TypeScript SDK lockfile (Delta-AI fork).
+- `sdk/typescript/tsconfig.base.json` — New TypeScript SDK shared tsconfig (Delta-AI fork).
+- `sdk/typescript/README.md` — New TypeScript SDK README (Delta-AI fork).
+- `sdk/typescript/packages/tensorzero-sdk/package.json` — New package `@delta-ai/tensorzero-sdk`, published to GitHub Packages (Delta-AI fork).
+- `sdk/typescript/packages/tensorzero-sdk/tsconfig.json` — New package tsconfig (Delta-AI fork).
+- `sdk/typescript/packages/ai-sdk-provider/package.json` — New package `@delta-ai/ai-sdk-provider`, published to GitHub Packages (Delta-AI fork).
+- `sdk/typescript/packages/ai-sdk-provider/tsconfig.json` — New package tsconfig (Delta-AI fork).
