@@ -1,4 +1,5 @@
 #![expect(clippy::missing_panics_doc, clippy::unwrap_used)]
+// Modified by Delta-AI under Apache 2.0
 
 use std::path::PathBuf;
 
@@ -99,4 +100,43 @@ pub async fn get_e2e_config() -> Config {
         .await
         .unwrap()
         .into_config_without_writing_for_tests()
+}
+
+// Modified by Delta-AI under Apache 2.0
+/// Builds a mutable `ToolCallConfig` for the weather tool.
+/// Moved from `providers::test_helpers` when providers were extracted to
+/// `tensorzero-providers` — this constructs core's real config types, so it
+/// belongs here (Delta-AI fork).
+pub fn get_temperature_tool_config() -> crate::tool::ToolCallConfig {
+    use std::sync::Arc;
+
+    use crate::jsonschema_util::JSONSchema;
+    use crate::tool::{FunctionToolConfig, StaticToolConfig, ToolChoice};
+    use serde_json::json;
+
+    let weather_tool_config_static = Arc::new(StaticToolConfig {
+        name: "get_temperature".to_string(),
+        key: "get_temperature".to_string(),
+        description: "Get the current temperature in a given location".to_string(),
+        parameters: JSONSchema::from_value(json!({
+            "type": "object",
+            "properties": {
+                "location": {"type": "string"},
+                "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+            },
+            "required": ["location"]
+        }))
+        .unwrap(),
+        strict: false,
+    });
+    let weather_tool = FunctionToolConfig::Static(weather_tool_config_static);
+    // `with_tools_available` is `#[cfg(test)]` in `tool::config`, so populate
+    // the (crate-visible) fields directly — this helper also compiles under
+    // `e2e_tests` without `cfg(test)`.
+    crate::tool::ToolCallConfig {
+        tool_choice: ToolChoice::Specific("get_temperature".to_string()),
+        parallel_tool_calls: Some(false),
+        static_tools_available: vec![weather_tool],
+        ..Default::default()
+    }
 }

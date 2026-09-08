@@ -12,7 +12,6 @@ use crate::cost::{
     CostConfig, ResponseMode, apply_computed_cost, load_unified_cost_config_with_provider_defaults,
 };
 use crate::endpoints::inference::InferenceClients;
-use crate::http::TensorzeroHttpClient;
 use crate::inference::types::RequestMessagesOrBatch;
 use crate::inference::types::extra_body::ExtraBodyConfig;
 use crate::inference::types::extra_headers::ExtraHeadersConfig;
@@ -24,7 +23,6 @@ use crate::model::{
 };
 use crate::model_table::{BaseModelTable, ProviderKind, ProviderTypeDefaultCredentials};
 use crate::model_table::{OpenAIKind, OpenRouterKind, ShorthandModelConfig};
-use crate::providers::azure::AzureProvider;
 use crate::providers::openrouter::OpenRouterProvider;
 use crate::rate_limiting::{
     EstimatedRateLimitResourceUsage, RateLimitResource, RateLimitResourceUsage,
@@ -32,7 +30,6 @@ use crate::rate_limiting::{
     decimal_cost_to_nano_cost, get_estimated_tokens,
 };
 use crate::{
-    endpoints::inference::InferenceCredentials,
     error::{Error, ErrorDetails, IMPOSSIBLE_ERROR_MESSAGE, TimeoutKind},
     inference::types::{
         Latency, ModelInferenceResponseWithMetadata, RawUsageEntry, RequestMessage, Role, Usage,
@@ -59,6 +56,9 @@ use uuid::Uuid;
 use crate::providers::dummy::DummyProvider;
 
 pub type EmbeddingModelTable = BaseModelTable<EmbeddingModelConfig>;
+// Modified by Delta-AI under Apache 2.0
+// `EmbeddingProviderConfig` moved to `tensorzero-providers` (Delta-AI fork).
+pub use tensorzero_providers::embedding_provider::EmbeddingProviderConfig;
 
 impl ShorthandModelConfig for EmbeddingModelConfig {
     const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
@@ -718,28 +718,6 @@ impl TryFrom<EmbeddingResponseWithMetadata> for ModelInferenceResponseWithMetada
 
 #[derive(ts_rs::TS, Debug, Serialize)]
 #[ts(export)]
-pub enum EmbeddingProviderConfig {
-    OpenAI(OpenAIProvider),
-    Azure(AzureProvider),
-    OpenRouter(OpenRouterProvider),
-    #[cfg(any(test, feature = "e2e_tests"))]
-    Dummy(DummyProvider),
-}
-
-impl EmbeddingProviderConfig {
-    pub fn provider_type(&self) -> &'static str {
-        match self {
-            EmbeddingProviderConfig::OpenAI(_) => crate::providers::openai::PROVIDER_TYPE,
-            EmbeddingProviderConfig::Azure(_) => crate::providers::azure::PROVIDER_TYPE,
-            EmbeddingProviderConfig::OpenRouter(_) => crate::providers::openrouter::PROVIDER_TYPE,
-            #[cfg(any(test, feature = "e2e_tests"))]
-            EmbeddingProviderConfig::Dummy(_) => crate::providers::dummy::PROVIDER_TYPE,
-        }
-    }
-}
-
-#[derive(ts_rs::TS, Debug, Serialize)]
-#[ts(export)]
 pub struct EmbeddingProviderInfo {
     pub inner: EmbeddingProviderConfig,
     pub timeout_ms: Option<u64>,
@@ -909,43 +887,11 @@ impl UninitializedEmbeddingProviderConfig {
     }
 }
 
-impl EmbeddingProvider for EmbeddingProviderConfig {
-    async fn embed(
-        &self,
-        request: &EmbeddingRequest,
-        client: &TensorzeroHttpClient,
-        dynamic_api_keys: &InferenceCredentials,
-        model_provider_data: &EmbeddingProviderRequestInfo,
-    ) -> Result<EmbeddingProviderResponse, Error> {
-        match self {
-            EmbeddingProviderConfig::OpenAI(provider) => {
-                provider
-                    .embed(request, client, dynamic_api_keys, model_provider_data)
-                    .await
-            }
-            EmbeddingProviderConfig::Azure(provider) => {
-                provider
-                    .embed(request, client, dynamic_api_keys, model_provider_data)
-                    .await
-            }
-            EmbeddingProviderConfig::OpenRouter(provider) => {
-                provider
-                    .embed(request, client, dynamic_api_keys, model_provider_data)
-                    .await
-            }
-            #[cfg(any(test, feature = "e2e_tests"))]
-            EmbeddingProviderConfig::Dummy(provider) => {
-                provider
-                    .embed(request, client, dynamic_api_keys, model_provider_data)
-                    .await
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use googletest::{expect_that, matchers::eq};
+    use tensorzero_http::TensorzeroHttpClient;
+    use tensorzero_types::inference_params::InferenceCredentials;
 
     use super::*;
     use crate::{

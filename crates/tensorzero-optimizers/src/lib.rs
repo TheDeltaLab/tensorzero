@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 // Required to compile large async/instrumented futures pulled in from tensorzero-core (e.g., AWS Bedrock client types)
 #![recursion_limit = "256"]
 //! TensorZero Optimizer Implementations
@@ -24,6 +25,7 @@ use tensorzero_core::{
 pub mod dicl;
 pub mod endpoints;
 pub mod fireworks_sft;
+pub mod gcp_vertex_gemini_api;
 pub mod gcp_vertex_gemini_sft;
 pub mod gepa;
 pub mod openai;

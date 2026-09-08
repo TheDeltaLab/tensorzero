@@ -68,3 +68,11 @@ See `NOTICE` for the overall attribution statement.
 ---
 
 _To add an entry: append a bullet item above. The CI workflow (`modification-notice-check`) will verify that every non-source-code file modified in a PR is listed here._
+
+- `crates/Cargo.toml` — Added `tensorzero-providers` workspace member (Delta-AI fork).
+- `crates/Cargo.lock` — Workspace lockfile updated for the `tensorzero-providers` crate (Delta-AI fork).
+- `crates/tensorzero-providers/Cargo.toml` — New crate: model provider implementations extracted from `tensorzero-core` so provider-only changes don't recompile all of core (Delta-AI fork).
+- `crates/tensorzero-core/Cargo.toml` — Depends on `tensorzero-providers`; forwards the `e2e_tests`/`pyo3` features and enables `test-helpers` in dev-dependencies (Delta-AI fork).
+- `crates/tensorzero-optimizers/Cargo.toml` — Depends on `tensorzero-providers` for GCP Vertex Gemini fine-tuning API types (Delta-AI fork).
+- `crates/tensorzero-core/src/providers/AGENTS.md` — Moved to `crates/tensorzero-providers/src/providers/AGENTS.md` with the providers split (Delta-AI fork).
+- `crates/tensorzero-core/src/providers/CLAUDE.md` — Moved to `crates/tensorzero-providers/src/providers/CLAUDE.md` with the providers split (Delta-AI fork).

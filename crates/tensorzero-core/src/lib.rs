@@ -25,20 +25,24 @@ pub mod model; // types and methods for working with TensorZero-supported models
 pub mod model_alias;
 pub mod model_table;
 pub mod observability; // utilities for observability (logs, metrics, etc.)
-pub mod observability_tags; // inference tags for Synapse request / vendor ids
 pub mod optimization;
-pub mod providers; // providers for the inference and / or optimization services TensorZero integrates
 pub mod rate_limiting; // utilities for rate limiting
 pub mod relay;
-pub mod routing; // Synapse-compatible alias failover / throughput gating
 pub mod serde_util; // utilities for working with serde
 pub mod statistics_util; // statistical utilities (confidence intervals, etc.)
 pub mod stored_inference; // types and methods for working with stored inferences
 #[cfg(any(test, feature = "e2e_tests"))]
 pub mod test_helpers; // e2e test utilities for external crates
-pub mod throughput_tracker;
 pub mod tool; // types and methods for working with TensorZero tools
 pub mod utils;
+
+// Modified by Delta-AI under Apache 2.0
+// Provider implementations and their supporting modules moved to the
+// `tensorzero-providers` crate; re-exported here so downstream paths are unchanged.
+pub use tensorzero_providers::observability_tags;
+pub use tensorzero_providers::providers;
+pub use tensorzero_providers::routing;
+pub use tensorzero_providers::throughput_tracker;
 pub mod variant; // types and methods for working with TensorZero variants
 
 pub mod built_info {

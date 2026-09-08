@@ -10,9 +10,13 @@ use crate::error::IMPOSSIBLE_ERROR_MESSAGE;
 pub mod gateway;
 pub mod mock;
 pub mod retries;
-#[cfg(any(test, feature = "e2e_tests"))]
-pub mod testing;
 pub mod uuid;
+
+// Modified by Delta-AI under Apache 2.0
+// `testing` moved to `tensorzero-providers` with the providers; re-exported
+// here for the e2e tests (Delta-AI fork).
+#[cfg(any(test, feature = "e2e_tests"))]
+pub use tensorzero_providers::utils::testing;
 
 /// A helper function that wraps a future that might have unbounded recursion.
 /// Note that this is *not* the same thing as boxing a future - boxing does not
