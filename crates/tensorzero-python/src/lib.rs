@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![recursion_limit = "256"]
 /// Implements a Python tensorzero client, using `pyo3` to wrap the existing Rust client.
 /// Overall structure of the crate:
@@ -63,9 +64,10 @@ use tensorzero_core::{
     utils::gateway::ShutdownHandle,
 };
 use tensorzero_rust::{
-    CacheParamsOptions, Client, ClientBuilder, ClientBuilderMode, ClientExt, ClientInferenceParams,
-    ClientSecretString, DynamicToolParams, FeedbackParams, GepaLaunchRequest, GepaLaunchResponse,
-    InferenceOutput, InferenceParams, InferenceStream, Input, LaunchOptimizationParams,
+    AsyncInferenceApiKind, AsyncTaskEventStream, AsyncTaskWaitOptions, CacheParamsOptions, Client,
+    ClientBuilder, ClientBuilderMode, ClientExt, ClientInferenceParams, ClientSecretString,
+    DynamicToolParams, FeedbackParams, GepaLaunchRequest, GepaLaunchResponse, InferenceOutput,
+    InferenceParams, InferenceStream, Input, LaunchOptimizationParams,
     LaunchOptimizationWorkflowParams, OptimizationDataSource, OptimizationJobHandle, OrderBy,
     PostgresConfig, RenderedSample, RunEvaluationHttpParams, TensorZeroError, Tool,
     WorkflowEvaluationRunParams, err_to_http,
@@ -479,6 +481,77 @@ impl StreamWrapper {
 impl Drop for StreamWrapper {
     fn drop(&mut self) {
         check_stream_terminated(self.stream.clone());
+    }
+}
+
+/// Parses the `kind` argument of `submit_async_inference` into the Rust enum.
+fn parse_async_inference_kind(kind: &str) -> PyResult<AsyncInferenceApiKind> {
+    match kind {
+        "chat" => Ok(AsyncInferenceApiKind::Chat),
+        "responses" => Ok(AsyncInferenceApiKind::Responses),
+        "messages" => Ok(AsyncInferenceApiKind::Messages),
+        other => Err(PyValueError::new_err(format!(
+            "Invalid async inference API kind `{other}`; expected one of `chat`, `responses`, `messages`"
+        ))),
+    }
+}
+
+/// Synchronous iterator over the SSE events of an async inference task
+/// (`TensorZeroGateway.stream_async_task`). Each item is a dict
+/// `{"event": Optional[str], "data": str}`, where `data` is the raw JSON
+/// payload in the wire shape of the API the task was submitted to.
+#[pyclass(frozen)]
+struct AsyncTaskStreamWrapper {
+    stream: Arc<Mutex<AsyncTaskEventStream>>,
+    // A handle to the original `TensorZeroGateway` object, mirroring `StreamWrapper`.
+    _gateway: Py<PyAny>,
+}
+
+#[pymethods]
+impl AsyncTaskStreamWrapper {
+    fn __iter__(this: Py<Self>) -> Py<Self> {
+        this
+    }
+
+    fn __next__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
+        let stream = self.stream.clone();
+        let event = tokio_block_on_without_gil(py, async move { stream.lock().await.next().await });
+        let Some(event) = event else {
+            return Err(PyStopIteration::new_err(()));
+        };
+        let event = event.map_err(|e| convert_error(py, e))?;
+        serialize_to_dict(py, &event)
+    }
+}
+
+/// Asynchronous iterator over the SSE events of an async inference task
+/// (`AsyncTensorZeroGateway.stream_async_task`). See [`AsyncTaskStreamWrapper`]
+/// for the item shape.
+#[pyclass(frozen)]
+struct AsyncTaskAsyncStreamWrapper {
+    stream: Arc<Mutex<AsyncTaskEventStream>>,
+    // A handle to the original `AsyncTensorZeroGateway` object, mirroring `AsyncStreamWrapper`.
+    _gateway: Py<PyAny>,
+}
+
+#[pymethods]
+impl AsyncTaskAsyncStreamWrapper {
+    fn __aiter__(this: Py<Self>) -> Py<Self> {
+        this
+    }
+
+    fn __anext__<'a>(&self, py: Python<'a>) -> PyResult<Bound<'a, PyAny>> {
+        let stream = self.stream.clone();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let event = stream.lock().await.next().await;
+            let Some(event) = event else {
+                return Err(PyStopAsyncIteration::new_err(()));
+            };
+            Python::attach(|py| {
+                let event = event.map_err(|e| convert_error(py, e))?;
+                serialize_to_dict(py, &event)
+            })
+        })
     }
 }
 
@@ -1817,6 +1890,133 @@ impl TensorZeroGateway {
         )
     }
 
+    /// Submit an async inference job to the gateway (`POST /v1/chat/completions/async`,
+    /// `/v1/responses/async`, or `/v1/messages/async`).
+    ///
+    /// Only available for HTTP-mode clients; the gateway must have async inference enabled.
+    ///
+    /// :param kind: The API shape of the request: "chat" (OpenAI chat completions),
+    ///              "responses" (OpenAI responses), or "messages" (Anthropic messages).
+    /// :param request: The request body of the corresponding synchronous API, as a dict.
+    ///                 The `stream` field is ignored by the gateway.
+    /// :return: A dict `{"task_id": str}` with the durable task ID.
+    #[pyo3(signature = (*, kind, request))]
+    fn submit_async_inference(
+        this: PyRef<'_, Self>,
+        kind: &str,
+        request: Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
+        let kind = parse_async_inference_kind(kind)?;
+        let request: serde_json::Value = deserialize_from_pyobj(this.py(), &request)?;
+        let client = this.as_super().client.clone();
+        let fut = client.submit_async_inference(kind, request);
+        let response =
+            tokio_block_on_without_gil(this.py(), fut).map_err(|e| convert_error(this.py(), e))?;
+        serialize_to_dict(this.py(), &response)
+    }
+
+    /// Fetch the current status of an async inference task
+    /// (`GET /v1/async_tasks/{task_id}`).
+    ///
+    /// :param task_id: The task ID returned by `submit_async_inference`.
+    /// :return: A dict with `task_id`, `status` ("queued" / "running" / "completed" /
+    ///          "failed" / "cancelled"), and status-dependent fields (e.g. `response`
+    ///          for completed tasks, in the wire shape of the submitted API).
+    #[pyo3(signature = (*, task_id))]
+    fn get_async_task(this: PyRef<'_, Self>, task_id: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let task_id = python_uuid_to_uuid("task_id", task_id)?;
+        let client = this.as_super().client.clone();
+        let fut = client.get_async_task(task_id);
+        let response =
+            tokio_block_on_without_gil(this.py(), fut).map_err(|e| convert_error(this.py(), e))?;
+        serialize_to_dict(this.py(), &response)
+    }
+
+    /// Poll an async inference task with exponential backoff until it reaches a
+    /// terminal state (completed / failed / cancelled), and return the terminal status.
+    ///
+    /// :param task_id: The task ID returned by `submit_async_inference`.
+    /// :param initial_interval_ms: Delay before the first re-poll, in milliseconds (default 500).
+    /// :param max_interval_ms: Upper bound for the backoff between polls, in milliseconds (default 5000).
+    /// :param timeout_ms: Total time budget in milliseconds (default 300000); raises if the task is not terminal by then.
+    /// :return: The terminal task status dict (same shape as `get_async_task`).
+    #[pyo3(signature = (*, task_id, initial_interval_ms=None, max_interval_ms=None, timeout_ms=None))]
+    fn wait_for_async_task(
+        this: PyRef<'_, Self>,
+        task_id: Bound<'_, PyAny>,
+        initial_interval_ms: Option<u64>,
+        max_interval_ms: Option<u64>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Py<PyAny>> {
+        let task_id = python_uuid_to_uuid("task_id", task_id)?;
+        let default = AsyncTaskWaitOptions::default();
+        let options = AsyncTaskWaitOptions {
+            initial_interval: initial_interval_ms
+                .map(Duration::from_millis)
+                .unwrap_or(default.initial_interval),
+            max_interval: max_interval_ms
+                .map(Duration::from_millis)
+                .unwrap_or(default.max_interval),
+            timeout: timeout_ms
+                .map(Duration::from_millis)
+                .unwrap_or(default.timeout),
+        };
+        let client = this.as_super().client.clone();
+        let fut = client.wait_for_async_task(task_id, options);
+        let response =
+            tokio_block_on_without_gil(this.py(), fut).map_err(|e| convert_error(this.py(), e))?;
+        serialize_to_dict(this.py(), &response)
+    }
+
+    /// Attach to the SSE event stream of an async inference task
+    /// (`GET /v1/async_tasks/{task_id}/stream`), replaying events written so far
+    /// and then following the task live until it terminates.
+    ///
+    /// :param task_id: The task ID returned by `submit_async_inference`.
+    /// :return: An iterator of dicts `{"event": Optional[str], "data": str}`, where
+    ///          `data` is the raw JSON payload string in the wire shape of the API the
+    ///          task was submitted to (e.g. OpenAI chat completion chunks). A terminal
+    ///          error marker raises `TensorZeroError` during iteration.
+    #[pyo3(signature = (*, task_id))]
+    fn stream_async_task(this: PyRef<'_, Self>, task_id: Bound<'_, PyAny>) -> PyResult<Py<PyAny>> {
+        let py = this.py();
+        let task_id = python_uuid_to_uuid("task_id", task_id)?;
+        let client = this.as_super().client.clone();
+        let fut = async move { client.stream_async_task(task_id).await };
+        let stream = tokio_block_on_without_gil(py, fut).map_err(|e| convert_error(py, e))?;
+        Ok(AsyncTaskStreamWrapper {
+            stream: Arc::new(Mutex::new(stream)),
+            _gateway: this.into_pyobject(py)?.into_any().unbind(),
+        }
+        .into_pyobject(py)?
+        .into_any()
+        .unbind())
+    }
+
+    /// Fetch the gateway's liveness status (`GET /status`).
+    ///
+    /// :return: A dict `{"status": str, "version": str, "config_hash": str}`.
+    fn status(this: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let client = this.as_super().client.clone();
+        let fut = client.status();
+        let response =
+            tokio_block_on_without_gil(this.py(), fut).map_err(|e| convert_error(this.py(), e))?;
+        serialize_to_dict(this.py(), &response)
+    }
+
+    /// Fetch the gateway's health report (`GET /health`), covering the gateway and its
+    /// ClickHouse / Postgres / Valkey dependencies.
+    ///
+    /// :return: A dict mapping service names to "ok" / "error". Raises `TensorZeroError`
+    ///          (HTTP 503) when any dependency is unhealthy.
+    fn health(this: PyRef<'_, Self>) -> PyResult<Py<PyAny>> {
+        let client = this.as_super().client.clone();
+        let fut = client.health();
+        let response =
+            tokio_block_on_without_gil(this.py(), fut).map_err(|e| convert_error(this.py(), e))?;
+        serialize_to_dict(this.py(), &response)
+    }
+
     /// Render a list of stored samples (datapoints or inferences) into a list of rendered stored samples.
     /// There are two things that need to happen in this function:
     /// 1. We need to resolve all network resources (e.g. images) in the stored samples.
@@ -2898,6 +3098,159 @@ impl AsyncTensorZeroGateway {
                     "tensorzero",
                     "GetInferencesResponse",
                 ),
+                Err(e) => Err(convert_error(py, e)),
+            })
+        })
+    }
+
+    /// Submit an async inference job to the gateway (`POST /v1/chat/completions/async`,
+    /// `/v1/responses/async`, or `/v1/messages/async`).
+    ///
+    /// Only available for HTTP-mode clients; the gateway must have async inference enabled.
+    ///
+    /// :param kind: The API shape of the request: "chat" (OpenAI chat completions),
+    ///              "responses" (OpenAI responses), or "messages" (Anthropic messages).
+    /// :param request: The request body of the corresponding synchronous API, as a dict.
+    ///                 The `stream` field is ignored by the gateway.
+    /// :return: A dict `{"task_id": str}` with the durable task ID.
+    #[pyo3(signature = (*, kind, request))]
+    fn submit_async_inference<'a>(
+        this: PyRef<'a, Self>,
+        kind: &str,
+        request: Bound<'a, PyAny>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        let kind = parse_async_inference_kind(kind)?;
+        let request: serde_json::Value = deserialize_from_pyobj(this.py(), &request)?;
+        let client = this.as_super().client.clone();
+        pyo3_async_runtimes::tokio::future_into_py(this.py(), async move {
+            let res = client.submit_async_inference(kind, request).await;
+            Python::attach(|py| match res {
+                Ok(response) => serialize_to_dict(py, &response),
+                Err(e) => Err(convert_error(py, e)),
+            })
+        })
+    }
+
+    /// Fetch the current status of an async inference task
+    /// (`GET /v1/async_tasks/{task_id}`).
+    ///
+    /// :param task_id: The task ID returned by `submit_async_inference`.
+    /// :return: A dict with `task_id`, `status` ("queued" / "running" / "completed" /
+    ///          "failed" / "cancelled"), and status-dependent fields (e.g. `response`
+    ///          for completed tasks, in the wire shape of the submitted API).
+    #[pyo3(signature = (*, task_id))]
+    fn get_async_task<'a>(
+        this: PyRef<'a, Self>,
+        task_id: Bound<'a, PyAny>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        let task_id = python_uuid_to_uuid("task_id", task_id)?;
+        let client = this.as_super().client.clone();
+        pyo3_async_runtimes::tokio::future_into_py(this.py(), async move {
+            let res = client.get_async_task(task_id).await;
+            Python::attach(|py| match res {
+                Ok(response) => serialize_to_dict(py, &response),
+                Err(e) => Err(convert_error(py, e)),
+            })
+        })
+    }
+
+    /// Poll an async inference task with exponential backoff until it reaches a
+    /// terminal state (completed / failed / cancelled), and return the terminal status.
+    ///
+    /// :param task_id: The task ID returned by `submit_async_inference`.
+    /// :param initial_interval_ms: Delay before the first re-poll, in milliseconds (default 500).
+    /// :param max_interval_ms: Upper bound for the backoff between polls, in milliseconds (default 5000).
+    /// :param timeout_ms: Total time budget in milliseconds (default 300000); raises if the task is not terminal by then.
+    /// :return: The terminal task status dict (same shape as `get_async_task`).
+    #[pyo3(signature = (*, task_id, initial_interval_ms=None, max_interval_ms=None, timeout_ms=None))]
+    fn wait_for_async_task<'a>(
+        this: PyRef<'a, Self>,
+        task_id: Bound<'a, PyAny>,
+        initial_interval_ms: Option<u64>,
+        max_interval_ms: Option<u64>,
+        timeout_ms: Option<u64>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        let task_id = python_uuid_to_uuid("task_id", task_id)?;
+        let default = AsyncTaskWaitOptions::default();
+        let options = AsyncTaskWaitOptions {
+            initial_interval: initial_interval_ms
+                .map(Duration::from_millis)
+                .unwrap_or(default.initial_interval),
+            max_interval: max_interval_ms
+                .map(Duration::from_millis)
+                .unwrap_or(default.max_interval),
+            timeout: timeout_ms
+                .map(Duration::from_millis)
+                .unwrap_or(default.timeout),
+        };
+        let client = this.as_super().client.clone();
+        pyo3_async_runtimes::tokio::future_into_py(this.py(), async move {
+            let res = client.wait_for_async_task(task_id, options).await;
+            Python::attach(|py| match res {
+                Ok(response) => serialize_to_dict(py, &response),
+                Err(e) => Err(convert_error(py, e)),
+            })
+        })
+    }
+
+    /// Attach to the SSE event stream of an async inference task
+    /// (`GET /v1/async_tasks/{task_id}/stream`), replaying events written so far
+    /// and then following the task live until it terminates.
+    ///
+    /// :param task_id: The task ID returned by `submit_async_inference`.
+    /// :return: An async iterator of dicts `{"event": Optional[str], "data": str}`, where
+    ///          `data` is the raw JSON payload string in the wire shape of the API the
+    ///          task was submitted to (e.g. OpenAI chat completion chunks). A terminal
+    ///          error marker raises `TensorZeroError` during iteration.
+    #[pyo3(signature = (*, task_id))]
+    fn stream_async_task<'a>(
+        this: PyRef<'a, Self>,
+        task_id: Bound<'a, PyAny>,
+    ) -> PyResult<Bound<'a, PyAny>> {
+        let task_id = python_uuid_to_uuid("task_id", task_id)?;
+        let client = this.as_super().client.clone();
+        let py = this.py();
+        let gateway = this.into_pyobject(py)?.into_any().unbind();
+        pyo3_async_runtimes::tokio::future_into_py(py, async move {
+            let res = client.stream_async_task(task_id).await;
+            Python::attach(|py| match res {
+                Ok(stream) => Ok(AsyncTaskAsyncStreamWrapper {
+                    stream: Arc::new(Mutex::new(stream)),
+                    _gateway: gateway,
+                }
+                .into_pyobject(py)?
+                .into_any()
+                .unbind()),
+                Err(e) => Err(convert_error(py, e)),
+            })
+        })
+    }
+
+    /// Fetch the gateway's liveness status (`GET /status`).
+    ///
+    /// :return: A dict `{"status": str, "version": str, "config_hash": str}`.
+    fn status<'a>(this: PyRef<'a, Self>) -> PyResult<Bound<'a, PyAny>> {
+        let client = this.as_super().client.clone();
+        pyo3_async_runtimes::tokio::future_into_py(this.py(), async move {
+            let res = client.status().await;
+            Python::attach(|py| match res {
+                Ok(response) => serialize_to_dict(py, &response),
+                Err(e) => Err(convert_error(py, e)),
+            })
+        })
+    }
+
+    /// Fetch the gateway's health report (`GET /health`), covering the gateway and its
+    /// ClickHouse / Postgres / Valkey dependencies.
+    ///
+    /// :return: A dict mapping service names to "ok" / "error". Raises `TensorZeroError`
+    ///          (HTTP 503) when any dependency is unhealthy.
+    fn health<'a>(this: PyRef<'a, Self>) -> PyResult<Bound<'a, PyAny>> {
+        let client = this.as_super().client.clone();
+        pyo3_async_runtimes::tokio::future_into_py(this.py(), async move {
+            let res = client.health().await;
+            Python::attach(|py| match res {
+                Ok(response) => serialize_to_dict(py, &response),
                 Err(e) => Err(convert_error(py, e)),
             })
         })

@@ -11,6 +11,8 @@ See `NOTICE` for the overall attribution statement.
 ## Modified non-source-code files
 
 - `AGENTS.md` — Added Modification Notice (Delta-AI fork) section.
+- `crates/.config/nextest.toml` — Longer slow-timeout override for the env-gated live-gateway async inference e2e tests (`client::async_inference::tests::e2e`) (Delta-AI fork).
+- `crates/tensorzero-python/tensorzero/tensorzero.pyi` — Type stubs for the async task / status / health gateway methods (Delta-AI fork).
 - `CLA.md` — Changed Company from TensorZero, Inc. to Delta-AI; removed legacy hello@tensorzero.com contact.
 - `SECURITY.md` — Changed security contact to security@thebrainly.ai.
 - `crates/tensorzero-stored-config/src/postgres/migrations/20260622000001_model_aliases.sql` — New model_aliases DB migration table (Delta-AI fork).

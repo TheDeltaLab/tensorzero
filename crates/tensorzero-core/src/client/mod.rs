@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashSet;
 use std::{env, fmt::Display, future::Future, path::PathBuf, sync::Arc, time::Duration};
 
@@ -46,8 +47,11 @@ pub use crate::inference::types::{
     ContentBlockChunk, Input, InputMessage, InputMessageContent, Role, System, Unknown,
 };
 
+pub mod async_inference;
 pub mod client_inference_params;
 pub mod input_handling;
+
+pub use async_inference::{AsyncTaskEventStream, AsyncTaskStreamEvent, AsyncTaskWaitOptions};
 
 pub enum ClientMode {
     HTTPGateway(HTTPGateway),

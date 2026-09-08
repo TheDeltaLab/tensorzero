@@ -1,3 +1,4 @@
+# Modified by Delta-AI under Apache 2.0
 import typing as t
 from importlib.metadata import version
 
@@ -112,6 +113,10 @@ from .tensorzero import (
 )
 from .types import (
     ApiType,
+    AsyncInferenceApiKind,
+    AsyncInferenceLaunchResponse,
+    AsyncTaskStatusResponse,
+    AsyncTaskStreamEvent,
     BaseTensorZeroError,
     ChatDatapointInsert,
     ChatInferenceResponse,
@@ -133,6 +138,7 @@ from .types import (
     RawResponseEntry,
     RawText,
     RawUsageEntry,
+    StatusResponse,
     System,
     Template,
     TensorZeroError,
@@ -176,6 +182,10 @@ __all__ = [
     "AlwaysExtraHeader",
     "AlwaysExtraHeaderDelete",
     "ApiType",
+    "AsyncInferenceApiKind",
+    "AsyncInferenceLaunchResponse",
+    "AsyncTaskStatusResponse",
+    "AsyncTaskStreamEvent",
     "AsyncTensorZeroGateway",
     "BaseTensorZeroError",
     "BaseTensorZeroGateway",
@@ -282,6 +292,7 @@ __all__ = [
     "StoredInputMessageContentToolCall",
     "StoredInputMessageContentToolResult",
     "StoredInputMessageContentUnknown",
+    "StatusResponse",
     "System",
     "Template",
     "TensorZeroError",
