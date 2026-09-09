@@ -1463,6 +1463,7 @@ mod tests {
         };
         let inference_params = InferenceParams::default();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: templates.clone(),
             tool_config: None,
             function_name: "".into(),
@@ -1529,6 +1530,7 @@ mod tests {
             embedding_models: Arc::new(EmbeddingModelTable::default()),
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: templates.clone(),
             tool_config: None,
             function_name: "".into(),
@@ -1608,6 +1610,7 @@ mod tests {
             ),
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: templates.clone(),
             tool_config: None,
             function_name: "".into(),
@@ -1714,6 +1717,7 @@ mod tests {
             embedding_models: Arc::new(EmbeddingModelTable::default()),
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: templates.clone(),
             tool_config: None,
             function_name: "".into(),
@@ -1803,6 +1807,7 @@ mod tests {
         };
         let weather_tool_config = get_temperature_tool_config();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: templates.clone(),
             tool_config: Some(Arc::new(weather_tool_config)),
             function_name: "".into(),
@@ -1905,6 +1910,7 @@ mod tests {
             evaluators: HashMap::new(),
         }));
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: templates.clone(),
             tool_config: None,
             function_name: "".into(),
@@ -1990,6 +1996,7 @@ mod tests {
             embedding_models: Arc::new(EmbeddingModelTable::default()),
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2127,6 +2134,7 @@ mod tests {
             "required": ["answer"]
         }));
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2252,6 +2260,7 @@ mod tests {
             "required": ["response"]
         }));
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2524,6 +2533,7 @@ mod tests {
             embedding_models: embedding_models.clone(),
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2607,6 +2617,7 @@ mod tests {
             embedding_models: embedding_models.clone(),
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2717,6 +2728,7 @@ mod tests {
         });
         let mut inference_params = InferenceParams::default();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2824,6 +2836,7 @@ mod tests {
             ..Default::default()
         });
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -2908,6 +2921,7 @@ mod tests {
         }));
         let dynamic_output_schema_value = dynamic_output_schema.value.clone();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: Arc::new(templates.clone()),
             tool_config: None,
             dynamic_output_schema: Some(Arc::new(dynamic_output_schema)),

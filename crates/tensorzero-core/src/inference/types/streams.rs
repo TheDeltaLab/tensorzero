@@ -691,6 +691,7 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
     let model_inference_result =
         ModelInferenceResponseWithMetadata::new(model_inference_response, model_name);
     let inference_config = InferenceConfig {
+        requested_api_type: None,
         ids: InferenceIds {
             inference_id,
             episode_id,

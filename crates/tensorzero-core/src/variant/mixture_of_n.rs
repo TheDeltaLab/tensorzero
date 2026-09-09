@@ -1616,6 +1616,7 @@ mod tests {
             messages: vec![],
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),

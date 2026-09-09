@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::Duration;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -1453,6 +1454,7 @@ mod tests {
         // Setup inference config
         let templates = get_test_template_config().await;
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: Arc::new(templates),
             tool_config: None,
             function_name: "test_function".into(),
@@ -1584,6 +1586,7 @@ mod tests {
         // Setup inference config
         let templates = get_test_template_config().await;
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: Arc::new(templates),
             tool_config: None,
             function_name: "test_function".into(),

@@ -14,15 +14,16 @@ use crate::cache::CacheParamsOptions;
 use crate::config::Namespace;
 use crate::endpoints::inference::{InferenceCredentials, InferenceParams, InferenceResponse};
 use crate::endpoints::openai_compatible::types::chat_completions::{
-    OpenAICompatibleAssistantMessage, OpenAICompatibleMessage, OpenAICompatibleParams,
-    OpenAICompatibleStreamOptions, OpenAICompatibleSystemMessage, OpenAICompatibleUserMessage,
-    process_chat_content,
+    JsonSchemaInfo, OpenAICompatibleAssistantMessage, OpenAICompatibleMessage,
+    OpenAICompatibleParams, OpenAICompatibleResponseFormat, OpenAICompatibleStreamOptions,
+    OpenAICompatibleSystemMessage, OpenAICompatibleUserMessage, process_chat_content,
 };
 use crate::endpoints::openai_compatible::types::tool::{
     ChatCompletionToolChoiceOption, OpenAICompatibleFunctionTool, OpenAICompatibleTool,
     OpenAICompatibleToolCall,
 };
 use crate::error::{Error, ErrorDetails};
+use crate::inference::types::chat_completion_inference_params::ServiceTier;
 use crate::inference::types::current_timestamp;
 use crate::tool::OpenAICustomTool;
 
@@ -98,6 +99,69 @@ impl From<OpenAICompatibleResponsesTool> for OpenAICompatibleTool {
     }
 }
 
+/// `text` config accepted by the OpenAI Responses API adapter.
+///
+/// The Responses API nests the structured-output format under `text.format`
+/// (flat shape) and the output verbosity under `text.verbosity`, unlike chat
+/// completions which uses a top-level `response_format` with a nested
+/// `json_schema` object.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenAICompatibleResponsesText {
+    #[serde(default)]
+    pub format: Option<OpenAICompatibleResponsesTextFormat>,
+    #[serde(default)]
+    pub verbosity: Option<String>,
+}
+
+/// Flat Responses-API text format shape, tagged on `type`.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OpenAICompatibleResponsesTextFormat {
+    Text,
+    JsonObject,
+    JsonSchema {
+        name: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default)]
+        schema: Option<Value>,
+        #[serde(default)]
+        strict: Option<bool>,
+    },
+}
+
+impl From<OpenAICompatibleResponsesTextFormat> for OpenAICompatibleResponseFormat {
+    fn from(format: OpenAICompatibleResponsesTextFormat) -> Self {
+        match format {
+            OpenAICompatibleResponsesTextFormat::Text => OpenAICompatibleResponseFormat::Text,
+            OpenAICompatibleResponsesTextFormat::JsonObject => {
+                OpenAICompatibleResponseFormat::JsonObject
+            }
+            OpenAICompatibleResponsesTextFormat::JsonSchema {
+                name,
+                description,
+                schema,
+                strict,
+            } => OpenAICompatibleResponseFormat::JsonSchema {
+                json_schema: JsonSchemaInfo {
+                    name,
+                    description,
+                    schema,
+                    strict: strict.unwrap_or(false),
+                },
+            },
+        }
+    }
+}
+
+/// `reasoning` config accepted by the OpenAI Responses API adapter.
+/// Keys other than `effort` (e.g. `summary`) are ignored.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct OpenAICompatibleResponsesReasoning {
+    #[serde(default)]
+    pub effort: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct OpenAICompatibleResponsesParams {
     pub model: String,
@@ -115,6 +179,9 @@ pub struct OpenAICompatibleResponsesParams {
     pub tool_choice: Option<ChatCompletionToolChoiceOption>,
     pub parallel_tool_calls: Option<bool>,
     pub stream_options: Option<OpenAICompatibleStreamOptions>,
+    pub text: Option<OpenAICompatibleResponsesText>,
+    pub reasoning: Option<OpenAICompatibleResponsesReasoning>,
+    pub service_tier: Option<ServiceTier>,
     #[serde(rename = "tensorzero::dryrun")]
     pub tensorzero_dryrun: Option<bool>,
     #[serde(rename = "tensorzero::episode_id")]
@@ -145,12 +212,18 @@ impl OpenAICompatibleResponsesParams {
             (Some(a), None) | (None, Some(a)) => Some(a),
             (None, None) => None,
         };
+        let (response_format, verbosity) = match self.text {
+            Some(text) => (text.format.map(Into::into), text.verbosity),
+            None => (None, None),
+        };
+        let reasoning_effort = self.reasoning.and_then(|reasoning| reasoning.effort);
         Ok(OpenAICompatibleParams {
             messages,
             model: self.model,
             frequency_penalty: self.frequency_penalty,
             max_tokens,
             presence_penalty: self.presence_penalty,
+            response_format,
             seed: self.seed,
             stream: self.stream,
             stream_options: self.stream_options,
@@ -161,6 +234,9 @@ impl OpenAICompatibleResponsesParams {
                 .map(|tools| tools.into_iter().map(Into::into).collect()),
             tool_choice: self.tool_choice,
             parallel_tool_calls: self.parallel_tool_calls,
+            reasoning_effort,
+            service_tier: self.service_tier,
+            verbosity,
             tensorzero_dryrun: self.tensorzero_dryrun,
             tensorzero_episode_id: self.tensorzero_episode_id,
             tensorzero_namespace: self.tensorzero_namespace,
@@ -565,5 +641,141 @@ mod tests {
         };
         expect_that!(&function.name, eq("noop"));
         expect_that!(function.strict, eq(false));
+    }
+
+    #[gtest]
+    fn test_text_format_json_schema_maps_to_nested_response_format() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": "Give me a city",
+            "text": {
+                "format": {
+                    "type": "json_schema",
+                    "name": "city",
+                    "description": "A city",
+                    "schema": {"type": "object", "properties": {"name": {"type": "string"}}},
+                    "strict": true
+                },
+                "verbosity": "low"
+            }
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("body with text.format should deserialize");
+        // Declared fields must not leak into `unknown_fields` (regression: they
+        // used to trigger "Ignoring unknown fields" warnings and get dropped).
+        expect_that!(params.unknown_fields.contains_key("text"), eq(false));
+
+        let chat_params = params
+            .into_chat_params()
+            .expect("into_chat_params should succeed");
+        let Some(OpenAICompatibleResponseFormat::JsonSchema { json_schema }) =
+            chat_params.response_format
+        else {
+            panic!(
+                "expected nested json_schema response format, got {:?}",
+                chat_params.response_format
+            );
+        };
+        expect_that!(&json_schema.name, eq("city"));
+        expect_that!(json_schema.description.as_deref(), some(eq("A city")));
+        expect_that!(
+            json_schema.schema.as_ref(),
+            some(eq(
+                &json!({"type": "object", "properties": {"name": {"type": "string"}}})
+            ))
+        );
+        expect_that!(json_schema.strict, eq(true));
+        expect_that!(chat_params.verbosity.as_deref(), some(eq("low")));
+    }
+
+    #[gtest]
+    fn test_text_format_text_and_json_object_shapes() {
+        for (format, expected) in [
+            (
+                json!({"type": "text"}),
+                OpenAICompatibleResponseFormat::Text,
+            ),
+            (
+                json!({"type": "json_object"}),
+                OpenAICompatibleResponseFormat::JsonObject,
+            ),
+        ] {
+            let body = json!({
+                "model": "gpt-5",
+                "input": "hi",
+                "text": {"format": format}
+            });
+            let params: OpenAICompatibleResponsesParams =
+                serde_json::from_value(body).expect("body should deserialize");
+            let chat_params = params
+                .into_chat_params()
+                .expect("into_chat_params should succeed");
+            expect_that!(chat_params.response_format, some(eq(&expected)));
+        }
+    }
+
+    #[gtest]
+    fn test_json_schema_format_defaults_strict_and_optional_fields() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": "hi",
+            "text": {"format": {"type": "json_schema", "name": "bare"}}
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("body should deserialize");
+        let chat_params = params
+            .into_chat_params()
+            .expect("into_chat_params should succeed");
+        let Some(OpenAICompatibleResponseFormat::JsonSchema { json_schema }) =
+            chat_params.response_format
+        else {
+            panic!("expected json_schema response format");
+        };
+        expect_that!(&json_schema.name, eq("bare"));
+        expect_that!(json_schema.description, none());
+        expect_that!(json_schema.schema, none());
+        expect_that!(json_schema.strict, eq(false));
+    }
+
+    #[gtest]
+    fn test_reasoning_effort_and_service_tier_passthrough() {
+        let body = json!({
+            "model": "gpt-5",
+            "input": "hi",
+            "reasoning": {"effort": "high", "summary": "auto"},
+            "service_tier": "priority"
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("body should deserialize");
+        expect_that!(params.unknown_fields.contains_key("reasoning"), eq(false));
+        expect_that!(
+            params.unknown_fields.contains_key("service_tier"),
+            eq(false)
+        );
+
+        let chat_params = params
+            .into_chat_params()
+            .expect("into_chat_params should succeed");
+        expect_that!(chat_params.reasoning_effort.as_deref(), some(eq("high")));
+        expect_that!(chat_params.service_tier, some(eq(&ServiceTier::Priority)));
+    }
+
+    #[gtest]
+    fn test_responses_specific_fields_still_land_in_unknown_fields() {
+        // Fields we deliberately don't map keep flowing into `unknown_fields`
+        // so the "Ignoring unknown fields" warning keeps its early-warning role.
+        let body = json!({
+            "model": "gpt-5",
+            "input": "hi",
+            "background": true,
+            "previous_response_id": "resp_123"
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("body should deserialize");
+        expect_that!(params.unknown_fields.contains_key("background"), eq(true));
+        expect_that!(
+            params.unknown_fields.contains_key("previous_response_id"),
+            eq(true)
+        );
     }
 }

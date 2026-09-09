@@ -519,6 +519,7 @@ impl Params {
             internal_dynamic_variant_config: openai_compatible_params
                 .tensorzero_internal_dynamic_variant_config,
             extra_internal_tags: HashMap::new(),
+            requested_api_type: None,
         })
     }
 }

@@ -25,6 +25,7 @@ use crate::error::Error;
 use crate::inference::types::{ContentBlockChunk, Usage, current_timestamp};
 use crate::utils::gateway::AppState;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
+use tensorzero_types::ApiType;
 
 use super::infer::{error_response, infer_openai_compatible};
 use super::stream_aggregator::{StreamAggregateRule, StreamAggregator};
@@ -48,6 +49,7 @@ pub async fn responses_handler(
         api_key_ext,
         &headers,
         chat_params,
+        ApiType::Responses,
     ))
     .await
     {

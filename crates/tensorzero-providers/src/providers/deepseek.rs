@@ -1,5 +1,5 @@
 // Modified by Delta-AI under Apache 2.0
-use futures::StreamExt;
+use futures::{StreamExt, TryStreamExt};
 use lazy_static::lazy_static;
 use reqwest_sse_stream::Event;
 use secrecy::{ExposeSecret, SecretString};
@@ -15,6 +15,9 @@ use super::helpers::{
 };
 use crate::providers::chat_completions::prepare_chat_completion_tools;
 use crate::providers::chat_completions::{ChatCompletionTool, ChatCompletionToolChoice};
+use crate::providers::openai::responses::{
+    OpenAIResponsesRequest, OpenAIResponsesResponse, get_responses_url, stream_openai_responses,
+};
 use crate::providers::openai::{
     OpenAIAssistantRequestMessage, OpenAIContentBlock, OpenAIRequestMessage,
     OpenAISystemRequestMessage, OpenAIUserRequestMessage, StreamOptions, SystemOrDeveloper,
@@ -28,7 +31,7 @@ use tensorzero_http::{TensorZeroEventSource, TensorzeroHttpClient};
 use tensorzero_inference_types::ToolCallChunk;
 use tensorzero_inference_types::credentials::Credential;
 use tensorzero_inference_types::credentials::{ModelProviderRequestInfo, ProviderInferenceRequest};
-use tensorzero_inference_types::provider_trait::InferenceProvider;
+use tensorzero_inference_types::provider_trait::{InferenceProvider, TensorZeroEventError};
 use tensorzero_inference_types::raw_usage_entries_from_value;
 use tensorzero_inference_types::utils::warn_inference_parameter_not_supported;
 use tensorzero_inference_types::{BatchRequestRow, PollBatchInferenceResponse};
@@ -145,6 +148,199 @@ impl DeepSeekProvider {
     pub fn model_name(&self) -> &str {
         &self.model_name
     }
+
+    /// Non-streaming inference over the DeepSeek Responses API
+    /// (OpenAI-compatible wire format), used when the inbound request asked
+    /// for the Responses protocol (`requested_api_type == Responses`).
+    /// DeepSeek ignores unsupported request fields, so reusing the OpenAI
+    /// Responses serializer is safe.
+    #[expect(clippy::too_many_arguments)]
+    async fn infer_responses<'a>(
+        &'a self,
+        request: &'a ModelInferenceRequest<'a>,
+        provider_name: &'a str,
+        model_name: &'a str,
+        model_inference_id: Uuid,
+        http_client: &'a TensorzeroHttpClient,
+        dynamic_api_keys: &'a InferenceCredentials,
+        model_provider: &'a ModelProviderRequestInfo,
+    ) -> Result<ProviderInferenceResponse, Error> {
+        let request_body = serde_json::to_value(
+            OpenAIResponsesRequest::new(
+                &self.model_name,
+                request,
+                false,
+                &[],
+                model_name,
+                provider_name,
+            )
+            .await?,
+        )
+        .map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing DeepSeek Responses request: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let request_url = get_responses_url(&DEEPSEEK_DEFAULT_BASE_URL)?;
+        let api_key = self
+            .credentials
+            .get_api_key(dynamic_api_keys)
+            .map_err(|e| e.log())?;
+        let start_time = Instant::now();
+        let request_builder = http_client
+            .post(request_url)
+            .bearer_auth(api_key.expose_secret());
+
+        let (res, raw_request) = inject_extra_request_data_and_send(
+            PROVIDER_TYPE,
+            ApiType::Responses,
+            &request.extra_body,
+            &request.extra_headers,
+            model_provider,
+            model_name,
+            request_body,
+            request_builder,
+        )
+        .await?;
+
+        if res.status().is_success() {
+            let raw_response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing text response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::Responses,
+                })
+            })?;
+
+            let response: OpenAIResponsesResponse =
+                serde_json::from_str(&raw_response).map_err(|e| {
+                    Error::new(ErrorDetails::InferenceServer {
+                        message: format!(
+                            "Error parsing JSON response: {}",
+                            DisplayOrDebugGateway::new(e)
+                        ),
+                        raw_request: Some(raw_request.clone()),
+                        raw_response: Some(raw_response.clone()),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        api_type: ApiType::Responses,
+                    })
+                })?;
+
+            let latency = Latency::NonStreaming {
+                response_time: start_time.elapsed(),
+            };
+            response.into_provider_response(
+                latency,
+                raw_request,
+                raw_response.clone(),
+                request,
+                model_name,
+                provider_name,
+                model_inference_id,
+            )
+        } else {
+            let status = res.status();
+
+            let response = res.text().await.map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing error response: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: Some(raw_request.clone()),
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::Responses,
+                })
+            })?;
+            Err(handle_openai_error(
+                &raw_request,
+                status,
+                &response,
+                PROVIDER_TYPE,
+                None,
+                ApiType::Responses,
+            ))
+        }
+    }
+
+    /// Streaming inference over the DeepSeek Responses API, mirroring
+    /// [`DeepSeekProvider::infer_responses`].
+    #[expect(clippy::too_many_arguments)]
+    async fn infer_stream_responses<'a>(
+        &'a self,
+        request: &'a ModelInferenceRequest<'a>,
+        provider_name: &'a str,
+        model_name: &'a str,
+        model_inference_id: Uuid,
+        http_client: &'a TensorzeroHttpClient,
+        dynamic_api_keys: &'a InferenceCredentials,
+        model_provider: &'a ModelProviderRequestInfo,
+    ) -> Result<(PeekableProviderInferenceResponseStream, String), Error> {
+        let request_body = serde_json::to_value(
+            OpenAIResponsesRequest::new(
+                &self.model_name,
+                request,
+                false,
+                &[],
+                model_name,
+                provider_name,
+            )
+            .await?,
+        )
+        .map_err(|e| {
+            Error::new(ErrorDetails::Serialization {
+                message: format!(
+                    "Error serializing DeepSeek Responses request: {}",
+                    DisplayOrDebugGateway::new(e)
+                ),
+            })
+        })?;
+
+        let request_url = get_responses_url(&DEEPSEEK_DEFAULT_BASE_URL)?;
+        let api_key = self
+            .credentials
+            .get_api_key(dynamic_api_keys)
+            .map_err(|e| e.log())?;
+        let start_time = Instant::now();
+        let request_builder = http_client
+            .post(request_url)
+            .bearer_auth(api_key.expose_secret());
+        let (event_source, raw_request) = inject_extra_request_data_and_send_eventsource(
+            PROVIDER_TYPE,
+            ApiType::Responses,
+            &request.extra_body,
+            &request.extra_headers,
+            model_provider,
+            model_name,
+            request_body,
+            request_builder,
+        )
+        .await?;
+
+        let stream = stream_openai_responses(
+            PROVIDER_TYPE.to_string(),
+            model_inference_id,
+            event_source.map_err(TensorZeroEventError::EventSource),
+            start_time,
+            model_provider.discard_unknown_chunks,
+            model_name,
+            provider_name,
+            None,
+            &raw_request,
+        )
+        .peekable();
+        Ok((stream, raw_request))
+    }
 }
 
 impl InferenceProvider for DeepSeekProvider {
@@ -152,7 +348,7 @@ impl InferenceProvider for DeepSeekProvider {
         &'a self,
         ProviderInferenceRequest {
             request,
-            provider_name: _,
+            provider_name,
             model_name,
             model_inference_id,
         }: ProviderInferenceRequest<'a>,
@@ -160,6 +356,22 @@ impl InferenceProvider for DeepSeekProvider {
         dynamic_api_keys: &'a InferenceCredentials,
         model_provider: &'a ModelProviderRequestInfo,
     ) -> Result<ProviderInferenceResponse, Error> {
+        // Preserve the inbound protocol: requests that arrived via
+        // `/openai/v1/responses` go out over the DeepSeek Responses API
+        // (OpenAI-compatible wire format). The chat path below is unchanged.
+        if matches!(request.requested_api_type, Some(ApiType::Responses)) {
+            return self
+                .infer_responses(
+                    request,
+                    provider_name,
+                    model_name,
+                    model_inference_id,
+                    http_client,
+                    dynamic_api_keys,
+                    model_provider,
+                )
+                .await;
+        }
         let request_body = serde_json::to_value(
             DeepSeekRequest::new(&self.model_name, request).await?,
         )
@@ -263,7 +475,7 @@ impl InferenceProvider for DeepSeekProvider {
         &'a self,
         ProviderInferenceRequest {
             request,
-            provider_name: _,
+            provider_name,
             model_name,
             model_inference_id,
         }: ProviderInferenceRequest<'a>,
@@ -271,6 +483,20 @@ impl InferenceProvider for DeepSeekProvider {
         dynamic_api_keys: &'a InferenceCredentials,
         model_provider: &'a ModelProviderRequestInfo,
     ) -> Result<(PeekableProviderInferenceResponseStream, String), Error> {
+        // Preserve the inbound protocol, mirroring `infer` above.
+        if matches!(request.requested_api_type, Some(ApiType::Responses)) {
+            return self
+                .infer_stream_responses(
+                    request,
+                    provider_name,
+                    model_name,
+                    model_inference_id,
+                    http_client,
+                    dynamic_api_keys,
+                    model_provider,
+                )
+                .await;
+        }
         let request_body = serde_json::to_value(
             DeepSeekRequest::new(&self.model_name, request).await?,
         )

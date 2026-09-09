@@ -254,6 +254,7 @@ impl TryFrom<StoredProviderConfig> for UninitializedProviderConfig {
                 include_encrypted_reasoning,
                 provider_tools,
                 content_type_overrides,
+                responses_structured_output_fallback_to_chat,
             } => Ok(Self::OpenAI {
                 model_name,
                 api_base: parse_optional_url(api_base, "api_base")?,
@@ -266,6 +267,8 @@ impl TryFrom<StoredProviderConfig> for UninitializedProviderConfig {
                     .into_iter()
                     .map(|(k, v)| (k, ContentBlockType::from(v)))
                     .collect(),
+                responses_structured_output_fallback_to_chat:
+                    responses_structured_output_fallback_to_chat.unwrap_or_default(),
             }),
             StoredProviderConfig::OpenRouter {
                 model_name,
@@ -482,6 +485,12 @@ pub enum HostedProviderKind {
     TGI,
 }
 
+// serde's `skip_serializing_if` passes the field by reference.
+#[expect(clippy::trivially_copy_pass_by_ref)]
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 #[derive(ts_rs::TS)]
 #[ts(export, optional_fields)]
 #[derive(Clone, Debug, PartialEq, TensorZeroDeserialize, VariantNames, Serialize)]
@@ -619,6 +628,12 @@ pub enum UninitializedProviderConfig {
         #[serde(default)]
         content_type_overrides:
             std::collections::HashMap<String, crate::providers::openai::ContentBlockType>,
+        /// Delta-AI fork: downgrade inbound Responses requests that carry a
+        /// response format to chat completions outbound (for endpoints whose
+        /// Responses API ignores `text.format`, e.g. Alibaba Bailian).
+        /// Skipped when false so config snapshot hashes are unchanged.
+        #[serde(default, skip_serializing_if = "is_false")]
+        responses_structured_output_fallback_to_chat: bool,
     },
     OpenRouter {
         model_name: String,
@@ -837,6 +852,7 @@ impl From<&UninitializedProviderConfig> for StoredProviderConfig {
                 include_encrypted_reasoning,
                 provider_tools,
                 content_type_overrides,
+                responses_structured_output_fallback_to_chat,
             } => StoredProviderConfig::OpenAI {
                 model_name: model_name.clone(),
                 api_base: api_base.as_ref().map(ToString::to_string),
@@ -852,6 +868,14 @@ impl From<&UninitializedProviderConfig> for StoredProviderConfig {
                         .map(|(k, v)| (k.clone(), v.into()))
                         .collect()
                 }),
+                // Only persist the flag when set, so stored config snapshots
+                // for unflagged providers are unchanged.
+                responses_structured_output_fallback_to_chat:
+                    if *responses_structured_output_fallback_to_chat {
+                        Some(true)
+                    } else {
+                        None
+                    },
             },
             UninitializedProviderConfig::OpenRouter {
                 model_name,
@@ -1216,11 +1240,12 @@ impl UninitializedProviderConfig {
                 include_encrypted_reasoning,
                 provider_tools,
                 content_type_overrides,
+                responses_structured_output_fallback_to_chat,
             } => {
                 // Use mock API base for testing if set, otherwise defer to the API base set
                 let api_base = get_mock_provider_api_base("openai").or(api_base);
 
-                ProviderConfig::OpenAI(OpenAIProvider::new(
+                let mut provider = OpenAIProvider::new(
                     model_name,
                     api_base,
                     OpenAIKind
@@ -1233,7 +1258,11 @@ impl UninitializedProviderConfig {
                     include_encrypted_reasoning,
                     provider_tools,
                     content_type_overrides,
-                )?)
+                )?;
+                if responses_structured_output_fallback_to_chat {
+                    provider = provider.with_responses_structured_output_fallback_to_chat();
+                }
+                ProviderConfig::OpenAI(provider)
             }
             UninitializedProviderConfig::OpenRouter {
                 model_name,

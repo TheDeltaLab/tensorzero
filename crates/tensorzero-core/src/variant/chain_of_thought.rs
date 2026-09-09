@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! DEPRECATED (#5298 / 2026.2+): Chain of thought variant is deprecated now that reasoning models are prevalent.
 //! Use `chat_completion` with reasoning instead.
 
@@ -93,6 +94,7 @@ impl Variant for ChainOfThoughtConfig {
         };
         let augmented_output_schema = prepare_thinking_output_schema(original_output_schema);
         let augmented_inference_config = Arc::new(InferenceConfig {
+            requested_api_type: inference_config.requested_api_type,
             dynamic_output_schema: Some(Arc::new(augmented_output_schema)),
             tool_config: None, // Dynamic tool configs are handled farther down, we don't need to set that here
             templates: Arc::clone(&inference_config.templates),

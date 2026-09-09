@@ -573,7 +573,10 @@ impl ModelConfig {
             stream.inner_mut(),
             &raw_request,
             model_provider_request.provider_name,
-            provider.api_type(),
+            model_provider_request
+                .request
+                .requested_api_type
+                .unwrap_or_else(|| provider.api_type()),
         )
         .await?;
         Ok(StreamResponseAndMessages {
@@ -3718,6 +3721,7 @@ mod tests {
                 include_encrypted_reasoning: false,
                 provider_tools: vec![],
                 content_type_overrides: HashMap::new(),
+                responses_structured_output_fallback_to_chat: false,
             };
             let stored = StoredProviderConfig::from(&original);
             let restored: UninitializedProviderConfig =
@@ -3755,6 +3759,7 @@ mod tests {
                     include_encrypted_reasoning: false,
                     provider_tools: vec![],
                     content_type_overrides: HashMap::new(),
+                    responses_structured_output_fallback_to_chat: false,
                 },
                 extra_body: Some(ExtraBodyConfig {
                     data: vec![ExtraBodyReplacement {

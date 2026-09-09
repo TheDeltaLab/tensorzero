@@ -35,9 +35,9 @@ use tensorzero_error::{Error, ErrorDetails, warn_discarded_thought_block};
 use tensorzero_inference_types::raw_usage_entries_from_value;
 use tensorzero_inference_types::{
     ContentBlock, ContentBlockChunk, ContentBlockOutput, FinishReason, FlattenUnknown, Latency,
-    ModelInferenceRequest, ModelInferenceRequestJsonMode, ProviderInferenceResponse,
-    ProviderInferenceResponseArgs, ProviderInferenceResponseChunk, RequestMessage, TextChunk,
-    ThoughtChunk, ToolCallChunk, UnknownChunk, Usage,
+    ModelInferenceRequest, ModelInferenceRequestJsonMode, ProviderBatchInferenceOutput,
+    ProviderInferenceResponse, ProviderInferenceResponseArgs, ProviderInferenceResponseChunk,
+    RequestMessage, TextChunk, ThoughtChunk, ToolCallChunk, UnknownChunk, Usage,
 };
 use tensorzero_types::{ApiType, Detail, Role, Text, Thought, ToolCall, ToolChoice, Unknown};
 use uuid::Uuid;
@@ -106,7 +106,7 @@ pub enum OpenAIResponsesTextConfigFormat {
 }
 
 #[derive(Deserialize, Debug, Clone)]
-pub(super) struct OpenAIResponsesResponse<'a> {
+pub(crate) struct OpenAIResponsesResponse<'a> {
     #[serde(borrow)]
     pub(super) output: Vec<OpenAIResponsesOutput<'a>>,
     pub(super) usage: Option<OpenAIResponsesUsage>,
@@ -158,111 +158,15 @@ impl OpenAIResponsesResponse<'_> {
         provider_name: &str,
         model_inference_id: Uuid,
     ) -> Result<ProviderInferenceResponse, Error> {
-        let mut output = Vec::new();
-        for message in self.output {
-            match message {
-                FlattenUnknown::Normal(OpenAIResponsesOutputInner::Message(message)) => {
-                    if message.role != "assistant" {
-                        return Err(Error::new(ErrorDetails::InferenceServer {
-                            message:
-                                "Only assistant messages are supported in responses API output"
-                                    .to_string(),
-                            provider_type: PROVIDER_TYPE.to_string(),
-                            api_type: ApiType::Responses,
-                            raw_request: Some(raw_request.clone()),
-                            raw_response: Some(raw_response.clone()),
-                        }));
-                    }
-                    for block in message.content {
-                        match block {
-                            OpenAIResponsesInputMessageContent::OutputText { text } => {
-                                output.push(ContentBlockOutput::Text(Text {
-                                    text: text.to_string(),
-                                }));
-                            }
-                            _ => {
-                                return Err(Error::new(ErrorDetails::InferenceServer {
-                                    message:
-                                        "Only output text is supported in responses API output"
-                                            .to_string(),
-                                    provider_type: PROVIDER_TYPE.to_string(),
-                                    api_type: ApiType::Responses,
-                                    raw_request: Some(raw_request.clone()),
-                                    raw_response: Some(raw_response.clone()),
-                                }));
-                            }
-                        }
-                    }
-                }
-                FlattenUnknown::Normal(OpenAIResponsesOutputInner::FunctionCall(function_call)) => {
-                    output.push(ContentBlockOutput::ToolCall(ToolCall {
-                        id: function_call.call_id.to_string(),
-                        arguments: function_call.arguments.to_string(),
-                        name: function_call.name.to_string(),
-                    }));
-                }
-                FlattenUnknown::Normal(OpenAIResponsesOutputInner::CustomToolCall(
-                    custom_tool_call,
-                )) => {
-                    output.push(ContentBlockOutput::ToolCall(ToolCall {
-                        id: custom_tool_call.call_id.to_string(),
-                        arguments: custom_tool_call.input.to_string(),
-                        name: custom_tool_call.name.to_string(),
-                    }));
-                }
+        let output = openai_responses_output_to_content(
+            self.output,
+            &raw_request,
+            &raw_response,
+            model_name,
+            provider_name,
+        )?;
 
-                FlattenUnknown::Normal(OpenAIResponsesOutputInner::Reasoning {
-                    encrypted_content,
-                    summary,
-                }) => {
-                    let mut thought = Thought {
-                        text: None,
-                        signature: None,
-                        provider_type: Some(PROVIDER_TYPE.to_string()),
-                        summary: None,
-                        extra_data: None,
-                    };
-
-                    if let Some(encrypted_content) = encrypted_content {
-                        thought.signature = Some(encrypted_content);
-                    }
-
-                    let tensorzero_summary = summary
-                        .into_iter()
-                        .map(|summary| match summary {
-                            OpenAIResponsesReasoningSummary::SummaryText { text } => {
-                                ThoughtSummaryBlock::SummaryText {
-                                    text: text.to_string(),
-                                }
-                            }
-                        })
-                        .collect::<Vec<ThoughtSummaryBlock>>();
-                    thought.summary = Some(tensorzero_summary);
-                    output.push(ContentBlockOutput::Thought(thought));
-                }
-                FlattenUnknown::Unknown(data) => {
-                    output.push(ContentBlockOutput::Unknown(Unknown {
-                        data: data.into_owned(),
-                        model_name: Some(model_name.to_string()),
-                        provider_name: Some(provider_name.to_string()),
-                    }));
-                }
-            }
-        }
-
-        let finish_reason = match self.incomplete_details {
-            Some(incomplete_details) => {
-                // The contents of the 'reason' field is undocumented,
-                // but OpenAI appears to set it to 'max_output_tokens' when the 'max_output_tokens'
-                // field is provided and the response is incomplete.
-                if incomplete_details.reason == "max_output_tokens" {
-                    Some(FinishReason::Length)
-                } else {
-                    None
-                }
-            }
-            None => None,
-        };
+        let finish_reason = openai_responses_finish_reason(self.incomplete_details);
 
         let raw_usage = openai_responses_usage_from_raw_response(&raw_response).map(|usage| {
             raw_usage_entries_from_value(
@@ -290,6 +194,150 @@ impl OpenAIResponsesResponse<'_> {
             },
         ))
     }
+
+    /// Converts a Responses API body from a batch output file row. Unlike
+    /// `into_provider_response`, no live request context is available at batch
+    /// poll time, so request-derived fields are left empty.
+    pub(crate) fn into_batch_output(
+        self,
+        inference_id: Uuid,
+        raw_response: String,
+    ) -> Result<ProviderBatchInferenceOutput, Error> {
+        let output = openai_responses_output_to_content(self.output, "", &raw_response, "", "")?;
+        let finish_reason = openai_responses_finish_reason(self.incomplete_details);
+        let usage = self.usage.map(|u| u.into_usage()).unwrap_or_default();
+        Ok(ProviderBatchInferenceOutput {
+            id: inference_id,
+            output,
+            raw_response,
+            usage,
+            finish_reason,
+        })
+    }
+}
+
+fn openai_responses_output_to_content(
+    output_items: Vec<OpenAIResponsesOutput<'_>>,
+    raw_request: &str,
+    raw_response: &str,
+    model_name: &str,
+    provider_name: &str,
+) -> Result<Vec<ContentBlockOutput>, Error> {
+    let mut output = Vec::new();
+    for message in output_items {
+        match message {
+            FlattenUnknown::Normal(OpenAIResponsesOutputInner::Message(message)) => {
+                if message.role != "assistant" {
+                    return Err(Error::new(ErrorDetails::InferenceServer {
+                        message: "Only assistant messages are supported in responses API output"
+                            .to_string(),
+                        provider_type: PROVIDER_TYPE.to_string(),
+                        api_type: ApiType::Responses,
+                        raw_request: Some(raw_request.to_string()),
+                        raw_response: Some(raw_response.to_string()),
+                    }));
+                }
+                for block in message.content {
+                    match block {
+                        OpenAIResponsesInputMessageContent::OutputText { text } => {
+                            output.push(ContentBlockOutput::Text(Text {
+                                text: text.to_string(),
+                            }));
+                        }
+                        _ => {
+                            return Err(Error::new(ErrorDetails::InferenceServer {
+                                message: "Only output text is supported in responses API output"
+                                    .to_string(),
+                                provider_type: PROVIDER_TYPE.to_string(),
+                                api_type: ApiType::Responses,
+                                raw_request: Some(raw_request.to_string()),
+                                raw_response: Some(raw_response.to_string()),
+                            }));
+                        }
+                    }
+                }
+            }
+            FlattenUnknown::Normal(OpenAIResponsesOutputInner::FunctionCall(function_call)) => {
+                output.push(ContentBlockOutput::ToolCall(ToolCall {
+                    id: function_call.call_id.to_string(),
+                    arguments: function_call.arguments.to_string(),
+                    name: function_call.name.to_string(),
+                }));
+            }
+            FlattenUnknown::Normal(OpenAIResponsesOutputInner::CustomToolCall(
+                custom_tool_call,
+            )) => {
+                output.push(ContentBlockOutput::ToolCall(ToolCall {
+                    id: custom_tool_call.call_id.to_string(),
+                    arguments: custom_tool_call.input.to_string(),
+                    name: custom_tool_call.name.to_string(),
+                }));
+            }
+
+            FlattenUnknown::Normal(OpenAIResponsesOutputInner::Reasoning {
+                encrypted_content,
+                summary,
+                content,
+            }) => {
+                let mut thought = Thought {
+                    text: None,
+                    signature: None,
+                    provider_type: Some(PROVIDER_TYPE.to_string()),
+                    summary: None,
+                    extra_data: None,
+                };
+
+                if let Some(encrypted_content) = encrypted_content {
+                    thought.signature = Some(encrypted_content);
+                }
+
+                let reasoning_text = content
+                    .iter()
+                    .map(|part| match part {
+                        OpenAIResponsesReasoningContent::ReasoningText { text } => text.as_ref(),
+                    })
+                    .collect::<String>();
+                if !reasoning_text.is_empty() {
+                    thought.text = Some(reasoning_text);
+                }
+
+                let tensorzero_summary = summary
+                    .into_iter()
+                    .map(|summary| match summary {
+                        OpenAIResponsesReasoningSummary::SummaryText { text } => {
+                            ThoughtSummaryBlock::SummaryText {
+                                text: text.to_string(),
+                            }
+                        }
+                    })
+                    .collect::<Vec<ThoughtSummaryBlock>>();
+                thought.summary = Some(tensorzero_summary);
+                output.push(ContentBlockOutput::Thought(thought));
+            }
+            FlattenUnknown::Unknown(data) => {
+                output.push(ContentBlockOutput::Unknown(Unknown {
+                    data: data.into_owned(),
+                    model_name: Some(model_name.to_string()),
+                    provider_name: Some(provider_name.to_string()),
+                }));
+            }
+        }
+    }
+    Ok(output)
+}
+
+fn openai_responses_finish_reason(
+    incomplete_details: Option<OpenAIResponsesIncompleteDetails>,
+) -> Option<FinishReason> {
+    match incomplete_details {
+        // The contents of the `reason` field is undocumented,
+        // but OpenAI appears to set it to `max_output_tokens` when the `max_output_tokens`
+        // field is provided and the response is incomplete.
+        Some(incomplete_details) if incomplete_details.reason == "max_output_tokens" => {
+            Some(FinishReason::Length)
+        }
+        _ => None,
+    }
 }
 
 fn openai_responses_usage_from_raw_response(raw_response: &str) -> Option<Value> {
@@ -298,7 +346,7 @@ fn openai_responses_usage_from_raw_response(raw_response: &str) -> Option<Value>
         .and_then(|value| value.get("usage").filter(|v| !v.is_null()).cloned())
 }
 
-pub(super) fn get_responses_url(base_url: &Url) -> Result<Url, Error> {
+pub(crate) fn get_responses_url(base_url: &Url) -> Result<Url, Error> {
     let mut url = base_url.clone();
     if !url.path().ends_with('/') {
         url.set_path(&format!("{}/", url.path()));
@@ -660,8 +708,19 @@ pub enum OpenAIResponsesOutputInner<'a> {
     Reasoning {
         #[serde(default)]
         encrypted_content: Option<String>,
+        #[serde(default)]
         summary: Vec<OpenAIResponsesReasoningSummary<'a>>,
+        /// DeepSeek returns the full thinking text in `content` parts of type
+        /// `reasoning_text` (OpenAI only uses `summary`/`encrypted_content`).
+        #[serde(default)]
+        content: Vec<OpenAIResponsesReasoningContent<'a>>,
     },
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OpenAIResponsesReasoningContent<'a> {
+    ReasoningText { text: Cow<'a, str> },
 }
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
@@ -1153,6 +1212,28 @@ pub(super) enum OpenAIResponsesStreamEvent {
         output_index: u32,
         summary_index: u32,
     },
+    // DeepSeek's Responses API streams full thinking text as `reasoning_text`
+    // events (not summaries). Index fields are optional for leniency.
+    #[serde(rename = "response.reasoning_text.delta")]
+    ResponseReasoningTextDelta {
+        delta: String,
+        #[serde(default)]
+        item_id: String,
+        #[serde(default)]
+        output_index: u32,
+        #[serde(default)]
+        content_index: u32,
+    },
+    #[serde(rename = "response.reasoning_text.done")]
+    ResponseReasoningTextDone {
+        text: String,
+        #[serde(default)]
+        item_id: String,
+        #[serde(default)]
+        output_index: u32,
+        #[serde(default)]
+        content_index: u32,
+    },
     #[serde(rename = "response.function_call_arguments.delta")]
     ResponseFunctionCallArgumentsDelta {
         delta: String,
@@ -1339,6 +1420,29 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
                 id: output_index.to_string(),
                 summary_id: Some(summary_index.to_string()),
                 summary_text: Some(delta),
+                provider_type: Some(PROVIDER_TYPE.to_string()),
+                extra_data: None,
+            })],
+            None,
+            raw_message,
+            message_latency,
+            None,
+        ))),
+
+        // DeepSeek reasoning delta - full thinking text (not a summary),
+        // mirroring the chat completions `reasoning_content` handling which
+        // puts the text in `ThoughtChunk.text`.
+        OpenAIResponsesStreamEvent::ResponseReasoningTextDelta {
+            delta,
+            output_index,
+            ..
+        } => Ok(Some(ProviderInferenceResponseChunk::new(
+            vec![ContentBlockChunk::Thought(ThoughtChunk {
+                text: Some(delta),
+                signature: None,
+                id: output_index.to_string(),
+                summary_id: None,
+                summary_text: None,
                 provider_type: Some(PROVIDER_TYPE.to_string()),
                 extra_data: None,
             })],
@@ -1665,11 +1769,14 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
         }
 
         // Lifecycle and other events we don't need to process
+        // (`reasoning_text.done` repeats the full thinking text already
+        // delivered via deltas, so emitting it would double the content)
         OpenAIResponsesStreamEvent::ResponseCreated { .. }
         | OpenAIResponsesStreamEvent::ResponseInProgress { .. }
         | OpenAIResponsesStreamEvent::ResponseContentPartAdded { .. }
         | OpenAIResponsesStreamEvent::ResponseContentPartDone { .. }
         | OpenAIResponsesStreamEvent::ResponseOutputTextDone { .. }
+        | OpenAIResponsesStreamEvent::ResponseReasoningTextDone { .. }
         | OpenAIResponsesStreamEvent::ResponseReasoningSummaryTextDone { .. } => Ok(None),
 
         // Unknown event type
@@ -1705,6 +1812,10 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use googletest::assert_that;
+    use googletest::expect_that;
+    use googletest::gtest;
+    use googletest::matchers::{eq, none, some};
     use std::time::Duration;
     use uuid::Uuid;
 
@@ -3652,6 +3763,176 @@ mod tests {
         assert_eq!(json["tools"][0]["name"], "get_weather");
         assert_eq!(json["tools"][1]["type"], "function");
         assert_eq!(json["tools"][1]["name"], "search");
+    }
+
+    #[gtest]
+    fn test_deserialize_reasoning_text_delta_deepseek() {
+        // DeepSeek streams full thinking text via `response.reasoning_text.*`
+        // events (OpenAI uses `reasoning_summary_text.*`).
+        let json = r#"{
+            "type": "response.reasoning_text.delta",
+            "item_id": "rs_1",
+            "output_index": 0,
+            "content_index": 0,
+            "delta": "Let me think step by step",
+            "sequence_number": 5
+        }"#;
+        let event: OpenAIResponsesStreamEvent =
+            serde_json::from_str(json).expect("reasoning_text.delta should deserialize");
+        let OpenAIResponsesStreamEvent::ResponseReasoningTextDelta { delta, .. } = event else {
+            panic!("expected ResponseReasoningTextDelta, got {event:?}");
+        };
+        expect_that!(delta, eq("Let me think step by step"));
+    }
+
+    #[gtest]
+    fn test_deserialize_reasoning_text_delta_without_indices() {
+        // Be lenient about missing index fields.
+        let json = r#"{
+            "type": "response.reasoning_text.delta",
+            "delta": "thinking"
+        }"#;
+        let event: OpenAIResponsesStreamEvent =
+            serde_json::from_str(json).expect("reasoning_text.delta without indices should parse");
+        expect_that!(
+            matches!(
+                event,
+                OpenAIResponsesStreamEvent::ResponseReasoningTextDelta { .. }
+            ),
+            eq(true)
+        );
+    }
+
+    #[gtest]
+    fn test_reasoning_text_delta_conversion() {
+        let event = OpenAIResponsesStreamEvent::ResponseReasoningTextDelta {
+            delta: "step one".to_string(),
+            item_id: "rs_1".to_string(),
+            output_index: 1,
+            content_index: 0,
+        };
+
+        let mut tool_id = None;
+        let mut tool_name = None;
+
+        let result = openai_responses_to_tensorzero_chunk(
+            "raw_json".to_string(),
+            event,
+            Duration::from_millis(100),
+            &mut tool_id,
+            &mut tool_name,
+            false,
+            "test_model",
+            "test_provider",
+            "",
+            Uuid::now_v7(),
+            PROVIDER_TYPE,
+        )
+        .expect("conversion should succeed")
+        .expect("delta should produce a chunk");
+
+        assert_that!(result.content.len(), eq(1));
+        let ContentBlockChunk::Thought(thought_chunk) = &result.content[0] else {
+            panic!("Expected Thought chunk, got {:?}", result.content[0]);
+        };
+        // Full thinking text goes in `text` (not `summary_text`), mirroring the
+        // DeepSeek chat `reasoning_content` handling.
+        expect_that!(thought_chunk.text.as_deref(), some(eq("step one")));
+        expect_that!(thought_chunk.summary_text, none());
+        expect_that!(thought_chunk.id, eq("1"));
+    }
+
+    #[gtest]
+    fn test_reasoning_text_done_is_skipped() {
+        // `reasoning_text.done` repeats the full text already delivered via
+        // deltas; emitting it would double the reasoning content.
+        let event = OpenAIResponsesStreamEvent::ResponseReasoningTextDone {
+            text: "full text".to_string(),
+            item_id: "rs_1".to_string(),
+            output_index: 0,
+            content_index: 0,
+        };
+
+        let mut tool_id = None;
+        let mut tool_name = None;
+
+        let result = openai_responses_to_tensorzero_chunk(
+            "raw_json".to_string(),
+            event,
+            Duration::from_millis(100),
+            &mut tool_id,
+            &mut tool_name,
+            false,
+            "test_model",
+            "test_provider",
+            "",
+            Uuid::now_v7(),
+            PROVIDER_TYPE,
+        )
+        .expect("conversion should succeed");
+        expect_that!(result, none());
+    }
+
+    #[gtest]
+    fn test_non_streaming_reasoning_content_maps_to_thought_text() {
+        // DeepSeek non-streaming reasoning items carry the full thinking text
+        // in `content` parts of type `reasoning_text`.
+        let json = r#"{
+            "output": [
+                {
+                    "id": "rs_1",
+                    "type": "reasoning",
+                    "summary": [],
+                    "content": [
+                        {"type": "reasoning_text", "text": "The user wants "},
+                        {"type": "reasoning_text", "text": "a short answer."}
+                    ]
+                },
+                {
+                    "id": "msg_1",
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "completed",
+                    "content": [
+                        {"type": "output_text", "text": "Answer.", "annotations": []}
+                    ]
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 5}
+        }"#;
+
+        let response: OpenAIResponsesResponse =
+            serde_json::from_str(json).expect("DeepSeek-shaped response should deserialize");
+        let generic_request = ModelInferenceRequest {
+            inference_id: Uuid::now_v7(),
+            ..Default::default()
+        };
+
+        let provider_response = response
+            .into_provider_response(
+                Latency::NonStreaming {
+                    response_time: Duration::from_millis(100),
+                },
+                "test_request".to_string(),
+                "test_response".to_string(),
+                &generic_request,
+                "test-model",
+                "test-provider",
+                Uuid::now_v7(),
+            )
+            .expect("into_provider_response should succeed");
+
+        assert_that!(provider_response.output.len(), eq(2));
+        let ContentBlockOutput::Thought(thought) = &provider_response.output[0] else {
+            panic!(
+                "Expected Thought block, got {:?}",
+                provider_response.output[0]
+            );
+        };
+        expect_that!(
+            thought.text.as_deref(),
+            some(eq("The user wants a short answer."))
+        );
     }
 
     #[test]

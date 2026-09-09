@@ -1171,6 +1171,7 @@ pub async fn write_completed_batch_inference<'a>(
         let extra_body = Default::default();
         let extra_headers = Default::default();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             tool_config: tool_config.as_ref().map(|tc| Arc::new(tc.clone())),
             dynamic_output_schema: output_schema.as_ref().map(|s| Arc::new(s.clone())),
             templates: Arc::clone(&config.templates),

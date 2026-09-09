@@ -48,6 +48,7 @@ use crate::model::StreamResponse;
 use crate::model::StreamResponseAndMessages;
 use crate::relay::TensorzeroRelay;
 use tensorzero_inference_types::ProviderToolCallConfig;
+use tensorzero_types::ApiType;
 
 use crate::tool::{ToolCallConfig, create_dynamic_implicit_tool_config};
 use crate::utils::retries::RetryConfig;
@@ -148,6 +149,11 @@ pub struct InferenceConfig {
     /// to have different cache keys.
     /// This field should only ever be forwarded to `ModelInferenceRequest`
     pub extra_cache_key: Option<String>,
+    /// Inbound protocol preference from the OpenAI-compatible endpoints.
+    /// Forwarded to `ModelInferenceRequest` so dual-protocol providers can
+    /// preserve the inbound protocol outbound. `None` for non-OpenAI-compatible
+    /// entrypoints and batch inference (always chat).
+    pub requested_api_type: Option<ApiType>,
 }
 
 /// Maps to the subset of Config that applies to the current inference request.
@@ -174,6 +180,7 @@ impl BatchInferenceConfig {
         )
         .map(
             |(tool_config, dynamic_output_schema, episode_id, inference_id)| InferenceConfig {
+                requested_api_type: None,
                 templates: Arc::clone(&self.templates),
                 tool_config: tool_config.clone(),
                 dynamic_output_schema: dynamic_output_schema.clone(),
@@ -853,6 +860,7 @@ fn prepare_model_inference_request<'request>(
                 fetch_and_encode_input_files_before_inference: inference_config
                     .fetch_and_encode_input_files_before_inference,
                 extra_cache_key: inference_config.extra_cache_key.clone(),
+                requested_api_type: inference_config.requested_api_type,
                 inference_params_v2: ChatCompletionInferenceParamsV2 {
                     reasoning_effort: inference_params.chat_completion.reasoning_effort.clone(),
                     service_tier: inference_params.chat_completion.service_tier.clone(),
@@ -904,6 +912,7 @@ fn prepare_model_inference_request<'request>(
                 extra_body,
                 extra_headers,
                 extra_cache_key: inference_config.extra_cache_key.clone(),
+                requested_api_type: inference_config.requested_api_type,
                 inference_params_v2: ChatCompletionInferenceParamsV2 {
                     reasoning_effort: inference_params.chat_completion.reasoning_effort.clone(),
                     service_tier: inference_params.chat_completion.service_tier.clone(),
@@ -1190,6 +1199,7 @@ mod tests {
 
         // Create a sample inference config
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates: Arc::new(templates.clone()),
             tool_config: Some(tool_config_arc),
             function_name: "test_function".into(),
@@ -1336,6 +1346,7 @@ mod tests {
         let dynamic_output_schema =
             JSONSchema::compile_background(dynamic_output_schema_value.clone());
         let inference_config_dynamic = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),
@@ -1446,6 +1457,7 @@ mod tests {
         let templates = Arc::new(get_test_template_config().await);
         let inference_params = InferenceParams::default();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates,
             tool_config: None,
             function_name: "test_function".into(),
@@ -1782,6 +1794,7 @@ mod tests {
         let templates = Arc::new(get_test_template_config().await);
         let inference_params = InferenceParams::default();
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             templates,
             tool_config: None,
             function_name: "test_function".into(),
