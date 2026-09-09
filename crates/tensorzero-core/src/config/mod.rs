@@ -617,6 +617,7 @@ pub struct ExportConfig {
 #[serde(deny_unknown_fields)]
 pub struct OtlpConfig {
     pub traces: Option<OtlpTracesConfig>,
+    pub logs: Option<OtlpLogsConfig>,
 }
 
 impl OtlpConfig {
@@ -749,6 +750,16 @@ pub struct OtlpTracesConfig {
     /// `gen_ai.tool.definitions`) on the `model_provider_inference` span. These contain full
     /// prompt/response content and are opt-in even when traces are enabled. Defaults to `false`.
     pub include_content: Option<bool>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OtlpLogsConfig {
+    /// Enable OpenTelemetry logs export to the configured OTLP endpoint (configured via the
+    /// `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` environment variable). `tracing` events are bridged
+    /// to OTel log records with the same level filtering as the console output.
+    pub enabled: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

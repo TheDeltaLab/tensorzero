@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 pub mod error;
 pub mod exporter_wrapper;
 pub mod span_leak_detector;
@@ -34,6 +35,7 @@ use opentelemetry_otlp::WithHttpConfig;
 use opentelemetry_otlp::WithTonicConfig;
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::logs::SdkLoggerProvider;
 use opentelemetry_sdk::trace::SdkTracer;
 use opentelemetry_sdk::trace::{SdkTracerProvider, SpanExporter};
 use tensorzero_overhead::OverheadTimingLayer;
@@ -410,6 +412,105 @@ fn metadata_to_http_headers(metadata: &MetadataMap) -> Result<HashMap<String, St
         out.insert(name.as_str().to_string(), value_str.to_string());
     }
     Ok(out)
+}
+
+/// Builds a new `SdkLoggerProvider` for OTLP log export, using the same gRPC
+/// (tonic) transport as trace export. The endpoint is read by the exporter from
+/// the standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`)
+/// environment variables.
+fn build_logger_provider(settings: &ObservabilitySettings) -> Result<SdkLoggerProvider, Error> {
+    // Per the OTel spec, `OTEL_SERVICE_NAME` overrides any service.name set
+    // in code. Honor that - `settings.service_name` is the default, not a
+    // hardcoded floor.
+    let service_name: String = std::env::var("OTEL_SERVICE_NAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| settings.service_name.to_owned());
+    let tls_config = tonic::transport::ClientTlsConfig::new().with_enabled_roots();
+    #[cfg(feature = "e2e_tests")]
+    let tls_config = add_local_self_signed_cert(tls_config);
+    let exporter = opentelemetry_otlp::LogExporter::builder()
+        .with_tonic()
+        .with_tls_config(tls_config)
+        .build()
+        .map_err(|e| {
+            Error::observability(format!("Failed to create OTLP logs gRPC exporter: {e}"))
+        })?;
+    Ok(SdkLoggerProvider::builder()
+        .with_resource(
+            Resource::builder()
+                .with_attribute(KeyValue::new(
+                    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+                    service_name,
+                ))
+                .build(),
+        )
+        .with_batch_exporter(exporter)
+        .build())
+}
+
+/// Creates an OpenTelemetry logs export layer, bridging `tracing` events to OTel log
+/// records via `opentelemetry_appender_tracing`. Like `build_opentelemetry_layer`,
+/// this layer is disabled by default (`LevelFilter::OFF`), and can be dynamically
+/// enabled using the returned `DelayedOtelEnableHandle` once the config file has
+/// been parsed (see the `DelayedOtelEnableHandle` docs for why this is two-step).
+///
+/// `level_filter` is a reloadable `EnvFilter` mirroring the console log level, so
+/// `RUST_LOG` and `DelayedDebugLogs` apply equally to exported logs. It is stacked
+/// separately from the enable gate so that enabling debug logging does not
+/// implicitly turn on OTLP export.
+fn build_otel_logs_layer<S>(
+    settings: &ObservabilitySettings,
+    level_filter: tracing_subscriber::reload::Layer<EnvFilter, S>,
+) -> Result<(DelayedOtelEnableHandle, impl Layer<S>, SdkLoggerProvider), Error>
+where
+    S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+{
+    let provider = build_logger_provider(settings)?;
+    let bridge = opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(&provider);
+
+    let (enable_reload, enable_handle) = tracing_subscriber::reload::Layer::new(Box::new(
+        LevelFilter::OFF,
+    )
+        as Box<dyn Filter<S> + Send + Sync>);
+
+    let delayed_enable = DelayedOtelEnableHandle {
+        enable_cb: Box::new(move || {
+            // Exclude the OpenTelemetry SDK's own targets to avoid a feedback loop
+            // (an export failure would emit an event that gets queued for export).
+            enable_handle
+                .modify(|f| {
+                    *f = Box::new(filter::dynamic_filter_fn(|metadata, _context| {
+                        !metadata.target().starts_with("opentelemetry")
+                    }));
+                })
+                .map_err(|e| {
+                    Error::observability(format!("Failed to enable OTLP logs exporter: {e:?}"))
+                })?;
+            Ok(())
+        }),
+    };
+
+    Ok((
+        delayed_enable,
+        apply_filter_fixing_tracing_bug(
+            apply_filter_fixing_tracing_bug(bridge, enable_reload),
+            level_filter,
+        ),
+        provider,
+    ))
+}
+
+/// Shuts down the provided `SdkLoggerProvider` (flushing any pending log records),
+/// and asynchronously waits for the shutdown to complete.
+pub async fn shutdown_otel_logger(provider: SdkLoggerProvider) -> Result<(), Error> {
+    tokio::task::spawn_blocking(move || {
+        provider.shutdown_with_timeout(Duration::MAX).map_err(|e| {
+            Error::observability(format!("Failed to shutdown OTLP logger provider: {e}"))
+        })
+    })
+    .await
+    .map_err(|e| Error::observability(format!("Failed to wait on OTLP logger shutdown: {e}")))?
 }
 
 impl Tracer for TracerWrapper {
@@ -1132,8 +1233,14 @@ pub struct ObservabilityHandle {
     /// Instead, consumers that care about OTEL (currently only the HTTP gateway)
     /// must manually log the error.
     pub delayed_otel: Result<DelayedOtelEnableHandle, Error>,
+    /// Same two-step pattern as `delayed_otel`, but for OTLP log export
+    /// (`gateway.export.otlp.logs.enabled` in the config file).
+    pub delayed_otel_logs: Result<DelayedOtelEnableHandle, Error>,
     pub delayed_debug_logs: DelayedDebugLogs,
     pub otel_tracer: Option<Arc<TracerWrapper>>,
+    /// The logger provider for OTLP log export. Call `shutdown_otel_logger`
+    /// during graceful shutdown to flush pending log records.
+    pub otel_logger: Option<SdkLoggerProvider>,
     // In `e2e_tests` mode, we enable a `SpanLeakDetector` to detect spans that were not closed when the gateway finished shutting down.
     pub leak_detector: Option<SpanLeakDetector>,
 }
@@ -1267,26 +1374,32 @@ pub async fn setup_observability_with_exporter_override<T: SpanExporter + 'stati
     // If the `RUST_LOG` env var is set, then use it as our filter.
     // Otherwise, use the default non-debug directives (which might later get overridden to settings.debug_log_directives
     // using the `update_log_level` handle).
-    let base_filter = if has_env_var {
-        EnvFilter::builder()
-            .with_env_var(env_var_name)
-            .from_env()
-            .map_err(|e| {
-                Error::observability(format!(
-                    "Invalid `{env_var_name}` environment variable: {e}"
-                ))
-            })?
-    } else {
-        EnvFilter::builder()
-            .parse(settings.default_log_directives)
-            .map_err(|e| {
-                Error::internal(format!(
-                    "Failed to parse internal non-debug directives - this should never happen: {e}"
-                ))
-            })?
+    // `EnvFilter` is not `Clone`, and we need one instance per reloadable layer
+    // (console + OTLP logs), so this constructor runs once per layer.
+    let make_base_filter = || -> Result<EnvFilter, Error> {
+        if has_env_var {
+            EnvFilter::builder()
+                .with_env_var(env_var_name)
+                .from_env()
+                .map_err(|e| {
+                    Error::observability(format!(
+                        "Invalid `{env_var_name}` environment variable: {e}"
+                    ))
+                })
+        } else {
+            EnvFilter::builder()
+                .parse(settings.default_log_directives)
+                .map_err(|e| {
+                    Error::internal(format!(
+                        "Failed to parse internal non-debug directives - this should never happen: {e}"
+                    ))
+                })
+        }
     };
 
-    let (log_level, update_log_level) = tracing_subscriber::reload::Layer::new(base_filter);
+    let (log_level, update_log_level) = tracing_subscriber::reload::Layer::new(make_base_filter()?);
+    let (logs_level, update_logs_level) =
+        tracing_subscriber::reload::Layer::new(make_base_filter()?);
 
     let log_layer = match log_format {
         LogFormat::Pretty => {
@@ -1311,6 +1424,34 @@ pub async fn setup_observability_with_exporter_override<T: SpanExporter + 'stati
         Err(e) => (Err(e), None, None),
     };
 
+    let otel_logs_data = build_otel_logs_layer(&settings, logs_level);
+    let (delayed_otel_logs, otel_logs_layer, logger_provider, update_logs_level) =
+        match otel_logs_data {
+            Ok((delayed_otel_logs, otel_logs_layer, logger_provider)) => (
+                Ok(delayed_otel_logs),
+                Some(otel_logs_layer),
+                Some(logger_provider),
+                Some(update_logs_level),
+            ),
+            // If the layer failed to build, its reload handle is useless
+            // (the layer was dropped), so discard it.
+            Err(e) => (Err(e), None, None, None),
+        };
+
+    // The bug-reproduction tests in `tracing_bug` (which set
+    // `DISABLE_TRACING_BUG_WORKAROUND`) reproduce an upstream `tracing` bug whose
+    // manifestation depends on the exact set of per-layer-filtered layers present.
+    // Register them with the layer stack that existed when the reproduction was
+    // written, i.e. without the OTLP logs layer.
+    #[cfg(any(test, feature = "e2e_tests"))]
+    let otel_logs_layer = if crate::tracing_bug::DISABLE_TRACING_BUG_WORKAROUND
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        None
+    } else {
+        otel_logs_layer
+    };
+
     // This layer only makes sense when we construct top-level HTTP overhead-tracking spans
     let overhead_timing_layer = settings
         .register_overhead_layer
@@ -1322,12 +1463,14 @@ pub async fn setup_observability_with_exporter_override<T: SpanExporter + 'stati
     tracing_subscriber::registry()
         .with(otel_layer)
         .with(apply_filter_fixing_tracing_bug(log_layer, log_level))
+        .with(otel_logs_layer)
         .with(leak_detector.clone())
         .with(overhead_timing_layer)
         .init();
 
     // If `RUST_LOG` is explicitly set, it takes precedence over `gateway.debug`,
     // so we return a no-op `DelayedDebugLogs` handle.
+    let debug_log_directives = settings.debug_log_directives;
     let delayed_debug_logs = if has_env_var {
         DelayedDebugLogs {
             enable_cb: Box::new(|| Ok(())),
@@ -1339,7 +1482,29 @@ pub async fn setup_observability_with_exporter_override<T: SpanExporter + 'stati
                     .modify(move |l| {
                         *l = default_debug_filter;
                     })
-                    .map_err(|e| Error::observability(format!("Failed to update log level: {e}")))
+                    .map_err(|e| {
+                        Error::observability(format!("Failed to update log level: {e}"))
+                    })?;
+                // Keep the OTLP logs layer at the same level as the console.
+                // This does not *enable* OTLP export - the separate enable gate
+                // in `build_otel_logs_layer` still controls that.
+                if let Some(update_logs_level) = update_logs_level {
+                    let debug_filter = EnvFilter::builder()
+                        .parse(debug_log_directives)
+                        .map_err(|e| {
+                            Error::internal(format!(
+                                "Failed to parse internal debug directives - this should never happen: {e}"
+                            ))
+                        })?;
+                    update_logs_level
+                        .modify(move |l| {
+                            *l = debug_filter;
+                        })
+                        .map_err(|e| {
+                            Error::observability(format!("Failed to update OTLP logs level: {e}"))
+                        })?;
+                }
+                Ok(())
             }),
         }
     };
@@ -1352,8 +1517,10 @@ pub async fn setup_observability_with_exporter_override<T: SpanExporter + 'stati
 
     Ok(ObservabilityHandle {
         delayed_otel,
+        delayed_otel_logs,
         delayed_debug_logs,
         otel_tracer: tracer_wrapper,
+        otel_logger: logger_provider,
         leak_detector,
     })
 }

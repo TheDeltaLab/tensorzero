@@ -68,8 +68,8 @@ pub use stored_gateway_config::{
     StoredBatchWritesConfig, StoredDashboardUiConfig, StoredExportConfig,
     StoredGatewayAuthCacheConfig, StoredGatewayConfig, StoredGatewayMetricsConfig,
     StoredInferenceCacheBackend, StoredModelInferenceCacheConfig, StoredObservabilityBackend,
-    StoredObservabilityConfig, StoredOtlpConfig, StoredOtlpTracesConfig, StoredOtlpTracesFormat,
-    StoredRelayConfig, StoredValkeyModelInferenceCacheConfig,
+    StoredObservabilityConfig, StoredOtlpConfig, StoredOtlpLogsConfig, StoredOtlpTracesConfig,
+    StoredOtlpTracesFormat, StoredRelayConfig, StoredValkeyModelInferenceCacheConfig,
 };
 pub use stored_metric_config::{
     STORED_METRIC_CONFIG_SCHEMA_REVISION, StoredMetricConfig, StoredMetricLevel,

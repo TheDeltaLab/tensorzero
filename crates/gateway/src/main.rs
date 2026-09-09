@@ -592,6 +592,49 @@ async fn run() -> Result<(), ExitCode> {
         );
     }
 
+    // Same delayed-enable pattern as traces (see above): the OTLP logs layer is
+    // registered at startup but only starts exporting once the config file has
+    // been parsed and `gateway.export.otlp.logs.enabled` is `true`.
+    let otlp_logs_enabled = export_config
+        .otlp
+        .as_ref()
+        .and_then(|o| o.logs.as_ref())
+        .and_then(|l| l.enabled)
+        .unwrap_or(false);
+    if otlp_logs_enabled {
+        if std::env::var("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT").is_err() {
+            // This makes it easier to run the gateway in local development and CI
+            if cfg!(feature = "e2e_tests") {
+                tracing::warn!(
+                    "Running without explicit `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` environment variable in e2e tests mode."
+                );
+            } else {
+                tracing::error!(
+                    "The `gateway.export.otlp.logs.enabled` configuration option is `true`, but environment variable `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` is not set. Please set it to the OTLP endpoint (e.g. `http://localhost:4317`)."
+                );
+                return Err(ExitCode::FAILURE);
+            }
+        }
+
+        match delayed_log_config.delayed_otel_logs {
+            Ok(delayed_otel_logs) => {
+                delayed_otel_logs
+                    .enable_otel()
+                    .log_err_pretty("Failed to enable OpenTelemetry logs export")?;
+            }
+            Err(e) => {
+                tracing::error!(
+                    "Could not enable OpenTelemetry logs export due to previous error: `{e}`. Exiting."
+                );
+                return Err(ExitCode::FAILURE);
+            }
+        }
+    } else if let Err(e) = delayed_log_config.delayed_otel_logs {
+        tracing::warn!(
+            "[gateway.export.otlp.logs.enabled] is `false`, so ignoring OpenTelemetry logs error: `{e}`"
+        );
+    }
+
     // Collect available tool names for autopilot (single source of truth)
     let available_tools = autopilot_tools::collect_tool_names()
         .await
@@ -803,9 +846,24 @@ async fn run() -> Result<(), ExitCode> {
         .and_then(|t| t.enabled)
         .unwrap_or(false);
     if otlp_traces_enabled {
-        tracing::info!("└ OpenTelemetry: enabled");
+        tracing::info!("├ OpenTelemetry traces: enabled");
     } else {
-        tracing::info!("└ OpenTelemetry: disabled");
+        tracing::info!("├ OpenTelemetry traces: disabled");
+    }
+
+    // Print whether OpenTelemetry logs export is enabled
+    let otlp_logs_enabled = config
+        .gateway
+        .export
+        .otlp
+        .as_ref()
+        .and_then(|o| o.logs.as_ref())
+        .and_then(|l| l.enabled)
+        .unwrap_or(false);
+    if otlp_logs_enabled {
+        tracing::info!("└ OpenTelemetry logs: enabled");
+    } else {
+        tracing::info!("└ OpenTelemetry logs: disabled");
     }
 
     let shutdown_token = gateway_handle.app_state.shutdown_token.clone();
@@ -859,6 +917,14 @@ async fn run() -> Result<(), ExitCode> {
             .shutdown(delayed_log_config.leak_detector.as_ref())
             .await;
         tracing::info!("OpenTelemetry exporter shut down");
+    }
+    if let Some(logger_provider) = delayed_log_config.otel_logger {
+        tracing::info!("Shutting down OpenTelemetry logs exporter");
+        observability::shutdown_otel_logger(logger_provider)
+            .await
+            .log_err_pretty("Failed to shut down OpenTelemetry logs exporter")
+            .ok();
+        tracing::info!("OpenTelemetry logs exporter shut down");
     }
     Ok(())
 }

@@ -141,6 +141,7 @@
               "operations/centralize-auth-rate-limits-and-more",
               "operations/organize-your-configuration",
               "operations/export-opentelemetry-traces",
+              "operations/export-opentelemetry-logs",
               "operations/export-prometheus-metrics",
               "operations/extend-tensorzero"
             ]

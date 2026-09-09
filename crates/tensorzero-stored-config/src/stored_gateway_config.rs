@@ -90,6 +90,7 @@ pub struct StoredExportConfig {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StoredOtlpConfig {
     pub traces: Option<StoredOtlpTracesConfig>,
+    pub logs: Option<StoredOtlpLogsConfig>,
 }
 
 #[serde_with::skip_serializing_none]
@@ -99,6 +100,12 @@ pub struct StoredOtlpTracesConfig {
     pub format: Option<StoredOtlpTracesFormat>,
     pub extra_headers: Option<BTreeMap<String, String>>,
     pub include_content: Option<bool>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoredOtlpLogsConfig {
+    pub enabled: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

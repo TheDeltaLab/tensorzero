@@ -1,0 +1,59 @@
+---
+title: Export OpenTelemetry logs (OTLP)
+sidebarTitle: Export OpenTelemetry logs
+description: Learn how to export logs from the TensorZero Gateway to an external OpenTelemetry-compatible observability system.
+---
+
+The TensorZero Gateway can export its logs to an external OpenTelemetry-compatible observability system using OTLP.
+
+Exporting logs via OpenTelemetry allows you to collect the gateway's `tracing` output in external observability platforms such as Grafana Loki (via an OpenTelemetry Collector), Datadog, or any other OTLP-compatible backend.
+Log records carry the active trace context (trace ID and span ID) when available, so you can correlate logs with exported traces.
+
+Log export does not replace console output: logs continue to be written to stdout, and the exported logs use the same level filtering as the console (`RUST_LOG`, or `gateway.debug` when `RUST_LOG` is unset).
+The OpenTelemetry SDK's own log targets are excluded from export to avoid feedback loops.
+
+## Configure
+
+<Steps>
+<Step title="Set up the configuration">
+
+Enable `export.otlp.logs.enabled` in the `[gateway]` section of the `tensorzero.toml` configuration file:
+
+```toml
+[gateway]
+# ...
+export.otlp.logs.enabled = true
+# ...
+```
+
+</Step>
+<Step title="Configure the OTLP logs endpoint">
+
+Set the `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` environment variable in the gateway container to the endpoint of your OpenTelemetry service.
+
+<Note>
+  TensorZero only supports gRPC endpoints for OTLP log export. HTTP endpoints
+  are not supported.
+</Note>
+
+For example, if you're deploying the TensorZero Gateway alongside an OpenTelemetry Collector in Docker Compose, you can set the following environment variable:
+
+```yaml
+services:
+  gateway:
+    # ...
+    environment:
+      - OTEL_EXPORTER_OTLP_LOGS_ENDPOINT=http://otel-collector:4317
+      # ...
+```
+
+The `OTEL_SERVICE_NAME` environment variable (if set) overrides the default `tensorzero-gateway` value of the `service.name` resource attribute on exported log records.
+
+</Step>
+</Steps>
+
+<Tip>
+
+See [Export OpenTelemetry traces](/operations/export-opentelemetry-traces) to export traces to the same backend, and [Export Prometheus metrics](/operations/export-prometheus-metrics) for metrics.
+
+</Tip>
