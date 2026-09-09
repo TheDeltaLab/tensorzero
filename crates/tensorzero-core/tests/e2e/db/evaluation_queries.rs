@@ -1648,6 +1648,7 @@ async fn test_get_evaluation_results_usage_aggregation(
 
     let inferences = vec![
         ChatInferenceDatabaseInsert {
+            error: None,
             id: inference1_id,
             function_name: function_name.clone(),
             variant_name: "test_variant".to_string(),
@@ -1663,6 +1664,7 @@ async fn test_get_evaluation_results_usage_aggregation(
             snapshot_hash: None,
         },
         ChatInferenceDatabaseInsert {
+            error: None,
             id: inference2_id,
             function_name: function_name.clone(),
             variant_name: "test_variant".to_string(),
@@ -1688,6 +1690,7 @@ async fn test_get_evaluation_results_usage_aggregation(
     let model_inferences = vec![
         // Inference 1 - model inference A
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: inference1_id,
             function_name: "test_function".to_string(),
@@ -1714,6 +1717,7 @@ async fn test_get_evaluation_results_usage_aggregation(
         },
         // Inference 1 - model inference B (fallback)
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: inference1_id,
             function_name: "test_function".to_string(),
@@ -1740,6 +1744,7 @@ async fn test_get_evaluation_results_usage_aggregation(
         },
         // Inference 2 - model inference A (has cost)
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: inference2_id,
             function_name: "test_function".to_string(),
@@ -1766,6 +1771,7 @@ async fn test_get_evaluation_results_usage_aggregation(
         },
         // Inference 2 - model inference B (NO cost => total cost should be NULL)
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: inference2_id,
             function_name: "test_function".to_string(),
@@ -1939,6 +1945,7 @@ fn make_model_inference_for_eval(
     model_name: &str,
 ) -> StoredModelInference {
     StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),
@@ -1997,6 +2004,7 @@ fn make_eval_chat_inference(p: EvalChatInferenceParams<'_>) -> ChatInferenceData
     );
 
     ChatInferenceDatabaseInsert {
+        error: None,
         id: p.id,
         function_name: p.function_name.to_string(),
         variant_name: "v1".to_string(),

@@ -1421,6 +1421,7 @@ mod tests {
         let client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -1757,6 +1758,7 @@ mod tests {
         let client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -1943,6 +1945,7 @@ mod tests {
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let api_keys = InferenceCredentials::default();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2112,6 +2115,7 @@ mod tests {
         let client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,

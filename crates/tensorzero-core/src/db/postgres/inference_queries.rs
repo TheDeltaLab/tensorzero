@@ -353,7 +353,12 @@ impl InferenceQueries for PostgresConnectionInfo {
 
                 // TODO(#6664): Make the lookup order-independent instead of sorting keys.
                 result
-                    .map(|r| serialize_with_sorted_keys(&r.output))
+                    .map(|r| match &r.output {
+                        Some(output) => serialize_with_sorted_keys(output),
+                        // Failed inferences store NULL output; mirror ClickHouse,
+                        // which stores an empty string for the same rows.
+                        None => Ok(String::new()),
+                    })
                     .transpose()
             }
             FunctionType::Json => {
@@ -378,7 +383,12 @@ impl InferenceQueries for PostgresConnectionInfo {
 
                 // TODO(#6664): Make the lookup order-independent instead of sorting keys.
                 result
-                    .map(|r| serialize_with_sorted_keys(&r.output))
+                    .map(|r| match &r.output {
+                        Some(output) => serialize_with_sorted_keys(output),
+                        // Failed inferences store NULL output; mirror ClickHouse,
+                        // which stores an empty string for the same rows.
+                        None => Ok(String::new()),
+                    })
                     .transpose()
             }
         }
@@ -535,7 +545,7 @@ pub(super) fn build_insert_chat_inferences_query(
         INSERT INTO tensorzero.chat_inferences (
             id, function_name, variant_name, episode_id,
             processing_time_ms, ttft_ms, tags,
-            snapshot_hash, created_at
+            snapshot_hash, error, created_at
         ) ",
     );
 
@@ -548,6 +558,7 @@ pub(super) fn build_insert_chat_inferences_query(
             .push_bind(row.ttft_ms.map(|v| v as i32))
             .push_bind(Json::from(&row.tags))
             .push_bind(row.snapshot_hash.as_ref())
+            .push_bind(row.error.as_deref())
             .push_bind(created_at);
     });
 
@@ -577,10 +588,14 @@ pub(super) fn build_insert_chat_inference_data_query(
         let empty_tools: Vec<Tool> = vec![];
         let empty_provider_tools: Vec<ProviderTool> = vec![];
 
-        b.push_bind(row.id)
-            .push_bind(Json::from(&row.input))
-            .push_bind(Json::from(&row.output))
-            .push_bind(Json::from(&row.inference_params))
+        b.push_bind(row.id).push_bind(Json::from(&row.input));
+        // Failed inferences have no output; bind SQL NULL rather than JSON `null`
+        // so the read side decodes it as `None`.
+        match &row.output {
+            Some(output) => b.push_bind(Json::from(output)),
+            None => b.push_bind(Option::<Json<Value>>::None),
+        };
+        b.push_bind(Json::from(&row.inference_params))
             .push_bind(Json::from(&row.extra_body))
             .push_bind(Json::from(
                 tool_params_ref
@@ -615,7 +630,7 @@ pub(super) fn build_insert_json_inferences_query(
         r"
         INSERT INTO tensorzero.json_inferences (
             id, function_name, variant_name, episode_id,
-            processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+            processing_time_ms, ttft_ms, tags, snapshot_hash, error, created_at
         ) ",
     );
 
@@ -628,6 +643,7 @@ pub(super) fn build_insert_json_inferences_query(
             .push_bind(row.ttft_ms.map(|v| v as i32))
             .push_bind(Json::from(&row.tags))
             .push_bind(row.snapshot_hash.as_ref())
+            .push_bind(row.error.as_deref())
             .push_bind(created_at);
     });
 
@@ -652,10 +668,14 @@ pub(super) fn build_insert_json_inference_data_query(
     );
 
     query_builder.push_values(rows.iter().zip(&timestamps), |mut b, (row, created_at)| {
-        b.push_bind(row.id)
-            .push_bind(Json::from(&row.input))
-            .push_bind(Json::from(&row.output))
-            .push_bind(&row.output_schema)
+        b.push_bind(row.id).push_bind(Json::from(&row.input));
+        // Failed inferences have no output; bind SQL NULL rather than JSON `null`
+        // so the read side decodes it as `None`.
+        match &row.output {
+            Some(output) => b.push_bind(Json::from(output)),
+            None => b.push_bind(Option::<Json<Value>>::None),
+        };
+        b.push_bind(&row.output_schema)
             .push_bind(Json::from(&row.inference_params))
             .push_bind(Json::from(&row.extra_body))
             .push_bind(Json::from(&row.auxiliary_content))
@@ -856,11 +876,11 @@ fn build_inference_metadata_query(
 const CHAT_INFERENCES_WITH_ARCHIVE: &str = r"
     (
         SELECT id, function_name, variant_name, episode_id,
-               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+               processing_time_ms, ttft_ms, tags, snapshot_hash, error, created_at
         FROM tensorzero.chat_inferences
         UNION ALL
         SELECT id, function_name, variant_name, episode_id,
-               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+               processing_time_ms, ttft_ms, tags, snapshot_hash, error, created_at
         FROM tensorzero.chat_inferences_archive
     )";
 const CHAT_INFERENCE_DATA_WITH_ARCHIVE: &str = r"
@@ -876,11 +896,11 @@ const CHAT_INFERENCE_DATA_WITH_ARCHIVE: &str = r"
 const JSON_INFERENCES_WITH_ARCHIVE: &str = r"
     (
         SELECT id, function_name, variant_name, episode_id,
-               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+               processing_time_ms, ttft_ms, tags, snapshot_hash, error, created_at
         FROM tensorzero.json_inferences
         UNION ALL
         SELECT id, function_name, variant_name, episode_id,
-               processing_time_ms, ttft_ms, tags, snapshot_hash, created_at
+               processing_time_ms, ttft_ms, tags, snapshot_hash, error, created_at
         FROM tensorzero.json_inferences_archive
     )";
 const JSON_INFERENCE_DATA_WITH_ARCHIVE: &str = r"
@@ -948,7 +968,8 @@ fn build_chat_inferences_query(
             io.inference_params,
             i.processing_time_ms,
             i.ttft_ms,
-            i.snapshot_hash
+            i.snapshot_hash,
+            i.error
         FROM {inferences_table} i
         LEFT JOIN {data_table} io ON io.id = i.id AND io.created_at = i.created_at
         "
@@ -1103,7 +1124,8 @@ fn build_json_inferences_query(
             io.inference_params,
             i.processing_time_ms,
             i.ttft_ms,
-            i.snapshot_hash
+            i.snapshot_hash,
+            i.error
         FROM {inferences_table} i
         LEFT JOIN {data_table} io ON io.id = i.id AND io.created_at = i.created_at
         "
@@ -1254,6 +1276,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredChatInferenceDatabas
         let processing_time_ms: Option<i32> = row.try_get("processing_time_ms")?;
         let ttft_ms: Option<i32> = row.try_get("ttft_ms")?;
         let snapshot_hash: Option<SnapshotHash> = row.try_get("snapshot_hash")?;
+        let error: Option<String> = row.try_get("error")?;
 
         // Get chat-specific fields for tool_params reconstruction
         let dynamic_tools: Option<Json<Vec<Tool>>> = row.try_get("dynamic_tools")?;
@@ -1299,6 +1322,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredChatInferenceDatabas
             processing_time_ms: processing_time_ms.map(|v| v as u64),
             ttft_ms: ttft_ms.map(|v| v as u64),
             snapshot_hash: snapshot_hash.map(|h| h.to_hex_string()),
+            error,
         })
     }
 }
@@ -1323,6 +1347,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredJsonInference {
         let processing_time_ms: Option<i32> = row.try_get("processing_time_ms")?;
         let ttft_ms: Option<i32> = row.try_get("ttft_ms")?;
         let snapshot_hash: Option<SnapshotHash> = row.try_get("snapshot_hash")?;
+        let error: Option<String> = row.try_get("error")?;
 
         let dispreferred_outputs = dispreferred_output.map(|d| vec![d.0]).unwrap_or_default();
 
@@ -1342,6 +1367,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredJsonInference {
             processing_time_ms: processing_time_ms.map(|v| v as u64),
             ttft_ms: ttft_ms.map(|v| v as u64),
             snapshot_hash: snapshot_hash.map(|h| h.to_hex_string()),
+            error,
         })
     }
 }
@@ -1485,7 +1511,8 @@ fn build_inferences_union_query(
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash,
+                i.error
             FROM {chat_inferences_table} i
             LEFT JOIN {chat_data_table} io ON io.id = i.id AND io.created_at = i.created_at
             {demo_join}
@@ -1524,7 +1551,8 @@ fn build_inferences_union_query(
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash,
+                i.error
             FROM {json_inferences_table} i
             LEFT JOIN {json_data_table} io ON io.id = i.id AND io.created_at = i.created_at
             {demo_join}
@@ -2116,7 +2144,7 @@ mod tests {
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash, i.error
             FROM tensorzero.chat_inferences i
             LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
             WHERE TRUE AND i.function_name = $1
@@ -2167,7 +2195,7 @@ mod tests {
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash, i.error
             FROM tensorzero.chat_inferences i
             LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
             JOIN (
@@ -2226,7 +2254,7 @@ mod tests {
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash, i.error
             FROM tensorzero.chat_inferences i
             LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
             WHERE TRUE AND i.function_name = $1 AND i.id < $2
@@ -2278,7 +2306,7 @@ mod tests {
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash, i.error
             FROM tensorzero.chat_inferences i
             LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
             WHERE TRUE AND i.function_name = $1 AND i.id > $2
@@ -2329,7 +2357,7 @@ mod tests {
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash, i.error
             FROM tensorzero.chat_inferences i
             LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
             WHERE TRUE AND i.function_name = $1
@@ -2377,7 +2405,7 @@ mod tests {
                 io.inference_params,
                 i.processing_time_ms,
                 i.ttft_ms,
-                i.snapshot_hash
+                i.snapshot_hash, i.error
             FROM tensorzero.json_inferences i
             LEFT JOIN tensorzero.json_inference_data io ON io.id = i.id AND io.created_at = i.created_at
             WHERE TRUE AND i.function_name = $1
@@ -2431,7 +2459,7 @@ mod tests {
                     io.inference_params,
                     i.processing_time_ms,
                     i.ttft_ms,
-                    i.snapshot_hash
+                    i.snapshot_hash, i.error
                 FROM tensorzero.chat_inferences i
                 LEFT JOIN tensorzero.chat_inference_data io ON io.id = i.id AND io.created_at = i.created_at
                 WHERE TRUE ORDER BY id DESC LIMIT $1)
@@ -2456,7 +2484,7 @@ mod tests {
                     io.inference_params,
                     i.processing_time_ms,
                     i.ttft_ms,
-                    i.snapshot_hash
+                    i.snapshot_hash, i.error
                 FROM tensorzero.json_inferences i
                 LEFT JOIN tensorzero.json_inference_data io ON io.id = i.id AND io.created_at = i.created_at
                 WHERE TRUE ORDER BY id DESC LIMIT $2)

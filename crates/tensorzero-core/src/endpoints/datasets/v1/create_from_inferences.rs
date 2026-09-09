@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashSet;
 
 use axum::Json;
@@ -182,6 +183,7 @@ mod tests {
     /// Helper to create a test inference (storage type for database)
     fn create_test_inference(id: Uuid) -> StoredInferenceDatabase {
         StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+            error: None,
             function_name: "test_function".to_string(),
             variant_name: "test_variant".to_string(),
             input: Some(crate::inference::types::StoredInput {

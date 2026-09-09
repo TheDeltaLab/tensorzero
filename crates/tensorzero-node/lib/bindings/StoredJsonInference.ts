@@ -21,4 +21,8 @@ export type StoredJsonInference = {
   processing_time_ms?: bigint;
   ttft_ms?: bigint;
   snapshot_hash?: string;
+  /**
+   * Serialized error tree, present only on failed inference rows.
+   */
+  error?: string;
 };

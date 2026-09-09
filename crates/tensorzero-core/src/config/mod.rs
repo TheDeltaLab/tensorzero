@@ -519,6 +519,9 @@ pub struct ObservabilityConfig {
     pub backend: Option<ObservabilityBackend>,
     pub async_writes: Option<bool>,
     pub batch_writes: Option<BatchWritesConfig>,
+    /// Controls whether failed inferences are recorded in the inference tables
+    /// (with an `error` column and empty output). Defaults to true.
+    pub record_failed_inferences: Option<bool>,
     #[deprecated(
         since = "2026.2.1",
         note = "Use `clickhouse.disable_automatic_migrations` instead"
@@ -562,6 +565,12 @@ impl ObservabilityConfig {
     /// write data and immediately query for it).
     pub fn async_writes(&self) -> bool {
         self.async_writes.unwrap_or(!cfg!(feature = "e2e_tests"))
+    }
+
+    /// Returns true when failed inferences should be recorded in the inference
+    /// tables. Defaults to true when `record_failed_inferences` is not explicitly set.
+    pub fn failed_writes_enabled(&self) -> bool {
+        self.record_failed_inferences.unwrap_or(true)
     }
 }
 

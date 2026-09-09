@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /// Tests for inference with `experimental_dynamic_in_context_learning` variants.
 ///
 /// These tests exercise the DICL inference pipeline: embedding the input,
@@ -328,6 +329,7 @@ async fn embed_insert_example(
     let rate_limiting_config: Arc<tensorzero_core::rate_limiting::RateLimitingConfig> =
         Arc::new(Default::default());
     let clients = InferenceClients {
+        failed_model_inference_datastore: None,
         http_client: client.clone(),
         clickhouse_connection_info: conn.clickhouse.clone(),
         postgres_connection_info: conn.postgres.clone(),

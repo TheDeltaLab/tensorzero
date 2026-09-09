@@ -62,11 +62,12 @@ use migrations::migration_0051::Migration0051;
 use migrations::migration_0052::Migration0052;
 use migrations::migration_0053::Migration0053;
 use migrations::migration_0054::Migration0054;
+use migrations::migration_0055::Migration0055;
 use serde::{Deserialize, Serialize};
 
 /// This must match the number of migrations returned by `make_all_migrations` - the tests
 /// will panic if they don't match.
-pub const NUM_MIGRATIONS: usize = 48;
+pub const NUM_MIGRATIONS: usize = 49;
 
 pub const RUN_MIGRATIONS_COMMAND: &str = "Please see our documentation to learn more about deploying ClickHouse: https://www.tensorzero.com/docs/deployment/clickhouse";
 
@@ -142,6 +143,7 @@ pub fn make_all_migrations<'a>(
         Box::new(Migration0052 { clickhouse }),
         Box::new(Migration0053 { clickhouse }),
         Box::new(Migration0054 { clickhouse }),
+        Box::new(Migration0055 { clickhouse }),
     ];
     assert_eq!(
         migrations.len(),

@@ -218,6 +218,7 @@ async fn write_standalone_inference(
         tags,
         extra_body: Some(UnfilteredInferenceExtraBody::default()),
         snapshot_hash: Some(config.hash.clone()),
+        error: None,
     };
 
     let _ = database.insert_model_inferences(&[model_inference]).await;

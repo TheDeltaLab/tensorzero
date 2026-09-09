@@ -441,6 +441,7 @@ impl From<StoredObservabilityConfig> for ObservabilityConfig {
             backend: stored.backend.map(Into::into),
             async_writes: stored.async_writes,
             batch_writes: stored.batch_writes.map(Into::into),
+            record_failed_inferences: stored.record_failed_inferences,
             disable_automatic_migrations: None,
         }
     }
@@ -664,6 +665,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
                 enabled: obs.enabled,
                 backend: obs.backend.map(StoredObservabilityBackend::from),
                 async_writes: obs.async_writes,
+                record_failed_inferences: obs.record_failed_inferences,
                 batch_writes: obs.batch_writes.map(|bw| StoredBatchWritesConfig {
                     enabled: bw.enabled,
                     flush_interval_ms: bw.flush_interval_ms,
@@ -958,6 +960,7 @@ mod tests {
                     write_queue_capacity: Some(4096),
                 }),
                 disable_automatic_migrations: None,
+                record_failed_inferences: None,
             }),
             debug: Some(true),
             // Not persisted to the stored config — config-in-DB users are banned

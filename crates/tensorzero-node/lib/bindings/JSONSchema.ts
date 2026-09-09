@@ -8,7 +8,7 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * Compilation is kicked off in the background when the schema is created via `compile_background()`,
  * so it should typically be ready by the time validation is needed.
  *
- * When created via `compile()`, `from_path()`, or `from_value()`, the schema is compiled
+ * When created via `compile()`, `from_str_with_key()`, or `from_value()`, the schema is compiled
  * synchronously and the compiled validator is stored immediately.
  */
 export type JSONSchema = { value: JsonValue };

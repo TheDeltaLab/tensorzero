@@ -241,6 +241,7 @@ fn build_get_model_inferences_query(inference_id: Uuid) -> QueryBuilder<sqlx::Po
             i.currency,
             i.finish_reason,
             i.snapshot_hash,
+            i.error,
             i.created_at
         FROM tensorzero.model_inferences i
         LEFT JOIN tensorzero.model_inference_data io ON io.id = i.id AND io.created_at = i.created_at
@@ -267,7 +268,7 @@ pub(super) fn build_insert_model_inferences_query(
             id, inference_id, function_name, variant_name, input_tokens, output_tokens,
             provider_cache_read_input_tokens, provider_cache_write_input_tokens,
             response_time_ms, model_name, model_provider_name,
-            ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, created_at
+            ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, error, created_at
         ) ",
     );
 
@@ -289,6 +290,7 @@ pub(super) fn build_insert_model_inferences_query(
             .push_bind(row.snapshot_hash.as_ref())
             .push_bind(row.cost)
             .push_bind(row.currency.as_deref())
+            .push_bind(row.error.as_deref())
             .push_bind(created_at);
     });
 
@@ -1022,6 +1024,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredModelInference {
         let currency: Option<String> = row.try_get("currency")?;
         let finish_reason: Option<FinishReason> = row.try_get("finish_reason")?;
         let snapshot_hash: Option<SnapshotHash> = row.try_get("snapshot_hash")?;
+        let error: Option<String> = row.try_get("error")?;
         let created_at: DateTime<Utc> = row.try_get("created_at")?;
 
         Ok(StoredModelInference {
@@ -1047,6 +1050,7 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for StoredModelInference {
             currency,
             finish_reason,
             snapshot_hash,
+            error,
             timestamp: Some(created_at.to_rfc3339()),
         })
     }
@@ -1601,6 +1605,7 @@ mod tests {
                 i.currency,
                 i.finish_reason,
                 i.snapshot_hash,
+                i.error,
                 i.created_at
             FROM tensorzero.model_inferences i
             LEFT JOIN tensorzero.model_inference_data io ON io.id = i.id AND io.created_at = i.created_at
@@ -1612,6 +1617,7 @@ mod tests {
     #[test]
     fn test_build_insert_model_inferences_query_single_row() {
         let rows = vec![StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: Uuid::now_v7(),
             function_name: "test_function".to_string(),
@@ -1645,8 +1651,8 @@ mod tests {
                 id, inference_id, function_name, variant_name, input_tokens, output_tokens,
                 provider_cache_read_input_tokens, provider_cache_write_input_tokens,
                 response_time_ms, model_name, model_provider_name,
-                ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, error, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
             ",
         );
 
@@ -1666,6 +1672,7 @@ mod tests {
     fn test_build_insert_model_inferences_query_multiple_rows() {
         let rows = vec![
             StoredModelInference {
+                error: None,
                 id: Uuid::now_v7(),
                 inference_id: Uuid::now_v7(),
                 function_name: "test_function".to_string(),
@@ -1691,6 +1698,7 @@ mod tests {
                 timestamp: None,
             },
             StoredModelInference {
+                error: None,
                 id: Uuid::now_v7(),
                 inference_id: Uuid::now_v7(),
                 function_name: "test_function".to_string(),
@@ -1725,9 +1733,9 @@ mod tests {
                 id, inference_id, function_name, variant_name, input_tokens, output_tokens,
                 provider_cache_read_input_tokens, provider_cache_write_input_tokens,
                 response_time_ms, model_name, model_provider_name,
-                ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, created_at
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18),
-            ($19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36)
+                ttft_ms, cached, finish_reason, snapshot_hash, cost, currency, error, created_at
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19),
+            ($20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38)
             ",
         );
 

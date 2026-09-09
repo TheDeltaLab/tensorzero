@@ -1,5 +1,7 @@
+// Modified by Delta-AI under Apache 2.0
 import { Suspense, useState } from "react";
 import { Await, useAsyncError } from "react-router";
+import { Badge } from "~/components/ui/badge";
 import { Skeleton } from "~/components/ui/skeleton";
 import {
   Table,
@@ -84,6 +86,13 @@ export function ModelInferencesContent({
                     {inference.model_name}
                   </span>
                 </TableCell>
+                <TableCell>
+                  {inference.error ? (
+                    <Badge variant="destructive">Failed</Badge>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">—</span>
+                  )}
+                </TableCell>
               </TableRow>
             ))
           )}
@@ -107,6 +116,7 @@ function ModelInferencesTableHeaders() {
       <TableRow>
         <TableHead>ID</TableHead>
         <TableHead>Model</TableHead>
+        <TableHead>Status</TableHead>
       </TableRow>
     </TableHeader>
   );
@@ -124,6 +134,9 @@ function ModelInferencesSkeleton() {
             </TableCell>
             <TableCell>
               <Skeleton className="h-4 w-20" />
+            </TableCell>
+            <TableCell>
+              <Skeleton className="h-4 w-12" />
             </TableCell>
           </TableRow>
         ))}
@@ -144,7 +157,7 @@ function ModelInferencesError() {
       <ModelInferencesTableHeaders />
       <TableBody>
         <TableRow>
-          <TableCell colSpan={2}>
+          <TableCell colSpan={3}>
             <TableErrorNotice
               icon={AlertCircle}
               title="Error loading data"

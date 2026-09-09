@@ -68,7 +68,8 @@ use crate::model::ModelTable;
 use crate::observability::internal_metrics::TENSORZERO_INFERENCES_TOTAL;
 use crate::observability::request_logging::HttpMetricData;
 use crate::observability_tags::{
-    API_KEY_PUBLIC_ID_TAG, SYNAPSE_REQUEST_ID_TAG, apply_usage_observability_tags,
+    API_KEY_PUBLIC_ID_TAG, FALLBACK_COUNT_TAG, STATUS_CODE_TAG, SYNAPSE_REQUEST_ID_TAG,
+    apply_usage_observability_tags,
     insert_api_key_public_id_from_headers, overlay_compat_headers,
 };
 use crate::rate_limiting::{RateLimitingManager, ScopeInfo};
@@ -81,6 +82,7 @@ use crate::variant::dynamic::load_dynamic_variant_info;
 use crate::variant::{InferenceConfig, Variant, VariantConfig, VariantInfo};
 use tensorzero_auth::middleware::RequestApiKeyExtension;
 use tensorzero_inference_types::tool::DynamicToolParams;
+use tensorzero_inference_types::utils::serialize_or_log;
 use tensorzero_types::inference_params::JsonMode;
 
 pub use tensorzero_types::{ChatInferenceResponse, InferenceResponse, JsonInferenceResponse};
@@ -511,6 +513,9 @@ pub async fn inference(
     let mut variant_errors: IndexMap<String, Error> = IndexMap::new();
 
     // Set up inference config
+    // Capture the dynamic output schema before `params.output_schema` is moved;
+    // used when recording failed inferences.
+    let dynamic_output_schema_value = params.output_schema.clone();
     let output_schema = params.output_schema.map(JSONSchema::compile_background);
 
     let tags = Arc::new(params.tags.clone());
@@ -531,7 +536,17 @@ pub async fn inference(
         include_raw_usage: params.include_raw_usage,
         include_raw_response: params.include_raw_response,
         include_aggregated_response: params.include_aggregated_response,
+        failed_model_inference_datastore: if !dryrun
+            && config.gateway.observability.writes_enabled()
+            && config.gateway.observability.failed_writes_enabled()
+        {
+            Some(primary_datastore)
+        } else {
+            None
+        },
     };
+    // Keep a handle for recording failed inferences after `inference_clients` is moved
+    let deferred_tasks_for_failed_write = inference_clients.deferred_tasks.clone();
 
     let inference_models = InferenceModels {
         models: config.models.clone(),
@@ -555,7 +570,7 @@ pub async fn inference(
                 })
             })?;
 
-        let output = Box::pin(infer_variant(InferVariantArgs {
+        let result = Box::pin(infer_variant(InferVariantArgs {
             variant_name: variant_name.clone(),
             variant,
             function: &function,
@@ -565,7 +580,7 @@ pub async fn inference(
             dryrun,
             start_time,
             stream,
-            resolved_input,
+            resolved_input: resolved_input.clone(),
             inference_models,
             inference_clients,
             inference_params: params.params.clone(),
@@ -584,7 +599,40 @@ pub async fn inference(
             include_raw_usage: params.include_raw_usage,
             include_aggregated_response: params.include_aggregated_response,
         }))
-        .await?;
+        .await;
+        let output = match result {
+            Ok(output) => output,
+            Err(e) => {
+                // Record the failed inference before returning the error
+                record_failed_inference(RecordFailedInferenceArgs {
+                    config: &config,
+                    function: &function,
+                    function_name: &function_name,
+                    variant_name: &variant_name,
+                    inference_id,
+                    episode_id,
+                    resolved_input: &resolved_input,
+                    inference_params: Some(params.params.clone()),
+                    output_schema: failed_output_schema(
+                        &function,
+                        dynamic_output_schema_value.as_ref(),
+                    ),
+                    tool_config: &tool_config,
+                    start_time,
+                    tags: &params.tags,
+                    extra_body: &params.extra_body,
+                    extra_headers: &params.extra_headers,
+                    dryrun,
+                    error: &e,
+                    clickhouse_connection_info: &clickhouse_connection_info,
+                    postgres_connection_info: &postgres_connection_info,
+                    primary_datastore,
+                    deferred_tasks: &deferred_tasks_for_failed_write,
+                })
+                .await;
+                return Err(e);
+            }
+        };
         return Ok(InferenceOutputData {
             output,
             exactly_one_variant: Some(variant_name),
@@ -694,10 +742,39 @@ pub async fn inference(
     }
 
     // Eventually, if we get here, it means we tried every variant and none of them worked
-    Err(ErrorDetails::AllVariantsFailed {
+    // Record the failed inference under the last attempted variant
+    // (the serialized error tree contains every variant's error).
+    let last_variant_name = variant_errors.keys().last().cloned();
+    let error: Error = ErrorDetails::AllVariantsFailed {
         errors: variant_errors,
     }
-    .into())
+    .into();
+    if let Some(last_variant_name) = last_variant_name {
+        record_failed_inference(RecordFailedInferenceArgs {
+            config: &config,
+            function: &function,
+            function_name: &function_name,
+            variant_name: &last_variant_name,
+            inference_id,
+            episode_id,
+            resolved_input: &resolved_input,
+            inference_params: Some(params.params.clone()),
+            output_schema: failed_output_schema(&function, dynamic_output_schema_value.as_ref()),
+            tool_config: &tool_config,
+            start_time,
+            tags: &params.tags,
+            extra_body: &params.extra_body,
+            extra_headers: &params.extra_headers,
+            dryrun,
+            error: &error,
+            clickhouse_connection_info: &clickhouse_connection_info,
+            postgres_connection_info: &postgres_connection_info,
+            primary_datastore,
+            deferred_tasks: &deferred_tasks_for_failed_write,
+        })
+        .await;
+    }
+    Err(error)
 }
 
 /// Injects raw response entries from failed variant attempts into a successful inference output.
@@ -1434,7 +1511,7 @@ fn create_stream(
                 input,
                 dryrun: _,
                 start_time,
-                inference_params: _,
+                inference_params,
                 model_name: _,
                 model_provider_name: _,
                 provider_type: _,
@@ -1445,7 +1522,7 @@ fn create_stream(
                 previous_model_inference_results,
                 tags,
                 tool_config,
-                dynamic_output_schema: _,
+                dynamic_output_schema,
                 cached: _,
                 extra_body,
                 json_mode: _,
@@ -1461,15 +1538,46 @@ fn create_stream(
             } = metadata;
 
             let config = config.clone();
+            let function = function.clone();
+            let deferred_tasks_for_failed_write = deferred_tasks.clone();
             let async_writes = config.gateway.observability.async_writes();
             let write_future = async move {
                 let inference_response: Result<InferenceResult, Error> =
                     collect_chunks_future.await;
 
-                let inference_response = inference_response.ok();
+                let mut inference_response = match inference_response {
+                    Ok(inference_response) => inference_response,
+                    Err(e) => {
+                        // The stream failed mid-flight (e.g. provider error after the
+                        // first chunk); record a failed inference row with empty output.
+                        record_failed_inference(RecordFailedInferenceArgs {
+                            config: &config,
+                            function: &function,
+                            function_name: &function_name,
+                            variant_name: &variant_name,
+                            inference_id,
+                            episode_id,
+                            resolved_input: &input,
+                            inference_params: Some(inference_params),
+                            output_schema: dynamic_output_schema.map(|schema| schema.value),
+                            tool_config: &tool_config,
+                            start_time,
+                            tags: &tags,
+                            extra_body: &extra_body,
+                            extra_headers: &extra_headers,
+                            dryrun: false,
+                            error: &e,
+                            clickhouse_connection_info: &clickhouse_connection_info,
+                            postgres_connection_info: &postgres_connection_info,
+                            primary_datastore,
+                            deferred_tasks: &deferred_tasks_for_failed_write,
+                        })
+                        .await;
+                        return;
+                    }
+                };
 
-                if let Some(inference_response) = inference_response {
-                    let mut inference_response = inference_response;
+                {
                     inference_response.mut_model_inference_results().extend(previous_model_inference_results);
                     let write_metadata = InferenceDatabaseInsertMetadata {
                         function_name,
@@ -1685,6 +1793,167 @@ fn tags_for_observability_write(base: &HashMap<String, String>) -> HashMap<Strin
     tags
 }
 
+/// Returns the output schema to store on a failed JSON inference row: the
+/// request's dynamic schema when present, otherwise the function's static schema.
+fn failed_output_schema(
+    function: &FunctionConfig,
+    dynamic_output_schema: Option<&Value>,
+) -> Option<Value> {
+    if let Some(schema) = dynamic_output_schema {
+        return Some(schema.clone());
+    }
+    match function {
+        FunctionConfig::Json(json_function) => Some(json_function.output_schema.value.clone()),
+        FunctionConfig::Chat(_) => None,
+    }
+}
+
+/// Arguments for [`record_failed_inference`].
+pub(crate) struct RecordFailedInferenceArgs<'a> {
+    pub config: &'a Arc<Config>,
+    pub function: &'a FunctionConfig,
+    pub function_name: &'a str,
+    pub variant_name: &'a str,
+    pub inference_id: Uuid,
+    pub episode_id: Uuid,
+    pub resolved_input: &'a Arc<LazyResolvedInput>,
+    pub inference_params: Option<InferenceParams>,
+    pub output_schema: Option<Value>,
+    pub tool_config: &'a Option<ToolCallConfig>,
+    pub start_time: Instant,
+    pub tags: &'a HashMap<String, String>,
+    pub extra_body: &'a UnfilteredInferenceExtraBody,
+    pub extra_headers: &'a UnfilteredInferenceExtraHeaders,
+    pub dryrun: bool,
+    pub error: &'a Error,
+    pub clickhouse_connection_info: &'a ClickHouseConnectionInfo,
+    pub postgres_connection_info: &'a PostgresConnectionInfo,
+    pub primary_datastore: PrimaryDatastore,
+    pub deferred_tasks: &'a TaskTracker,
+}
+
+/// Records a failed inference row (`error` column set, empty output) for a
+/// request that produced no result. No-op for dryrun requests, when
+/// observability writes are disabled, or when
+/// `gateway.observability.record_failed_inferences` is false. Write failures
+/// are logged and swallowed.
+async fn record_failed_inference(args: RecordFailedInferenceArgs<'_>) {
+    let RecordFailedInferenceArgs {
+        config,
+        function,
+        function_name,
+        variant_name,
+        inference_id,
+        episode_id,
+        resolved_input,
+        inference_params,
+        output_schema,
+        tool_config,
+        start_time,
+        tags,
+        extra_body,
+        extra_headers,
+        dryrun,
+        error,
+        clickhouse_connection_info,
+        postgres_connection_info,
+        primary_datastore,
+        deferred_tasks,
+    } = args;
+    if dryrun
+        || !config.gateway.observability.writes_enabled()
+        || !config.gateway.observability.failed_writes_enabled()
+    {
+        return;
+    }
+
+    let mut tags = tags_for_observability_write(tags);
+    // The UI list page consumes `tensorzero::status_code` and
+    // `tensorzero::fallback_count` for the Status column and fallback badge.
+    let status_code = error
+        .underlying_status_code()
+        .map(|status| status.as_u16())
+        .unwrap_or(500);
+    tags.insert(STATUS_CODE_TAG.to_string(), status_code.to_string());
+    let failed_attempts = match error.get_details() {
+        ErrorDetails::AllVariantsFailed { errors } => errors.len(),
+        ErrorDetails::AllModelProvidersFailed { provider_errors } => provider_errors.len(),
+        _ => 0,
+    };
+    if failed_attempts > 0 {
+        tags.insert(FALLBACK_COUNT_TAG.to_string(), failed_attempts.to_string());
+    }
+
+    let error_str = serialize_or_log(error.get_details());
+    let metadata = InferenceDatabaseInsertMetadata {
+        function_name: function_name.to_string(),
+        variant_name: variant_name.to_string(),
+        episode_id,
+        tool_config: tool_config.clone(),
+        processing_time: Some(start_time.elapsed()),
+        ttft_ms: None,
+        tags,
+        extra_body: extra_body.clone(),
+        extra_headers: extra_headers.clone(),
+        snapshot_hash: config.hash.clone(),
+    };
+    let is_chat = matches!(function.config_type(), FunctionConfigType::Chat);
+    let resolved_input = resolved_input.clone();
+    let clickhouse_connection_info = clickhouse_connection_info.clone();
+    let postgres_connection_info = postgres_connection_info.clone();
+    let async_writes = config.gateway.observability.async_writes();
+    // Capture the parent span (function_inference) so we can use it as the parent
+    // for the write, even if the task is spawned.
+    let parent_span = tracing::Span::current();
+    let write_future = async move {
+        let stored_input = match Arc::unwrap_or_clone(resolved_input).resolve().await {
+            Ok(input) => Some(input.into_stored_input()),
+            Err(e) => {
+                tracing::warn!("Failed to resolve input for failed inference {inference_id}: {e}");
+                None
+            }
+        };
+        let database = DelegatingDatabaseConnection::new(
+            clickhouse_connection_info,
+            postgres_connection_info,
+            primary_datastore,
+        );
+        let result = if is_chat {
+            database
+                .insert_chat_inferences(&[ChatInferenceDatabaseInsert::failed(
+                    inference_id,
+                    stored_input,
+                    inference_params,
+                    metadata,
+                    error_str,
+                )])
+                .await
+        } else {
+            database
+                .insert_json_inferences(&[JsonInferenceDatabaseInsert::failed(
+                    inference_id,
+                    stored_input,
+                    inference_params,
+                    output_schema,
+                    metadata,
+                    error_str,
+                )])
+                .await
+        };
+        if let Err(e) = result {
+            tracing::warn!("Failed to write failed inference {inference_id} to the database: {e}");
+        }
+    }
+    .instrument(tracing::debug_span!(parent: &parent_span, "write_failed_inference", otel.name = "write_failed_inference", inference_id = %inference_id, async_writes = async_writes));
+    if async_writes {
+        deferred_tasks.spawn(write_future);
+    } else {
+        // It's safe to directly await this, since we ensure that the overall request future will be executed to completion
+        // See `possibly_prevent_request_cancellation` for more details.
+        write_future.await;
+    }
+}
+
 async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sync>(
     database: &T,
     config: &Config,
@@ -1697,6 +1966,9 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
         .iter()
         .any(|model_result| model_result.cached);
     apply_cached_observability_tag(&mut metadata.tags, cached);
+    metadata
+        .tags
+        .insert(STATUS_CODE_TAG.to_string(), "200".to_string());
     RoutingSession::apply_observability_tags(&mut metadata.tags);
     let model_inferences = result
         .get_model_inferences(
@@ -2109,6 +2381,11 @@ pub struct InferenceClients {
     pub include_raw_usage: bool,
     pub include_raw_response: bool,
     pub include_aggregated_response: bool,
+    /// When `Some`, failed provider attempts are recorded as `ModelInference`
+    /// rows (with an `error` column) written to this datastore. `None` disables
+    /// failed-attempt recording (dryrun, observability writes disabled, or
+    /// `gateway.observability.record_failed_inferences = false`).
+    pub failed_model_inference_datastore: Option<PrimaryDatastore>,
 }
 
 // Carryall struct for models used in inference

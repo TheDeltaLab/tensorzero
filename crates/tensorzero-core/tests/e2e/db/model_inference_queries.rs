@@ -207,6 +207,7 @@ async fn test_insert_and_read_model_inference(conn: impl ModelInferenceQueries) 
     let model_inference_id = Uuid::now_v7();
 
     let model_inference = StoredModelInference {
+        error: None,
         id: model_inference_id,
         inference_id,
         function_name: "test_function".to_string(),
@@ -291,6 +292,7 @@ async fn test_insert_and_read_model_inference_zero_cache_tokens(conn: impl Model
     let model_inference_id = Uuid::now_v7();
 
     let model_inference = StoredModelInference {
+        error: None,
         id: model_inference_id,
         inference_id,
         function_name: "test_function".to_string(),
@@ -348,6 +350,7 @@ async fn test_insert_multiple_model_inferences_for_same_inference(
     // Simulate a fallback scenario: two model inferences for the same inference
     let model_inferences = vec![
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id,
             function_name: "test_function".to_string(),
@@ -373,6 +376,7 @@ async fn test_insert_multiple_model_inferences_for_same_inference(
             timestamp: None,
         },
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id,
             function_name: "test_function".to_string(),
@@ -442,6 +446,7 @@ async fn test_insert_model_inference_with_all_finish_reasons(conn: impl ModelInf
     for finish_reason in finish_reasons {
         let inference_id = Uuid::now_v7();
         let model_inference = StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id,
             function_name: "test_function".to_string(),
@@ -489,6 +494,7 @@ make_db_test!(test_insert_model_inference_with_all_finish_reasons);
 async fn test_insert_model_inference_with_null_finish_reason(conn: impl ModelInferenceQueries) {
     let inference_id = Uuid::now_v7();
     let model_inference = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),
@@ -535,6 +541,7 @@ async fn test_insert_model_inference_cached_flag(conn: impl ModelInferenceQuerie
     // Test with cached = true
     let inference_id_cached = Uuid::now_v7();
     let model_inference_cached = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id: inference_id_cached,
         function_name: "test_function".to_string(),
@@ -575,6 +582,7 @@ async fn test_insert_model_inference_cached_flag(conn: impl ModelInferenceQuerie
     // Test with cached = false
     let inference_id_not_cached = Uuid::now_v7();
     let model_inference_not_cached = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id: inference_id_not_cached,
         function_name: "test_function".to_string(),
@@ -623,6 +631,7 @@ make_db_test!(test_insert_empty_list_is_noop);
 async fn test_insert_model_inference_cost_non_cached(conn: impl ModelInferenceQueries) {
     let inference_id = Uuid::now_v7();
     let model_inference = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),
@@ -673,6 +682,7 @@ make_db_test!(test_insert_model_inference_cost_non_cached);
 async fn test_insert_model_inference_cost_cached(conn: impl ModelInferenceQueries) {
     let inference_id = Uuid::now_v7();
     let model_inference = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),
@@ -720,6 +730,7 @@ make_db_test!(test_insert_model_inference_cost_cached);
 async fn test_insert_model_inference_cost_null(conn: impl ModelInferenceQueries) {
     let inference_id = Uuid::now_v7();
     let model_inference = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),
@@ -768,6 +779,7 @@ async fn test_insert_model_inference_cost_high_precision(conn: impl ModelInferen
     let cost = Decimal::new(123_456_789, 9); // 0.123456789
 
     let model_inference = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),

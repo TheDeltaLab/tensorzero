@@ -63,6 +63,8 @@ See `NOTICE` for the overall attribution statement.
 - `crates/.sqlx/query-3eb37353d1fed4eddc84bfb252ab9e998911167292de1afdea4cc82266bf918b.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-5f9e9a43f47eff49fa1b9db80fa1e61b192425c3315b37fca58ea3be58ee021e.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-6c68ff37b0cceda3789e94dbf8c7a34d077f5f852b88d4d6ba82c4c7bd3b266a.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
+- `crates/.sqlx/query-6a3696a3de56d6051d1d47a9bb6748a8d640914b43c1ab07ca5b8e6a0a8ecef3.json` — Regenerated sqlx offline cache for the failed-inference `error` column queries (Delta-AI fork).
+- `crates/.sqlx/query-cd05554b23fc43577847556dadd63ce1d9bc9bcbd0b1d61665abcee866c9fd2a.json` — Regenerated sqlx offline cache for the failed-inference `error` column queries (Delta-AI fork).
 - `crates/.sqlx/query-c285d5cf693d465e61454a15bc0512656418e71fbadb4a905ab401900d417b95.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-d52d769116fa2588c6a1078dd9522333e3824c604cf94fb442e686edc7033c52.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).
 - `crates/.sqlx/query-e5a7e556f0c133cddff0613af6d60cf7f13c688d9f80f6aa92112dcb9796e1a2.json` — Regenerated sqlx offline cache for inference storage/protection queries (Delta-AI fork).

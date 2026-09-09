@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::{collections::HashMap, sync::Arc};
 
 use crate::client::InferenceParams;
@@ -261,6 +262,7 @@ impl StoredChatInference {
             processing_time_ms: self.processing_time_ms,
             ttft_ms: self.ttft_ms,
             snapshot_hash: self.snapshot_hash,
+            error: self.error,
         })
     }
 }
@@ -335,6 +337,10 @@ pub struct StoredChatInference {
     #[ts(optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_hash: Option<String>,
+    /// Serialized error tree, present only on failed inference rows.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl std::fmt::Display for StoredChatInference {
@@ -363,6 +369,7 @@ impl StoredChatInferenceDatabase {
             processing_time_ms: self.processing_time_ms,
             ttft_ms: self.ttft_ms,
             snapshot_hash: self.snapshot_hash,
+            error: self.error,
         }
     }
 }
@@ -393,6 +400,8 @@ pub struct StoredChatInferenceDatabase {
     pub ttft_ms: Option<u64>,
     #[serde(default)]
     pub snapshot_hash: Option<String>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 impl std::fmt::Display for StoredChatInferenceDatabase {
@@ -440,6 +449,10 @@ pub struct StoredJsonInference {
     #[ts(optional)]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_hash: Option<String>,
+    /// Serialized error tree, present only on failed inference rows.
+    #[ts(optional)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl std::fmt::Display for StoredJsonInference {
@@ -926,6 +939,7 @@ mod tests {
         let episode_id = Uuid::now_v7();
 
         StoredChatInference {
+            error: None,
             function_name: "test_function".to_string(),
             variant_name: "test_variant".to_string(),
             input: Some(StoredInput {
@@ -967,6 +981,7 @@ mod tests {
         let episode_id = Uuid::now_v7();
 
         StoredJsonInference {
+            error: None,
             function_name: "json_function".to_string(),
             variant_name: "json_variant".to_string(),
             input: Some(StoredInput {
@@ -1548,6 +1563,7 @@ mod tests {
     #[test]
     fn test_stored_sample_returns_none_for_missing_input() {
         let chat_inference = StoredChatInferenceDatabase {
+            error: None,
             function_name: "test_function".to_string(),
             variant_name: "test_variant".to_string(),
             input: None,
@@ -1575,6 +1591,7 @@ mod tests {
         );
 
         let json_inference = StoredJsonInference {
+            error: None,
             function_name: "json_function".to_string(),
             variant_name: "json_variant".to_string(),
             input: None,
@@ -1825,6 +1842,7 @@ mod tests {
     #[test]
     fn test_owned_simple_info_chat_with_none_data() {
         let chat_db = StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+            error: None,
             function_name: "test_function".to_string(),
             variant_name: "test_variant".to_string(),
             input: None,
@@ -1856,6 +1874,7 @@ mod tests {
     #[test]
     fn test_owned_simple_info_json_with_none_data() {
         let json_db = StoredInferenceDatabase::Json(StoredJsonInference {
+            error: None,
             function_name: "json_function".to_string(),
             variant_name: "json_variant".to_string(),
             input: None,

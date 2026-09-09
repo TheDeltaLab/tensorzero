@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::{DateTime, Utc};
 use serde::de::IntoDeserializer;
 use serde::ser::SerializeMap;
@@ -31,6 +32,26 @@ where
             serializer.serialize_some(&json_str)
         }
         None => serializer.serialize_none(),
+    }
+}
+
+/// Serializes an optional value as a JSON string, or `""` when absent.
+///
+/// Used for non-nullable ClickHouse `String` columns: the gateway connects
+/// with `input_format_null_as_default=0`, which rejects JSON nulls for those
+/// columns. Readers pair this with `deserialize_optional_json_string`, which
+/// maps `""` back to `None`.
+pub fn serialize_optional_json_string_or_empty<S, T>(
+    value: &Option<T>,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+    T: Serialize,
+{
+    match value {
+        Some(value) => serialize_json_string(value, serializer),
+        None => serializer.serialize_str(""),
     }
 }
 

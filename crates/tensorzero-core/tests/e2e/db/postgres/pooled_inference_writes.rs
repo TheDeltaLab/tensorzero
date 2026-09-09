@@ -39,6 +39,7 @@ async fn get_test_pool() -> sqlx::PgPool {
 
 fn make_chat_inference(function_name: &str) -> ChatInferenceDatabaseInsert {
     ChatInferenceDatabaseInsert {
+        error: None,
         id: Uuid::now_v7(),
         function_name: function_name.to_string(),
         variant_name: "test_variant".to_string(),
@@ -57,6 +58,7 @@ fn make_chat_inference(function_name: &str) -> ChatInferenceDatabaseInsert {
 
 fn make_json_inference(function_name: &str) -> JsonInferenceDatabaseInsert {
     JsonInferenceDatabaseInsert {
+        error: None,
         id: Uuid::now_v7(),
         function_name: function_name.to_string(),
         variant_name: "test_variant".to_string(),
@@ -79,6 +81,7 @@ fn make_json_inference(function_name: &str) -> JsonInferenceDatabaseInsert {
 
 fn make_model_inference(inference_id: Uuid) -> StoredModelInference {
     StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id,
         function_name: "test_function".to_string(),

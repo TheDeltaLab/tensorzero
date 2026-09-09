@@ -754,6 +754,7 @@ make_db_test!(test_model_latency_cumulative_specific_data);
 fn make_cost_test_inferences(model_name: &str) -> Vec<StoredModelInference> {
     vec![
         StoredModelInference {
+            error: None,
             id: uuid::Uuid::now_v7(),
             inference_id: uuid::Uuid::now_v7(),
             function_name: "test_function".to_string(),
@@ -779,6 +780,7 @@ fn make_cost_test_inferences(model_name: &str) -> Vec<StoredModelInference> {
             timestamp: None,
         },
         StoredModelInference {
+            error: None,
             id: uuid::Uuid::now_v7(),
             inference_id: uuid::Uuid::now_v7(),
             function_name: "test_function".to_string(),
@@ -804,6 +806,7 @@ fn make_cost_test_inferences(model_name: &str) -> Vec<StoredModelInference> {
             timestamp: None,
         },
         StoredModelInference {
+            error: None,
             id: uuid::Uuid::now_v7(),
             inference_id: uuid::Uuid::now_v7(),
             function_name: "test_function".to_string(),
@@ -855,6 +858,7 @@ fn make_cross_minute_cost_test_inferences(model_name: &str) -> Vec<StoredModelIn
     vec![
         // Minute A, inference 1: has cost
         StoredModelInference {
+            error: None,
             id: uuid::Uuid::new_v7(ts_a1),
             inference_id: uuid::Uuid::new_v7(ts_a1),
             function_name: "test_function".to_string(),
@@ -881,6 +885,7 @@ fn make_cross_minute_cost_test_inferences(model_name: &str) -> Vec<StoredModelIn
         },
         // Minute A, inference 2: has cost
         StoredModelInference {
+            error: None,
             id: uuid::Uuid::new_v7(ts_a2),
             inference_id: uuid::Uuid::new_v7(ts_a2),
             function_name: "test_function".to_string(),
@@ -907,6 +912,7 @@ fn make_cross_minute_cost_test_inferences(model_name: &str) -> Vec<StoredModelIn
         },
         // Minute B, inference 1: NO cost
         StoredModelInference {
+            error: None,
             id: uuid::Uuid::new_v7(ts_b1),
             inference_id: uuid::Uuid::new_v7(ts_b1),
             function_name: "test_function".to_string(),

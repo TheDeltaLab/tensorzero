@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![expect(clippy::print_stdout)]
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1286,6 +1287,7 @@ async fn test_embedding_request() {
     let rate_limiting_config: Arc<tensorzero_core::rate_limiting::RateLimitingConfig> =
         Arc::new(Default::default());
     let clients = InferenceClients {
+        failed_model_inference_datastore: None,
         http_client: TensorzeroHttpClient::new_testing().unwrap(),
         clickhouse_connection_info: clickhouse.clone(),
         postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -1440,6 +1442,7 @@ async fn test_embedding_sanity_check() {
     let rate_limiting_config: Arc<tensorzero_core::rate_limiting::RateLimitingConfig> =
         Arc::new(Default::default());
     let clients = InferenceClients {
+        failed_model_inference_datastore: None,
         http_client: client.clone(),
         clickhouse_connection_info: clickhouse.clone(),
         postgres_connection_info: PostgresConnectionInfo::Disabled,

@@ -1041,9 +1041,13 @@ async fn test_mixture_of_n_bad_fuser_streaming() {
         .get_model_inferences_by_inference_id(inference_id)
         .await
         .unwrap();
-    // Both candidates should be present (but not the fuser, since it failed)
+    // Both candidates should be present; the failed fuser is recorded as a
+    // failed model inference row.
     println!("model_inferences: {model_inferences:#?}");
-    assert_that!(model_inferences.len(), eq(2));
+    let (failed, successful): (Vec<_>, Vec<_>) =
+        model_inferences.iter().partition(|mi| mi.error.is_some());
+    assert_that!(failed.len(), eq(1));
+    assert_that!(successful.len(), eq(2));
 
     let expected_raw_response = "{\n  \"id\": \"id\",\n  \"object\": \"text.completion\",\n  \"created\": 1618870400,\n  \"model\": \"text-davinci-002\",\n  \"choices\": [\n    {\n      \"text\": \"Megumin gleefully chanted her spell, unleashing a thunderous explosion that lit up the sky and left a massive crater in its wake.\",\n      \"index\": 0,\n      \"logprobs\": null,\n      \"finish_reason\": null\n    }\n  ],\n  \"usage\": {\n    \"prompt_tokens\": 10,\n    \"completion_tokens\": 10,\n    \"total_tokens\": 20\n  }\n}";
     let expected_input_messages = vec![StoredRequestMessage {
@@ -1060,7 +1064,7 @@ async fn test_mixture_of_n_bad_fuser_streaming() {
     // Row order is not guaranteed, so check common fields in a loop
     // and use unordered_elements_are! for the distinguishing field (ttft_ms).
     let inference_cost = Decimal::from(18) / Decimal::from(100_000);
-    for mi in &model_inferences {
+    for &mi in &successful {
         expect_that!(
             mi,
             matches_pattern!(StoredModelInference {
@@ -1088,7 +1092,7 @@ async fn test_mixture_of_n_bad_fuser_streaming() {
     }
 
     // One candidate should have ttft_ms (the first streamed response) and the other should not.
-    let ttft_values: Vec<_> = model_inferences.iter().map(|mi| mi.ttft_ms).collect();
+    let ttft_values: Vec<_> = successful.iter().map(|mi| mi.ttft_ms).collect();
     expect_that!(
         ttft_values,
         unordered_elements_are![none(), some(eq(&100u32))],

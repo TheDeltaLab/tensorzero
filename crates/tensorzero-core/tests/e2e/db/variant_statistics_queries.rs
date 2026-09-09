@@ -235,6 +235,7 @@ fn make_chat_inference(
     ttft_ms: Option<u32>,
 ) -> ChatInferenceDatabaseInsert {
     ChatInferenceDatabaseInsert {
+        error: None,
         id,
         function_name: function_name.to_string(),
         variant_name: variant_name.to_string(),
@@ -259,6 +260,7 @@ fn make_json_inference(
     ttft_ms: Option<u32>,
 ) -> JsonInferenceDatabaseInsert {
     JsonInferenceDatabaseInsert {
+        error: None,
         id,
         function_name: function_name.to_string(),
         variant_name: variant_name.to_string(),
@@ -288,6 +290,7 @@ fn make_model_inference(
     cost: Option<Decimal>,
 ) -> StoredModelInference {
     StoredModelInference {
+        error: None,
         id: uuid::Uuid::now_v7(),
         inference_id,
         function_name: function_name.to_string(),

@@ -1,4 +1,6 @@
+// Modified by Delta-AI under Apache 2.0
 use super::*;
+use googletest::prelude::*;
 use std::sync::Arc;
 use std::{io::Write, path::PathBuf};
 use tempfile::NamedTempFile;
@@ -3659,4 +3661,23 @@ async fn test_relay_no_warn_when_skip_relay_set() {
         !logs_contain("do not have `skip_relay` set"),
         "Should not warn when all models have `skip_relay` set"
     );
+}
+
+#[gtest]
+fn test_observability_config_failed_writes_enabled_defaults() {
+    // `record_failed_inferences` defaults to true when unset.
+    let config = ObservabilityConfig::default();
+    expect_that!(config.failed_writes_enabled(), eq(true));
+
+    let config = ObservabilityConfig {
+        record_failed_inferences: Some(false),
+        ..Default::default()
+    };
+    expect_that!(config.failed_writes_enabled(), eq(false));
+
+    let config = ObservabilityConfig {
+        record_failed_inferences: Some(true),
+        ..Default::default()
+    };
+    expect_that!(config.failed_writes_enabled(), eq(true));
 }

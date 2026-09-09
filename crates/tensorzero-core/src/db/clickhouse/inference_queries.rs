@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use async_trait::async_trait;
 use itertools::Itertools;
 use std::collections::HashMap;
@@ -1014,6 +1015,7 @@ fn generate_single_table_query_for_type(
         "if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash"
             .to_string(),
     );
+    select_clauses.push("i.error as error".to_string());
 
     let mut where_clauses: Vec<String> = Vec::new();
 
@@ -1428,6 +1430,7 @@ mod tests {
             i.processing_time_ms as processing_time_ms,
             i.ttft_ms as ttft_ms,
             if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+            i.error as error,
             i.output as output
         FROM
             ChatInference AS i
@@ -1457,6 +1460,7 @@ mod tests {
             i.processing_time_ms as processing_time_ms,
             i.ttft_ms as ttft_ms,
             if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+            i.error as error,
             i.output as output
         FROM
             JsonInference AS i
@@ -1508,6 +1512,7 @@ mod tests {
             i.processing_time_ms as processing_time_ms,
             i.ttft_ms as ttft_ms,
             if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+            i.error as error,
             i.output as output
         FROM
             JsonInference AS i
