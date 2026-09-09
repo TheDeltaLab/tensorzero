@@ -30,5 +30,11 @@
     "tsup": "^8.3.5",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheDeltaLab/tensorzero",
+    "directory": "sdk/typescript/packages/tensorzero-sdk"
+  },
+  "homepage": "https://github.com/TheDeltaLab/tensorzero/tree/main/sdk/typescript/packages/tensorzero-sdk"
 }
