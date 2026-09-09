@@ -8,7 +8,7 @@ import {
   createTensorZeroClient,
   type TensorZeroClient,
   type TensorZeroClientOptions,
-} from "@thedeltalab/tensorzero-sdk";
+} from "@delta-ai/tensorzero-sdk";
 import {
   TensorZeroChatLanguageModelImpl,
   type TensorZeroChatLanguageModel,

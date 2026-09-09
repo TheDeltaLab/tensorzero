@@ -4,31 +4,25 @@ TypeScript clients for the TensorZero gateway's **async inference API**:
 
 | Package | Purpose |
 | --- | --- |
-| `@thedeltalab/tensorzero-sdk` | Zero-dependency client for the async job HTTP API (submit / poll / stream / wait) |
-| `@thedeltalab/ai-sdk-provider` | Vercel AI SDK provider (`createTensorZero`) with batch support on top of the async API |
+| `@delta-ai/tensorzero-sdk` | Zero-dependency client for the async job HTTP API (submit / poll / stream / wait) |
+| `@delta-ai/ai-sdk-provider` | Vercel AI SDK provider (`createTensorZero`) with batch support on top of the async API |
 
 Requires Node.js 18+ or a modern browser (global `fetch`, `ReadableStream`). No runtime dependencies.
 
 ## Installation
 
-Both packages are published to GitHub Packages. Point the `@thedeltalab` scope at it:
-
-```ini
-# .npmrc
-@thedeltalab:registry=https://npm.pkg.github.com
-//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
-```
+Both packages are published to the public npm registry:
 
 ```bash
-pnpm add @thedeltalab/tensorzero-sdk
+pnpm add @delta-ai/tensorzero-sdk
 # and, for the AI SDK integration:
-pnpm add @thedeltalab/ai-sdk-provider ai
+pnpm add @delta-ai/ai-sdk-provider ai
 ```
 
-## `@thedeltalab/tensorzero-sdk`
+## `@delta-ai/tensorzero-sdk`
 
 ```ts
-import { createTensorZeroClient } from "@thedeltalab/tensorzero-sdk";
+import { createTensorZeroClient } from "@delta-ai/tensorzero-sdk";
 
 const client = createTensorZeroClient({
   baseURL: "https://gateway.example.com", // gateway origin; `/v1/...` paths are appended
@@ -136,10 +130,10 @@ All errors extend `TensorZeroError`:
 | `TensorZeroStreamError` | event stream failed past the reconnect budget |
 | `TensorZeroParseError` | response didn't match the expected wire shape |
 
-## `@thedeltalab/ai-sdk-provider`
+## `@delta-ai/ai-sdk-provider`
 
 ```ts
-import { createTensorZero } from "@thedeltalab/ai-sdk-provider";
+import { createTensorZero } from "@delta-ai/ai-sdk-provider";
 import { generateText, streamText } from "ai";
 
 const tensorzero = createTensorZero({
@@ -223,7 +217,7 @@ Notes:
 - `experimental_doGetBatchResults` only converts chat-completion responses;
   submit `responses`/`messages`-style jobs via `provider.asyncClient`
   (`createTensorZeroClient`) instead.
-- `provider.asyncClient` exposes the underlying `@thedeltalab/tensorzero-sdk`
+- `provider.asyncClient` exposes the underlying `@delta-ai/tensorzero-sdk`
   client for direct submit/poll/stream/wait.
 
 ## Development
@@ -235,5 +229,5 @@ pnpm typecheck  # tsc --noEmit
 pnpm test       # vitest
 ```
 
-The provider typechecks against the built `dist/` of `@thedeltalab/tensorzero-sdk`,
+The provider typechecks against the built `dist/` of `@delta-ai/tensorzero-sdk`,
 so run `pnpm build` before `pnpm typecheck` on a fresh checkout.

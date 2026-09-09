@@ -14,12 +14,15 @@ concurrency:
 
 jobs:
   publish:
-    name: Publish @thedeltalab packages to GitHub Packages
+    name: Publish @delta-ai packages to npmjs
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Trusted publisher on npmjs is configured for this repo + this workflow
+    # filename + this environment.
+    environment: npm-release
     permissions:
       contents: read
-      packages: write
+      id-token: write # OIDC token for npm trusted publishing
     defaults:
       run:
         working-directory: sdk/typescript
@@ -37,9 +40,14 @@ jobs:
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "22"
-          registry-url: https://npm.pkg.github.com
-          scope: "@thedeltalab"
+          registry-url: https://registry.npmjs.org
+          scope: "@delta-ai"
           package-manager-cache: false
+
+      # npm trusted publishing requires npm CLI >= 11.5.1; Node 22 ships
+      # npm 10, so upgrade explicitly.
+      - name: Upgrade npm CLI
+        run: npm install -g npm@latest
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -47,12 +55,27 @@ jobs:
       - name: Build packages
         run: pnpm -r build
 
-      - name: Publish @thedeltalab/tensorzero-sdk
-        run: pnpm --filter @thedeltalab/tensorzero-sdk publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # `pnpm pack` rewrites the `workspace:*` dependency of
+      # @delta-ai/ai-sdk-provider on @delta-ai/tensorzero-sdk into the real
+      # version number; `npm publish` then publishes the tarballs with OIDC
+      # trusted publishing. Publish the SDK first so the provider's dependency
+      # resolves on the registry.
+      - name: Pack packages
+        run: |
+          pnpm --filter @delta-ai/tensorzero-sdk pack --pack-destination "$RUNNER_TEMP"
+          pnpm --filter @delta-ai/ai-sdk-provider pack --pack-destination "$RUNNER_TEMP"
+          ls -1 "$RUNNER_TEMP"/*.tgz
 
-      - name: Publish @thedeltalab/ai-sdk-provider
-        run: pnpm --filter @thedeltalab/ai-sdk-provider publish --no-git-checks
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # setup-node's registry-url writes an `_authToken` placeholder into
+      # ~/.npmrc; a configured (even empty) token shadows OIDC trusted
+      # publishing, so strip it before publishing.
+      - name: Clear token auth from npmrc
+        run: sed -i '/_authToken/d' ~/.npmrc || true
+
+      - name: Publish @delta-ai/tensorzero-sdk
+        working-directory: ${{ runner.temp }}
+        run: npm publish ./delta-ai-tensorzero-sdk-*.tgz
+
+      - name: Publish @delta-ai/ai-sdk-provider
+        working-directory: ${{ runner.temp }}
+        run: npm publish ./delta-ai-ai-sdk-provider-*.tgz
