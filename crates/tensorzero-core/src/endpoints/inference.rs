@@ -38,6 +38,9 @@ use crate::db::inferences::InferenceQueries;
 use crate::db::model_inferences::ModelInferenceQueries;
 use crate::db::postgres::PostgresConnectionInfo;
 use crate::embeddings::EmbeddingModelTable;
+use crate::endpoints::openai_compatible::synapse::{
+    apply_request_id_header, request_id_from_headers_or_generate,
+};
 use crate::error::{Error, ErrorDetails, IMPOSSIBLE_ERROR_MESSAGE};
 use crate::experimentation::ExperimentationConfigWithNamespaces;
 use crate::function::{
@@ -65,8 +68,8 @@ use crate::model::ModelTable;
 use crate::observability::internal_metrics::TENSORZERO_INFERENCES_TOTAL;
 use crate::observability::request_logging::HttpMetricData;
 use crate::observability_tags::{
-    API_KEY_PUBLIC_ID_TAG, apply_usage_observability_tags, insert_api_key_public_id_from_headers,
-    overlay_compat_headers,
+    API_KEY_PUBLIC_ID_TAG, SYNAPSE_REQUEST_ID_TAG, apply_usage_observability_tags,
+    insert_api_key_public_id_from_headers, overlay_compat_headers,
 };
 use crate::rate_limiting::{RateLimitingManager, ScopeInfo};
 use crate::relay::TensorzeroRelay;
@@ -236,6 +239,10 @@ pub async fn inference_handler(
         return error.into_response();
     }
     insert_api_key_public_id_from_headers(&mut params.extra_internal_tags, &headers);
+    let request_id = request_id_from_headers_or_generate(&headers);
+    params
+        .extra_internal_tags
+        .insert(SYNAPSE_REQUEST_ID_TAG.to_string(), request_id.clone());
     let mut metric_data = HttpMetricData {
         extra_overhead_labels: vec![],
     };
@@ -284,6 +291,7 @@ pub async fn inference_handler(
         }
         Err(e) => e.into_response_with_raw_entries(false, include_raw_response),
     };
+    apply_request_id_header(&mut response, &request_id);
     response.extensions_mut().insert(metric_data);
     response
 }

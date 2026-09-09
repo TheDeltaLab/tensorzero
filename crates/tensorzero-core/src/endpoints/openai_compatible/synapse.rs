@@ -297,6 +297,19 @@ fn inbound_request_id(headers: &HeaderMap) -> Option<String> {
     .map(ToOwned::to_owned)
 }
 
+/// Request id for native endpoints: a valid inbound `x-tensorzero-request-id`
+/// / `x-synapse-request-id` / `x-request-id`, else a fresh UUIDv7. Mirrors the
+/// OpenAI-compatible Synapse behavior so every inference can be traced back by
+/// a request id.
+pub fn request_id_from_headers_or_generate(headers: &HeaderMap) -> String {
+    inbound_request_id(headers).unwrap_or_else(|| Uuid::now_v7().to_string())
+}
+
+/// Sets `x-tensorzero-request-id` on a native endpoint response.
+pub fn apply_request_id_header(response: &mut Response, request_id: &str) {
+    insert_header(response, &TENSORZERO_REQUEST_ID, request_id);
+}
+
 /// Prefer `x-tensorzero-*` when both prefixes are present.
 fn compat_header<'a>(headers: &'a HeaderMap, tensorzero: &str, synapse: &str) -> Option<&'a str> {
     header_str(headers, tensorzero).or_else(|| header_str(headers, synapse))
@@ -322,6 +335,49 @@ mod tests {
     use super::*;
     use axum::http::HeaderMap;
     use googletest::prelude::*;
+
+    #[gtest]
+    fn request_id_from_headers_or_generate_honors_inbound() {
+        let mut headers = HeaderMap::new();
+        headers.insert(TENSORZERO_REQUEST_ID_HEADER, "tz-id".parse().unwrap());
+        headers.insert(SYNAPSE_REQUEST_ID_HEADER, "syn-id".parse().unwrap());
+        expect_that!(request_id_from_headers_or_generate(&headers), eq("tz-id"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(SYNAPSE_REQUEST_ID_HEADER, "syn-id".parse().unwrap());
+        expect_that!(request_id_from_headers_or_generate(&headers), eq("syn-id"));
+
+        let mut headers = HeaderMap::new();
+        headers.insert(X_REQUEST_ID_HEADER, "std-trace".parse().unwrap());
+        expect_that!(
+            request_id_from_headers_or_generate(&headers),
+            eq("std-trace")
+        );
+    }
+
+    #[gtest]
+    fn request_id_from_headers_or_generate_generates_uuidv7() {
+        let generated = request_id_from_headers_or_generate(&HeaderMap::new());
+        let parsed = Uuid::parse_str(&generated).expect("generated request id is a UUID");
+        expect_that!(parsed.get_version_num(), eq(7));
+    }
+
+    #[gtest]
+    fn apply_request_id_header_sets_tensorzero_header() {
+        let mut response = Response::new(axum::body::Body::empty());
+        apply_request_id_header(&mut response, "req-1");
+        expect_that!(
+            response
+                .headers()
+                .get(TENSORZERO_REQUEST_ID_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            eq(Some("req-1"))
+        );
+        expect_that!(
+            response.headers().contains_key(SYNAPSE_REQUEST_ID_HEADER),
+            eq(false)
+        );
+    }
 
     #[gtest]
     fn test_resolve_bare_model_with_provider() {
