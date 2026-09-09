@@ -1,5 +1,5 @@
 {
-  "name": "@thedeltalab/ai-sdk-provider",
+  "name": "@delta-ai/ai-sdk-provider",
   "version": "0.1.0",
   "description": "Vercel AI SDK provider for the TensorZero gateway, with async batch inference",
   "license": "Apache-2.0",
@@ -18,8 +18,8 @@
     "dist"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",
@@ -29,7 +29,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "^3.0.0",
     "@ai-sdk/provider": "^4.0.0",
-    "@thedeltalab/tensorzero-sdk": "workspace:*"
+    "@delta-ai/tensorzero-sdk": "workspace:*"
   },
   "peerDependencies": {
     "ai": "^6.0.0 || ^7.0.0"

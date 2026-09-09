@@ -1,5 +1,5 @@
 {
-  "name": "@thedeltalab/tensorzero-sdk",
+  "name": "@delta-ai/tensorzero-sdk",
   "version": "0.1.0",
   "description": "TypeScript client for the TensorZero gateway async inference API",
   "license": "Apache-2.0",
@@ -18,8 +18,8 @@
     "dist"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com",
-    "access": "restricted"
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   },
   "scripts": {
     "build": "tsup",

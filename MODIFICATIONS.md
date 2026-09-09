@@ -101,4 +101,9 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `sdk/typescript/packages/tensorzero-sdk/tsconfig.json` — New package tsconfig (Delta-AI fork).
 - `sdk/typescript/packages/ai-sdk-provider/package.json` — New package `@thedeltalab/ai-sdk-provider`, published to GitHub Packages (Delta-AI fork).
 - `sdk/typescript/packages/ai-sdk-provider/tsconfig.json` — New package tsconfig (Delta-AI fork).
-- `.github/workflows/publish-sdk-typescript.yml` — Publish `@thedeltalab/tensorzero-sdk` and `@thedeltalab/ai-sdk-provider` to GitHub Packages on `sdk/ts/v*` tags (Delta-AI fork).
+- `.github/workflows/publish-sdk-typescript.yml` — Publish `@delta-ai/tensorzero-sdk` and `@delta-ai/ai-sdk-provider` to npmjs via OIDC trusted publishing (`npm-release` environment) on `sdk/ts/v*` tags (Delta-AI fork).
+- `crates/Cargo.toml` — Added `opentelemetry-appender-tracing` for OTLP logs export (Delta-AI fork).
+- `crates/tensorzero-otel/Cargo.toml` — Added `opentelemetry-appender-tracing` dependency for the tracing-to-OTLP logs bridge (Delta-AI fork).
+- `crates/Cargo.lock` — Workspace lockfile updated for `opentelemetry-appender-tracing` (Delta-AI fork).
+- `docs/operations/export-opentelemetry-logs.mdx` — Documented `gateway.export.otlp.logs` OTLP logs export (Delta-AI fork).
+- `docs/docs.json` — Registered the `operations/export-opentelemetry-logs` nav entry (Delta-AI fork).
