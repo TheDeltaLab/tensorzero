@@ -1,6 +1,7 @@
 # Rust
 
 - The Cargo workspace root is `crates/`. Run all `cargo` commands from that directory (e.g. `cd crates && cargo check`).
+- **Always set `CARGO_TARGET_DIR` to `~/.tensorzero-cargo-dir` when running any `cargo` command** (`check`, `clippy`, `test`, `nextest`, etc.), e.g. `cd crates && CARGO_TARGET_DIR=~/.tensorzero-cargo-dir cargo check`. This shares one build cache across all checkouts and worktrees. Without it, each worktree builds its own `crates/target`, and debug incremental sessions there grow to tens of GB and accumulate stale copies across interrupted or failed builds.
 - Use `cargo check` for quick verification, restrict further (e.g. `cargo check --package tensorzero-core`) if appropriate. For complex changes, you might want to run `cargo check --all-targets --all-features`. Test suite compilation is slow.
 - If you update Rust types or functions used in TypeScript, regenerate bindings with `pnpm build-bindings` (from root), then rebuild the NAPI bindings with `pnpm --filter=@tensorzero/tensorzero-node build`. Run `cargo check` first to catch compilation errors.
 - If you change a signature of a struct, function, and so on, use `grep` to find all instances in the codebase. For example, search for `StructName {` when updating struct fields.

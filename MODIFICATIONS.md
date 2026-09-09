@@ -11,6 +11,7 @@ See `NOTICE` for the overall attribution statement.
 ## Modified non-source-code files
 
 - `AGENTS.md` — Added Modification Notice (Delta-AI fork) section.
+- `AGENTS.md` — Require `CARGO_TARGET_DIR=~/.tensorzero-cargo-dir` for all `cargo` commands so checkouts/worktrees share one build cache (Delta-AI fork).
 - `crates/.config/nextest.toml` — Longer slow-timeout override for the env-gated live-gateway async inference e2e tests (`client::async_inference::tests::e2e`) (Delta-AI fork).
 - `crates/tensorzero-python/tensorzero/tensorzero.pyi` — Type stubs for the async task / status / health gateway methods (Delta-AI fork).
 - `CLA.md` — Changed Company from TensorZero, Inc. to Delta-AI; removed legacy hello@tensorzero.com contact.
