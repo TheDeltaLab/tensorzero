@@ -7,6 +7,7 @@ import { getTotalInferenceUsage } from "~/utils/clickhouse/helpers";
 import {
   mergeUsage,
   usageFromTags,
+  requestIdFromTags,
   API_KEY_PUBLIC_ID_TAG,
 } from "~/routes/observability/inferences/inferenceQuery";
 import {
@@ -22,6 +23,9 @@ import {
   BasicInfoItemContent,
 } from "~/components/layout/BasicInfoLayout";
 import Chip from "~/components/ui/Chip";
+import { Button } from "~/components/ui/button";
+import { Check, Copy } from "lucide-react";
+import { useCopy } from "~/hooks/use-copy";
 import {
   Timer,
   Calendar,
@@ -61,7 +65,7 @@ export function BasicInfoStreaming({
   locationKey,
 }: BasicInfoStreamingProps) {
   return (
-    <Suspense key={locationKey} fallback={<BasicInfoLayoutSkeleton rows={6} />}>
+    <Suspense key={locationKey} fallback={<BasicInfoLayoutSkeleton rows={7} />}>
       <Await
         resolve={promise}
         errorElement={
@@ -113,6 +117,14 @@ export function BasicInfo({
   const kind = inferenceKindFromStored(inference);
   const standalone = isStandaloneInferenceKind(kind);
   const apiKeyPublicId = inference.tags[API_KEY_PUBLIC_ID_TAG]?.trim();
+  const requestId = requestIdFromTags(inference.tags)?.trim();
+  const { copy, didCopy, isCopyAvailable } = useCopy();
+
+  const handleCopyRequestId = async () => {
+    if (requestId) {
+      await copy(requestId);
+    }
+  };
 
   const functionIconConfig = getFunctionTypeIcon(kind);
   const hasCachedInferences = modelInferences.some((mi) => mi.cached);
@@ -172,6 +184,38 @@ export function BasicInfo({
             link={toEpisodeUrl(inference.episode_id)}
             font="mono"
           />
+        </BasicInfoItemContent>
+      </BasicInfoItem>
+
+      <BasicInfoItem>
+        <BasicInfoItemTitle>Request ID</BasicInfoItemTitle>
+        <BasicInfoItemContent>
+          {requestId ? (
+            <>
+              <Chip
+                label={requestId}
+                font="mono"
+                tooltip="Request ID recorded for this inference"
+              />
+              <Button
+                type="button"
+                size="iconSm"
+                variant="ghost"
+                onClick={handleCopyRequestId}
+                disabled={!isCopyAvailable}
+                className="h-6 w-6"
+                title={didCopy ? "Copied!" : "Copy request ID"}
+              >
+                {didCopy ? (
+                  <Check className="h-3 w-3" />
+                ) : (
+                  <Copy className="h-3 w-3" />
+                )}
+              </Button>
+            </>
+          ) : (
+            <span className="text-fg-muted">—</span>
+          )}
         </BasicInfoItemContent>
       </BasicInfoItem>
 
