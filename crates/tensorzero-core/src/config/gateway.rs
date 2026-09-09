@@ -5,7 +5,8 @@ use crate::relay::RelayCredentials;
 use crate::{
     config::{
         BatchWritesConfig, ExportConfig, ObservabilityBackend, ObservabilityConfig, OtlpConfig,
-        OtlpTracesConfig, OtlpTracesFormat, TemplateFilesystemAccess, UninitializedRelayConfig,
+        OtlpLogsConfig, OtlpTracesConfig, OtlpTracesFormat, TemplateFilesystemAccess,
+        UninitializedRelayConfig,
     },
     error::{Error, ErrorDetails},
     http::DEFAULT_HTTP_CLIENT_TIMEOUT,
@@ -19,8 +20,8 @@ use tensorzero_stored_config::{
     StoredCredentialLocationWithFallback, StoredDashboardUiConfig, StoredExportConfig,
     StoredGatewayAuthCacheConfig, StoredGatewayConfig, StoredGatewayMetricsConfig,
     StoredInferenceCacheBackend, StoredModelInferenceCacheConfig, StoredObservabilityBackend,
-    StoredObservabilityConfig, StoredOtlpConfig, StoredOtlpTracesConfig, StoredOtlpTracesFormat,
-    StoredRelayConfig, StoredValkeyModelInferenceCacheConfig,
+    StoredObservabilityConfig, StoredOtlpConfig, StoredOtlpLogsConfig, StoredOtlpTracesConfig,
+    StoredOtlpTracesFormat, StoredRelayConfig, StoredValkeyModelInferenceCacheConfig,
 };
 use url::Url;
 
@@ -465,10 +466,19 @@ impl From<StoredOtlpTracesConfig> for OtlpTracesConfig {
     }
 }
 
+impl From<StoredOtlpLogsConfig> for OtlpLogsConfig {
+    fn from(stored: StoredOtlpLogsConfig) -> Self {
+        Self {
+            enabled: stored.enabled,
+        }
+    }
+}
+
 impl From<StoredOtlpConfig> for OtlpConfig {
     fn from(stored: StoredOtlpConfig) -> Self {
         Self {
             traces: stored.traces.map(Into::into),
+            logs: stored.logs.map(Into::into),
         }
     }
 }
@@ -670,6 +680,9 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
                         format: traces.format.map(StoredOtlpTracesFormat::from),
                         extra_headers: traces.extra_headers.map(|h| h.into_iter().collect()),
                         include_content: traces.include_content,
+                    }),
+                    logs: otlp.logs.map(|logs| StoredOtlpLogsConfig {
+                        enabled: logs.enabled,
                     }),
                 }),
             }),
@@ -961,6 +974,9 @@ mod tests {
                         ])),
                         include_content: None,
                     }),
+                    logs: Some(OtlpLogsConfig {
+                        enabled: Some(true),
+                    }),
                 }),
             }),
             base_path: Some("/custom/prefix".to_string()),
@@ -1010,6 +1026,25 @@ mod tests {
             .try_into()
             .expect("StoredGatewayConfig should convert back to UninitializedGatewayConfig");
         expect_that!(round_tripped, eq(&original));
+    }
+
+    #[gtest]
+    fn test_export_otlp_logs_toml() {
+        let parsed: UninitializedGatewayConfig = toml::from_str(
+            r"
+            [export.otlp.logs]
+            enabled = true
+            ",
+        )
+        .expect("gateway.export.otlp.logs TOML should parse");
+        expect_that!(
+            parsed
+                .export
+                .and_then(|e| e.otlp)
+                .and_then(|o| o.logs)
+                .and_then(|l| l.enabled),
+            eq(Some(true))
+        );
     }
 
     #[gtest]
