@@ -58,6 +58,7 @@ pub struct StoredObservabilityConfig {
     pub backend: Option<StoredObservabilityBackend>,
     pub async_writes: Option<bool>,
     pub batch_writes: Option<StoredBatchWritesConfig>,
+    pub record_failed_inferences: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

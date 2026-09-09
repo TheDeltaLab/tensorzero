@@ -349,6 +349,7 @@ async fn process_embedding_batch(
     ));
     let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
     let clients = InferenceClients {
+        failed_model_inference_datastore: None,
         http_client: client.clone(),
         credentials: Arc::new(credentials.clone()),
         clickhouse_connection_info: clickhouse_connection_info.clone(),

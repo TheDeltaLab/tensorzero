@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use chrono::Utc;
 use object_store::path::Path;
 use serde_json::json;
@@ -43,6 +44,7 @@ pub async fn test_render_samples_skips_none_input() {
     let client = tensorzero::test_helpers::make_embedded_gateway().await;
 
     let stored_inferences = vec![StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+        error: None,
         function_name: "basic_test".to_string(),
         variant_name: "test".to_string(),
         input: None,
@@ -82,6 +84,7 @@ pub async fn test_render_samples_no_function() {
     let client = tensorzero::test_helpers::make_embedded_gateway().await;
 
     let stored_inferences = vec![StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+        error: None,
         function_name: "basic_test".to_string(),
         variant_name: "dummy".to_string(),
         input: Some(StoredInput {
@@ -123,6 +126,7 @@ pub async fn test_render_samples_no_variant() {
     let client = tensorzero::test_helpers::make_embedded_gateway().await;
 
     let stored_inferences = vec![StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+        error: None,
         function_name: "basic_test".to_string(),
         variant_name: "dummy".to_string(),
         input: Some(StoredInput {
@@ -175,6 +179,7 @@ pub async fn test_render_samples_missing_variable() {
     let client = tensorzero::test_helpers::make_embedded_gateway().await;
 
     let stored_inferences = vec![StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+        error: None,
         function_name: "basic_test".to_string(),
         variant_name: "dummy".to_string(),
         input: Some(StoredInput {
@@ -222,6 +227,7 @@ pub async fn test_render_samples_normal() {
 
     let stored_inferences = vec![
         StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+            error: None,
             function_name: "basic_test".to_string(),
             variant_name: "dummy".to_string(),
             input: Some(StoredInput {
@@ -250,6 +256,7 @@ pub async fn test_render_samples_normal() {
             snapshot_hash: None,
         }),
         StoredInferenceDatabase::Json(StoredJsonInference {
+            error: None,
             function_name: "json_success".to_string(),
             variant_name: "dummy".to_string(),
             input: Some(StoredInput {
@@ -288,6 +295,7 @@ pub async fn test_render_samples_normal() {
             snapshot_hash: None,
         }),
         StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+            error: None,
             function_name: "weather_helper".to_string(),
             variant_name: "dummy".to_string(),
             input: Some(StoredInput {
@@ -340,6 +348,7 @@ pub async fn test_render_samples_normal() {
             snapshot_hash: None,
         }),
         StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+            error: None,
             function_name: "basic_test".to_string(),
             variant_name: "gpt-4o-mini-2024-07-18".to_string(),
             input: Some(StoredInput {
@@ -546,6 +555,7 @@ pub async fn test_render_samples_template_no_schema() {
     let client = tensorzero::test_helpers::make_embedded_gateway().await;
 
     let stored_inferences = vec![StoredInferenceDatabase::Chat(StoredChatInferenceDatabase {
+        error: None,
         function_name: "basic_test_template_no_schema".to_string(),
         variant_name: "test".to_string(),
         timestamp: Utc::now(),

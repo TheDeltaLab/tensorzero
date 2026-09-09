@@ -336,6 +336,7 @@ pub fn create_mock_stored_chat_inference(
         processing_time_ms: Some(100),
         ttft_ms: Some(50),
         snapshot_hash: None,
+        error: None,
     })
 }
 

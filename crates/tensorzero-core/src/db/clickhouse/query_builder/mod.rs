@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::{
     collections::HashMap,
     fmt::{self, Display},
@@ -519,6 +520,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -572,6 +574,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     ChatInference AS i
@@ -631,6 +634,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -737,6 +741,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     demo_f.value AS output,
     [i.output] as dispreferred_outputs
 FROM
@@ -796,6 +801,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -853,6 +859,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -911,6 +918,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -985,6 +993,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1075,6 +1084,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1184,6 +1194,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1332,6 +1343,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1430,6 +1442,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1531,6 +1544,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1584,6 +1598,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1643,6 +1658,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1718,6 +1734,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1794,6 +1811,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -1861,6 +1879,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     ChatInference AS i
@@ -1937,6 +1956,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -2021,6 +2041,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -2116,6 +2137,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     demo_f.value AS output,
     [i.output] as dispreferred_outputs
 FROM
@@ -2219,6 +2241,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -2292,6 +2315,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     ChatInference AS i
@@ -2370,6 +2394,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -2846,6 +2871,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -2908,6 +2934,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -2988,6 +3015,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output
 FROM
     JsonInference AS i
@@ -3062,6 +3090,7 @@ SELECT
     i.processing_time_ms as processing_time_ms,
     i.ttft_ms as ttft_ms,
     if(isNull(i.snapshot_hash), NULL, lower(hex(i.snapshot_hash))) as snapshot_hash,
+    i.error as error,
     i.output as output,
     countSubstringsCaseInsensitiveUTF8(i.input, {p1:String}) as input_term_frequency,
     countSubstringsCaseInsensitiveUTF8(i.output, {p1:String}) as output_term_frequency,

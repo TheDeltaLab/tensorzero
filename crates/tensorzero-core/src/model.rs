@@ -30,8 +30,11 @@ use crate::cost::{
     CostConfig, ResponseMode, apply_computed_cost, load_cost_config_with_provider_defaults,
     load_unified_cost_config_with_provider_defaults,
 };
+use crate::db::delegating_connection::DelegatingDatabaseConnection;
+use crate::db::model_inferences::ModelInferenceQueries;
 use crate::endpoints::inference::InferenceClients;
 use crate::http::TensorzeroHttpClient;
+use crate::inference::types::StoredModelInference;
 use crate::inference::types::usage::aggregate_usage_from_single_streaming_model_inference;
 use crate::model_table::ProviderKind;
 use crate::observability::genai_conventions;
@@ -357,6 +360,48 @@ impl StreamResponse {
     }
 }
 
+/// Records a failed provider attempt as a `ModelInference` row with an `error`
+/// column (fire-and-forget via `deferred_tasks`). No-op unless the caller opted
+/// in through `InferenceClients::failed_model_inference_datastore` (gated by
+/// `dryrun`, `observability.enabled`, and `record_failed_inferences` at the
+/// endpoint layer). Write failures are logged and swallowed.
+fn record_failed_model_inference(
+    clients: &InferenceClients,
+    inference_id: Uuid,
+    model_name: &str,
+    provider_name: &str,
+    function_name: Option<&str>,
+    error: &Error,
+    response_time: Duration,
+) {
+    let Some(primary_datastore) = clients.failed_model_inference_datastore else {
+        return;
+    };
+    let row = StoredModelInference::failed(
+        inference_id,
+        function_name.unwrap_or_default().to_string(),
+        // The variant name is not visible at the model layer
+        String::new(),
+        model_name.to_string(),
+        provider_name.to_string(),
+        error,
+        Some(response_time),
+        None,
+    );
+    let clickhouse_connection_info = clients.clickhouse_connection_info.clone();
+    let postgres_connection_info = clients.postgres_connection_info.clone();
+    clients.deferred_tasks.spawn(async move {
+        let database = DelegatingDatabaseConnection::new(
+            clickhouse_connection_info,
+            postgres_connection_info,
+            primary_datastore,
+        );
+        if let Err(e) = database.insert_model_inferences(&[row]).await {
+            tracing::warn!("Failed to write failed model inference to the database: {e}");
+        }
+    });
+}
+
 impl ModelConfig {
     /// Checks if an Unknown content block should be filtered out based on model_name and provider_name.
     /// Returns true if the block should be filtered (removed), false if it should be kept.
@@ -639,6 +684,7 @@ impl ModelConfig {
 
                 let response_fut =
                     self.non_streaming_provider_request(model_provider_request, provider, clients);
+                let attempt_start = tokio::time::Instant::now();
                 let response = if let Some(timeout) = provider.non_streaming_total_timeout() {
                     tokio::time::timeout(timeout, response_fut)
                         .await
@@ -721,6 +767,15 @@ impl ModelConfig {
                         if let Some(session) = crate::routing::RoutingSession::current() {
                             session.record_provider(&self.routing, provider_name, model_name);
                         }
+                        record_failed_model_inference(
+                            clients,
+                            request.inference_id,
+                            model_name,
+                            provider_name,
+                            function_name,
+                            &error,
+                            attempt_start.elapsed(),
+                        );
                         if !crate::routing::should_failover(&error) {
                             return Err(error);
                         }
@@ -883,6 +938,15 @@ impl ModelConfig {
                         if let Some(session) = crate::routing::RoutingSession::current() {
                             session.record_provider(&self.routing, provider_name, model_name);
                         }
+                        record_failed_model_inference(
+                            clients,
+                            request.inference_id,
+                            model_name,
+                            provider_name,
+                            function_name,
+                            &error,
+                            start.elapsed(),
+                        );
                         if !crate::routing::should_failover(&error) {
                             return Err(error);
                         }
@@ -2081,6 +2145,7 @@ mod tests {
         let http_client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2228,6 +2293,7 @@ mod tests {
         let rate_limit_config: RateLimitingConfig = uninitialized_config.try_into().unwrap();
 
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: postgres_mock.clone(),
@@ -2326,6 +2392,7 @@ mod tests {
         let http_client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2457,6 +2524,7 @@ mod tests {
         let http_client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2577,6 +2645,7 @@ mod tests {
         };
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: TensorzeroHttpClient::new_testing().unwrap(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2767,6 +2836,7 @@ mod tests {
         };
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: TensorzeroHttpClient::new_testing().unwrap(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2871,6 +2941,7 @@ mod tests {
         let http_client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -2937,6 +3008,7 @@ mod tests {
             SecretString::from("notgoodkey".to_string()),
         )]);
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -3010,6 +3082,7 @@ mod tests {
         let http_client = TensorzeroHttpClient::new_testing().unwrap();
         let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,
@@ -3075,6 +3148,7 @@ mod tests {
             SecretString::from("good_key".to_string()),
         )]);
         let clients = InferenceClients {
+            failed_model_inference_datastore: None,
             http_client: http_client.clone(),
             clickhouse_connection_info: clickhouse_connection_info.clone(),
             postgres_connection_info: PostgresConnectionInfo::Disabled,

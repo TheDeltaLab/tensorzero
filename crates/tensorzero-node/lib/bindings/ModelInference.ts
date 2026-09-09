@@ -86,4 +86,8 @@ export type ModelInference = {
    * ISO 4217 code for `cost`.
    */
   currency?: string;
+  /**
+   * Serialized error tree, present only on failed model inference rows.
+   */
+  error?: string;
 };

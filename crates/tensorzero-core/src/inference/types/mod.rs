@@ -93,7 +93,10 @@ use crate::rate_limiting::{
     RateLimitedInputContent, RateLimitedRequest, RateLimitingConfig, decimal_cost_to_nano_cost,
     get_estimated_tokens,
 };
-use crate::serde_util::{deserialize_optional_json_string, serialize_optional_json_string};
+use crate::serde_util::{
+    deserialize_optional_json_string, serialize_optional_json_string,
+    serialize_optional_json_string_or_empty,
+};
 use crate::tool::{
     InferenceResponseToolCall, InferenceResponseToolCallExt, ToolCall, ToolCallConfig,
     ToolCallConfigDatabaseInsert, ToolResult, deserialize_optional_tool_info,
@@ -1266,7 +1269,10 @@ pub struct ChatInferenceDatabaseInsert {
     pub episode_id: Uuid,
     #[serde(deserialize_with = "deserialize_optional_json_string")]
     pub input: Option<StoredInput>,
-    #[serde(deserialize_with = "deserialize_optional_json_string")]
+    #[serde(
+        serialize_with = "serialize_optional_json_string_or_empty",
+        deserialize_with = "deserialize_optional_json_string"
+    )]
     pub output: Option<Vec<ContentBlockChatOutput>>,
     #[serde(deserialize_with = "deserialize_optional_tool_info")]
     #[serde(flatten)]
@@ -1280,6 +1286,9 @@ pub struct ChatInferenceDatabaseInsert {
     pub extra_body: Option<UnfilteredInferenceExtraBody>,
     #[serde(default)]
     pub snapshot_hash: Option<SnapshotHash>,
+    /// Serialized error tree, present only on failed inference rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1290,15 +1299,25 @@ pub struct JsonInferenceDatabaseInsert {
     pub episode_id: Uuid,
     #[serde(deserialize_with = "deserialize_optional_json_string")]
     pub input: Option<StoredInput>,
-    #[serde(deserialize_with = "deserialize_optional_json_string")]
+    #[serde(
+        serialize_with = "serialize_optional_json_string_or_empty",
+        deserialize_with = "deserialize_optional_json_string"
+    )]
     pub output: Option<JsonInferenceOutput>,
     // We at one point wrote empty auxiliary content to the database as "" but now write it as []
     // In either case, we want to deserialize it as [] if empty
-    #[serde(deserialize_with = "deserialize_optional_json_string")]
+    #[serde(
+        serialize_with = "serialize_optional_json_string_or_empty",
+        deserialize_with = "deserialize_optional_json_string"
+    )]
     pub auxiliary_content: Option<Vec<ContentBlockOutput>>,
     #[serde(deserialize_with = "deserialize_optional_json_string")]
     pub inference_params: Option<InferenceParams>,
     pub processing_time_ms: Option<u32>,
+    #[serde(
+        serialize_with = "serialize_optional_json_string_or_empty",
+        deserialize_with = "deserialize_optional_json_string"
+    )]
     pub output_schema: Option<Value>,
     pub ttft_ms: Option<u32>,
     pub tags: HashMap<String, String>,
@@ -1306,6 +1325,9 @@ pub struct JsonInferenceDatabaseInsert {
     pub extra_body: Option<UnfilteredInferenceExtraBody>,
     #[serde(default)]
     pub snapshot_hash: Option<SnapshotHash>,
+    /// Serialized error tree, present only on failed inference rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -1365,6 +1387,9 @@ pub struct StoredModelInference {
     pub currency: Option<String>,
     pub finish_reason: Option<FinishReason>,
     pub snapshot_hash: Option<SnapshotHash>,
+    /// Serialized provider error, present only on failed model inference rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
     /// Materialized column in ClickHouse - only present when reading from the database.
     /// Ignored during insert (computed from `UUIDv7ToDateTime(id)`).
     #[serde(default, skip_serializing)]
@@ -1562,9 +1587,56 @@ impl StoredModelInference {
             finish_reason: result.finish_reason,
             input_messages: Some(stored_input_messages),
             snapshot_hash: Some(snapshot_hash),
+            error: None,
             // timestamp is a materialized column, not set during insert
             timestamp: None,
         })
+    }
+
+    /// Constructs a row recording a failed model/provider call.
+    ///
+    /// `output` is empty and `error` holds the serialized provider error tree;
+    /// token counts are left unset (they are stored as `NULL` so usage
+    /// aggregations skip failed rows).
+    #[expect(clippy::too_many_arguments)]
+    pub fn failed(
+        inference_id: Uuid,
+        function_name: String,
+        variant_name: String,
+        model_name: String,
+        model_provider_name: String,
+        error: &Error,
+        response_time: Option<Duration>,
+        snapshot_hash: Option<SnapshotHash>,
+    ) -> Self {
+        let (raw_request, raw_response) = error.extract_raw_request_response();
+        Self {
+            id: Uuid::now_v7(),
+            inference_id,
+            function_name,
+            variant_name,
+            raw_request: Some(raw_request.unwrap_or_default()),
+            raw_response: Some(raw_response.unwrap_or_default()),
+            system: None,
+            output: Some(vec![]),
+            input_tokens: None,
+            output_tokens: None,
+            provider_cache_read_input_tokens: None,
+            provider_cache_write_input_tokens: None,
+            response_time_ms: response_time.map(|d| d.as_millis() as u32),
+            ttft_ms: None,
+            model_provider_name,
+            model_name,
+            cached: false,
+            cost: None,
+            currency: None,
+            finish_reason: None,
+            input_messages: Some(vec![]),
+            snapshot_hash,
+            error: Some(serialize_or_log(error.get_details())),
+            // timestamp is a materialized column, not set during insert
+            timestamp: None,
+        }
     }
 }
 
@@ -1803,6 +1875,43 @@ impl ChatInferenceDatabaseInsert {
             ttft_ms: metadata.ttft_ms,
             extra_body: Some(metadata.extra_body),
             snapshot_hash: Some(metadata.snapshot_hash),
+            error: None,
+        }
+    }
+
+    /// Constructs a row recording a failed inference (no model output was produced).
+    ///
+    /// The `output` column is written as an empty string (mapped back to `None` on
+    /// reads) and `error` holds the serialized error tree. `input` and
+    /// `inference_params` fall back to minimal valid values when unavailable,
+    /// because the corresponding ClickHouse columns are non-nullable.
+    pub fn failed(
+        inference_id: Uuid,
+        input: Option<StoredInput>,
+        inference_params: Option<InferenceParams>,
+        metadata: InferenceDatabaseInsertMetadata,
+        error: String,
+    ) -> Self {
+        let processing_time_ms = metadata
+            .processing_time
+            .map(|duration| duration.as_millis() as u32)
+            .or(Some(0));
+
+        Self {
+            id: inference_id,
+            function_name: metadata.function_name,
+            variant_name: metadata.variant_name,
+            episode_id: metadata.episode_id,
+            input: Some(input.unwrap_or_default()),
+            output: None,
+            tool_params: metadata.tool_config.map(ToolCallConfigDatabaseInsert::from),
+            inference_params: Some(inference_params.unwrap_or_default()),
+            processing_time_ms,
+            tags: metadata.tags,
+            ttft_ms: metadata.ttft_ms,
+            extra_body: Some(metadata.extra_body),
+            snapshot_hash: Some(metadata.snapshot_hash),
+            error: Some(error),
         }
     }
 }
@@ -1841,6 +1950,41 @@ impl JsonInferenceDatabaseInsert {
             extra_body: Some(metadata.extra_body),
             ttft_ms: metadata.ttft_ms,
             snapshot_hash: Some(metadata.snapshot_hash),
+            error: None,
+        }
+    }
+
+    /// Constructs a row recording a failed inference (no model output was produced).
+    /// See [`ChatInferenceDatabaseInsert::failed`] for details.
+    pub fn failed(
+        inference_id: Uuid,
+        input: Option<StoredInput>,
+        inference_params: Option<InferenceParams>,
+        output_schema: Option<Value>,
+        metadata: InferenceDatabaseInsertMetadata,
+        error: String,
+    ) -> Self {
+        let processing_time_ms = metadata
+            .processing_time
+            .map(|duration| duration.as_millis() as u32)
+            .or(Some(0));
+
+        Self {
+            id: inference_id,
+            function_name: metadata.function_name,
+            variant_name: metadata.variant_name,
+            episode_id: metadata.episode_id,
+            input: Some(input.unwrap_or_default()),
+            auxiliary_content: Some(vec![]),
+            inference_params: Some(inference_params.unwrap_or_default()),
+            output: None,
+            processing_time_ms,
+            output_schema: Some(output_schema.unwrap_or(Value::Object(Default::default()))),
+            tags: metadata.tags,
+            extra_body: Some(metadata.extra_body),
+            ttft_ms: metadata.ttft_ms,
+            snapshot_hash: Some(metadata.snapshot_hash),
+            error: Some(error),
         }
     }
 }
@@ -1853,9 +1997,13 @@ pub use tensorzero_inference_types::utils::{current_timestamp, serialize_or_log}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::inference::types::extra_headers::UnfilteredInferenceExtraHeaders;
     use crate::jsonschema_util::JSONSchema;
     use crate::test_helpers::get_temperature_tool_config;
     use crate::tool::{DynamicToolConfig, FunctionToolConfig, ToolChoice};
+    use googletest::prelude::*;
+    use googletest_matchers::matches_json_literal;
+    use indexmap::IndexMap;
     use serde_json::json;
 
     #[test]
@@ -3144,5 +3292,126 @@ mod tests {
             None,
             "Empty slice should return None"
         );
+    }
+
+    fn failed_insert_metadata() -> InferenceDatabaseInsertMetadata {
+        InferenceDatabaseInsertMetadata {
+            function_name: "test_function".to_string(),
+            variant_name: "test_variant".to_string(),
+            episode_id: Uuid::now_v7(),
+            tool_config: None,
+            processing_time: Some(Duration::from_millis(42)),
+            ttft_ms: None,
+            tags: HashMap::new(),
+            extra_body: UnfilteredInferenceExtraBody::default(),
+            extra_headers: UnfilteredInferenceExtraHeaders::default(),
+            snapshot_hash: SnapshotHash::new_test(),
+        }
+    }
+
+    #[gtest]
+    fn test_chat_inference_database_insert_failed_serializes_empty_output() {
+        let error = Error::new(ErrorDetails::Inference {
+            message: "provider exploded".to_string(),
+        });
+        let insert = ChatInferenceDatabaseInsert::failed(
+            Uuid::now_v7(),
+            None,
+            None,
+            failed_insert_metadata(),
+            serialize_or_log(error.get_details()),
+        );
+        let value = serde_json::to_value(&insert).expect("failed insert should serialize");
+        // `output` must serialize as an empty string (not `null`), because ClickHouse
+        // runs with `input_format_null_as_default=0` on a non-nullable String column.
+        expect_that!(value["output"], eq(&json!("")));
+        // `error` must hold the serialized ErrorDetails tree, parseable back as JSON.
+        let error_str = value["error"]
+            .as_str()
+            .expect("error column should be a JSON string");
+        let parsed: serde_json::Value =
+            serde_json::from_str(error_str).expect("error column should round-trip as JSON");
+        expect_that!(
+            parsed,
+            matches_json_literal!({"Inference": {"message": "provider exploded"}})
+        );
+        // `input` and `inference_params` fall back to minimal values, not `null`.
+        expect_that!(value["input"].is_null(), eq(false));
+        expect_that!(value["inference_params"].is_null(), eq(false));
+    }
+
+    #[gtest]
+    fn test_json_inference_database_insert_failed_serializes_empty_output() {
+        let error = Error::new(ErrorDetails::Inference {
+            message: "json provider exploded".to_string(),
+        });
+        let insert = JsonInferenceDatabaseInsert::failed(
+            Uuid::now_v7(),
+            None,
+            None,
+            None,
+            failed_insert_metadata(),
+            serialize_or_log(error.get_details()),
+        );
+        let value = serde_json::to_value(&insert).expect("failed insert should serialize");
+        expect_that!(value["output"], eq(&json!("")));
+        // A missing output schema falls back to an empty JSON object (serialized as a string).
+        expect_that!(value["output_schema"], eq(&json!("{}")));
+        let error_str = value["error"]
+            .as_str()
+            .expect("error column should be a JSON string");
+        let parsed: serde_json::Value =
+            serde_json::from_str(error_str).expect("error column should round-trip as JSON");
+        expect_that!(
+            parsed,
+            matches_json_literal!({"Inference": {"message": "json provider exploded"}})
+        );
+    }
+
+    #[gtest]
+    fn test_stored_model_inference_failed_extracts_raw_request_response() {
+        let provider_error = Error::new(ErrorDetails::InferenceClient {
+            message: "connection reset".to_string(),
+            status_code: None,
+            provider_type: "test_provider".to_string(),
+            api_type: ApiType::ChatCompletions,
+            raw_request: Some("{\"prompt\": \"hello\"}".to_string()),
+            raw_response: Some("HTTP 500".to_string()),
+        });
+        let mut provider_errors = IndexMap::new();
+        provider_errors.insert("test_provider".to_string(), provider_error);
+        let error = Error::new(ErrorDetails::AllModelProvidersFailed { provider_errors });
+
+        let row = StoredModelInference::failed(
+            Uuid::now_v7(),
+            "test_function".to_string(),
+            "test_variant".to_string(),
+            "test_model".to_string(),
+            "test_provider".to_string(),
+            &error,
+            Some(Duration::from_millis(7)),
+            Some(SnapshotHash::new_test()),
+        );
+
+        // The raw request/response are stored as top-level columns because the
+        // serialized error tree hides them outside debug builds (`serialize_if_debug`).
+        expect_that!(
+            row.raw_request.as_deref(),
+            eq(Some("{\"prompt\": \"hello\"}"))
+        );
+        expect_that!(row.raw_response.as_deref(), eq(Some("HTTP 500")));
+        let error_str = row.error.as_deref().expect("error column should be set");
+        let parsed: serde_json::Value =
+            serde_json::from_str(error_str).expect("error column should round-trip as JSON");
+        expect_that!(
+            parsed.pointer(
+                "/AllModelProvidersFailed/provider_errors/test_provider/InferenceClient/message"
+            ),
+            eq(Some(&json!("connection reset")))
+        );
+        // Token counts stay unset so usage aggregations skip failed rows.
+        expect_that!(row.input_tokens, eq(None));
+        expect_that!(row.output_tokens, eq(None));
+        expect_that!(row.response_time_ms, eq(Some(7)));
     }
 }

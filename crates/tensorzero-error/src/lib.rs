@@ -1,6 +1,7 @@
 #[cfg(feature = "e2e_tests")]
 use std::backtrace::Backtrace;
 use std::sync::Arc;
+// Modified by Delta-AI under Apache 2.0
 use std::time::Duration;
 
 #[cfg(feature = "axum")]
@@ -298,6 +299,17 @@ impl Error {
     /// Extracts the raw chunk string from a mid-stream error, if available.
     pub fn extract_raw_chunk(&self) -> Option<String> {
         self.details.extract_raw_chunk()
+    }
+
+    /// Extracts the first `(raw_request, raw_response)` pair found in the error tree.
+    ///
+    /// Unlike the serde serialization of `ErrorDetails` (which hides raw payloads
+    /// outside debug mode), this reads the fields directly for internal storage on
+    /// failed `ModelInference` rows.
+    pub fn extract_raw_request_response(&self) -> (Option<String>, Option<String>) {
+        let mut result = (None, None);
+        self.details.collect_raw_request_response(&mut result);
+        result
     }
 
     /// Builds an HTTP error response, optionally including raw response entries from failed providers.
@@ -1382,6 +1394,67 @@ impl ErrorDetails {
             }
             ErrorDetails::Relay { raw_response, .. } => {
                 entries.extend(raw_response.clone());
+            }
+            _ => {}
+        }
+    }
+
+    /// Collects the first `raw_request` / `raw_response` found in the error tree.
+    fn collect_raw_request_response(&self, result: &mut (Option<String>, Option<String>)) {
+        match self {
+            ErrorDetails::AllRetriesFailed { errors } => {
+                for error in errors {
+                    if result.0.is_some() && result.1.is_some() {
+                        return;
+                    }
+                    error.details.collect_raw_request_response(result);
+                }
+            }
+            ErrorDetails::AllVariantsFailed { errors } => {
+                for error in errors.values() {
+                    if result.0.is_some() && result.1.is_some() {
+                        return;
+                    }
+                    error.details.collect_raw_request_response(result);
+                }
+            }
+            ErrorDetails::AllCandidatesFailed { candidate_errors } => {
+                for error in candidate_errors.values() {
+                    if result.0.is_some() && result.1.is_some() {
+                        return;
+                    }
+                    error.details.collect_raw_request_response(result);
+                }
+            }
+            ErrorDetails::AllModelProvidersFailed { provider_errors } => {
+                for error in provider_errors.values() {
+                    if result.0.is_some() && result.1.is_some() {
+                        return;
+                    }
+                    error.details.collect_raw_request_response(result);
+                }
+            }
+            ErrorDetails::InferenceClient {
+                raw_request,
+                raw_response,
+                ..
+            }
+            | ErrorDetails::InferenceServer {
+                raw_request,
+                raw_response,
+                ..
+            }
+            | ErrorDetails::FatalStreamError {
+                raw_request,
+                raw_response,
+                ..
+            } => {
+                if result.0.is_none() {
+                    result.0.clone_from(raw_request);
+                }
+                if result.1.is_none() {
+                    result.1.clone_from(raw_response);
+                }
             }
             _ => {}
         }

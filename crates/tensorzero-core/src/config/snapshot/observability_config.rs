@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use serde::{Deserialize, Serialize};
 
 use crate::config::{BatchWritesConfig, ObservabilityBackend, ObservabilityConfig};
@@ -15,6 +16,11 @@ pub struct StoredObservabilityConfig {
     pub async_writes: bool,
     #[serde(default)]
     pub batch_writes: StoredBatchWritesConfig,
+    /// `None` means the field was never set (defaults to enabled on reads).
+    /// Kept as `Option` so configs that never set it keep their existing
+    /// canonical hash.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record_failed_inferences: Option<bool>,
 
     /// Deprecated since 2026.2
     #[serde(default)]
@@ -106,6 +112,7 @@ impl From<ObservabilityConfig> for StoredObservabilityConfig {
             backend,
             async_writes,
             batch_writes,
+            record_failed_inferences,
             #[expect(deprecated)]
             disable_automatic_migrations,
         } = config;
@@ -114,6 +121,7 @@ impl From<ObservabilityConfig> for StoredObservabilityConfig {
             backend,
             async_writes: async_writes.unwrap_or_default(),
             batch_writes: batch_writes.unwrap_or_default().into(),
+            record_failed_inferences,
             disable_automatic_migrations: disable_automatic_migrations.unwrap_or_default(),
         }
     }
@@ -126,6 +134,7 @@ impl From<StoredObservabilityConfig> for ObservabilityConfig {
             backend,
             async_writes,
             batch_writes,
+            record_failed_inferences,
             disable_automatic_migrations,
         } = stored;
         Self {
@@ -133,6 +142,7 @@ impl From<StoredObservabilityConfig> for ObservabilityConfig {
             backend,
             async_writes: Some(async_writes),
             batch_writes: Some(batch_writes.into()),
+            record_failed_inferences,
             #[expect(deprecated)]
             disable_automatic_migrations: Some(disable_automatic_migrations),
         }
@@ -205,6 +215,28 @@ mod tests {
             config.async_writes,
             Some(false),
             "converted config should preserve disabled async_writes from stored snapshot"
+        );
+    }
+
+    /// Historical: before `record_failed_inferences` was added, stored configs
+    /// didn't include this field. They should parse and default to `true`.
+    #[test]
+    fn test_historical_no_record_failed_inferences_defaults_to_enabled() {
+        let toml_str = r"
+            enabled = true
+            async_writes = true
+        ";
+
+        let stored: StoredObservabilityConfig =
+            toml::from_str(toml_str).expect("should parse without record_failed_inferences field");
+        assert_eq!(
+            stored.record_failed_inferences, None,
+            "stored snapshot without record_failed_inferences should parse as None"
+        );
+        let config: ObservabilityConfig = stored.into();
+        assert!(
+            config.failed_writes_enabled(),
+            "converted config should default record_failed_inferences to enabled"
         );
     }
 

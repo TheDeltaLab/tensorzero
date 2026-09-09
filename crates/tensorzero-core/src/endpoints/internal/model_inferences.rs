@@ -100,6 +100,10 @@ pub struct ModelInference {
     /// ISO 4217 code for `cost`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
+
+    /// Serialized error tree, present only on failed model inference rows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// HTTP handler for getting model inferences by inference ID
@@ -170,6 +174,7 @@ async fn get_model_inferences(
                 cached: row.cached,
                 cost: row.cost,
                 currency: row.currency,
+                error: row.error,
             })
         })
         .collect()

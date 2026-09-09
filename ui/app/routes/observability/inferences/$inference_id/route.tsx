@@ -41,6 +41,7 @@ import { BasicInfoStreaming } from "./BasicInfo";
 import { InferenceActionBar } from "./InferenceActionBar";
 import { InputSection } from "./InputSection";
 import { FeedbackSection } from "./FeedbackSection";
+import { ErrorSection } from "./ErrorSection";
 import { ModelInferencesSection } from "./ModelInferencesSection";
 import {
   inferenceKindFromStored,
@@ -225,6 +226,10 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
         />
 
         <InputSection promise={input} locationKey={location.key} kind={kind} />
+
+        {"error" in inference && inference.error && (
+          <ErrorSection error={inference.error} />
+        )}
 
         <SectionLayout>
           <SectionHeader heading="Output" />

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![expect(clippy::panic, clippy::print_stdout, clippy::unwrap_used)]
 use base64::Engine;
 use std::collections::HashMap;
@@ -194,6 +195,7 @@ pub async fn run_test_case(test_case: &impl OptimizationTestCase) {
                 Arc::new(Default::default());
             let clickhouse_connection_info = ClickHouseConnectionInfo::new_disabled();
             let clients = InferenceClients {
+                failed_model_inference_datastore: None,
                 http_client: client.clone(),
                 clickhouse_connection_info: clickhouse_connection_info.clone(),
                 postgres_connection_info: PostgresConnectionInfo::Disabled,

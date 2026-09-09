@@ -256,6 +256,7 @@ pub async fn start_batch_inference(
     let tags = Arc::new(HashMap::default()); // NOTE: we currently do not rate limit batch inference
 
     let inference_clients = InferenceClients {
+        failed_model_inference_datastore: None,
         http_client: http_client.clone(),
         clickhouse_connection_info: database.clickhouse.clone(),
         postgres_connection_info: database.postgres.clone(),

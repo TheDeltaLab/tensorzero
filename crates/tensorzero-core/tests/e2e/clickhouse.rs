@@ -617,6 +617,7 @@ async fn run_migration_0048_with_data<R: Future<Output = bool>, F: FnOnce() -> R
     // before migration 0053 adds these columns to ModelInference.
     // With skip_serializing_if = "String::is_empty", they'll be omitted from the JSON.
     let row1 = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id: Uuid::now_v7(),
         function_name: String::new(),
@@ -642,6 +643,7 @@ async fn run_migration_0048_with_data<R: Future<Output = bool>, F: FnOnce() -> R
         timestamp: None,
     };
     let row2 = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id: Uuid::now_v7(),
         function_name: String::new(),
@@ -717,6 +719,7 @@ async fn run_migration_0052_with_data<R: Future<Output = bool>, F: FnOnce() -> R
 
     let rows = vec![
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: Uuid::now_v7(),
             function_name: String::new(),
@@ -742,6 +745,7 @@ async fn run_migration_0052_with_data<R: Future<Output = bool>, F: FnOnce() -> R
             timestamp: None,
         },
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: Uuid::now_v7(),
             function_name: String::new(),
@@ -767,6 +771,7 @@ async fn run_migration_0052_with_data<R: Future<Output = bool>, F: FnOnce() -> R
             timestamp: None,
         },
         StoredModelInference {
+            error: None,
             id: Uuid::now_v7(),
             inference_id: Uuid::now_v7(),
             function_name: String::new(),
@@ -900,7 +905,8 @@ invoke_all_separate_tests!(
     test_rollback_up_to_migration_index_,
     [
         0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47
+        25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+        48
     ]
 );
 
@@ -1200,6 +1206,7 @@ async fn test_clickhouse_migration_manager() {
     );
     // Insert a ModelInference row with null output tokens to verify CumulativeUsage handles nulls correctly
     let row = StoredModelInference {
+        error: None,
         id: Uuid::now_v7(),
         inference_id: Uuid::now_v7(),
         function_name: String::new(),

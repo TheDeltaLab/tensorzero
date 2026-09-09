@@ -24,6 +24,7 @@ use crate::db::get_test_postgres;
 
 fn make_chat_inference(function_name: &str) -> ChatInferenceDatabaseInsert {
     ChatInferenceDatabaseInsert {
+        error: None,
         id: Uuid::now_v7(),
         function_name: function_name.to_string(),
         variant_name: "test_variant".to_string(),

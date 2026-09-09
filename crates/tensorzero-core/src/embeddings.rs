@@ -947,6 +947,7 @@ mod tests {
                 &request,
                 "fallback",
                 &InferenceClients {
+                    failed_model_inference_datastore: None,
                     http_client: TensorzeroHttpClient::new_testing().unwrap(),
                     clickhouse_connection_info: clickhouse_connection_info.clone(),
                     postgres_connection_info: PostgresConnectionInfo::Disabled,

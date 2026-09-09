@@ -38,6 +38,7 @@ import {
 import { CodeEditor } from "~/components/ui/code-editor";
 import ModelInferenceOutput from "~/components/input_output/ModelInferenceOutput";
 import { ModelInferenceUsageDetails } from "~/components/inference/UsageDetails";
+import { InferenceErrorDetails } from "./ErrorSection";
 
 interface ModelInferenceItemProps {
   inference: ParsedModelInferenceRow;
@@ -170,6 +171,13 @@ export function ModelInferenceItem({ inference }: ModelInferenceItemProps) {
           <SectionHeader heading="Output" />
           <ModelInferenceOutput output={inference.output} />
         </SectionLayout>
+
+        {inference.error != null && (
+          <SectionLayout>
+            <SectionHeader heading="Error" />
+            <InferenceErrorDetails error={inference.error} />
+          </SectionLayout>
+        )}
 
         {inference.raw_request != null && (
           <SectionLayout>

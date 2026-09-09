@@ -134,6 +134,7 @@ pub async fn embeddings(
     }
     let deferred_tasks_for_write = deferred_tasks.clone();
     let clients = InferenceClients {
+        failed_model_inference_datastore: None,
         http_client: http_client.clone(),
         credentials: Arc::new(params.credentials.clone()),
         cache_options: (params.cache_options, dryrun).into(),
