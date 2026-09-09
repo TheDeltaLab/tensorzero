@@ -130,6 +130,13 @@ pub struct Params {
     /// Applied after client tag validation. Not part of the public JSON API.
     #[serde(skip)]
     pub extra_internal_tags: HashMap<String, String>,
+    /// Gateway-injected inbound protocol preference (`Some(Responses)` for
+    /// `/openai/v1/responses`, `Some(ChatCompletions)` for
+    /// `/openai/v1/chat/completions`). Forwarded to `ModelInferenceRequest` so
+    /// dual-protocol providers can preserve the inbound protocol outbound.
+    /// Not part of the public JSON API.
+    #[serde(skip)]
+    pub requested_api_type: Option<ApiType>,
     // dynamic information about tool calling. Don't directly include `dynamic_tool_params` in `Params`.
     #[serde(flatten)]
     pub dynamic_tool_params: DynamicToolParams,
@@ -583,6 +590,7 @@ pub async fn inference(
             include_raw_response: params.include_raw_response,
             include_raw_usage: params.include_raw_usage,
             include_aggregated_response: params.include_aggregated_response,
+            requested_api_type: params.requested_api_type,
         }))
         .await?;
         return Ok(InferenceOutputData {
@@ -645,6 +653,7 @@ pub async fn inference(
             include_raw_response: params.include_raw_response,
             include_raw_usage: params.include_raw_usage,
             include_aggregated_response: params.include_aggregated_response,
+            requested_api_type: params.requested_api_type,
         }))
         .await;
 
@@ -808,6 +817,7 @@ struct InferVariantArgs<'a> {
     include_raw_response: bool,
     include_raw_usage: bool,
     include_aggregated_response: bool,
+    requested_api_type: Option<ApiType>,
 }
 
 async fn infer_variant(args: InferVariantArgs<'_>) -> Result<InferenceOutput, Error> {
@@ -839,6 +849,7 @@ async fn infer_variant(args: InferVariantArgs<'_>) -> Result<InferenceOutput, Er
         include_raw_response,
         include_raw_usage,
         include_aggregated_response,
+        requested_api_type,
     } = args;
 
     // Will be edited by the variant as part of making the request so we must clone here
@@ -861,6 +872,7 @@ async fn infer_variant(args: InferVariantArgs<'_>) -> Result<InferenceOutput, Er
         extra_cache_key: None,
         extra_body: extra_body.clone(),
         extra_headers: extra_headers.clone(),
+        requested_api_type,
     });
 
     if stream {

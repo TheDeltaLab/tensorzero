@@ -39,6 +39,7 @@ mod otel;
 mod otel_config_headers;
 mod otel_export;
 mod prometheus;
+mod protocol_preservation;
 mod provider_tools;
 mod providers;
 mod proxy;

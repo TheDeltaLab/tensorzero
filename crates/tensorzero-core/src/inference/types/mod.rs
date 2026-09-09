@@ -1012,6 +1012,7 @@ impl RateLimitedRequest for ModelInferenceRequest<'_> {
             fetch_and_encode_input_files_before_inference: _,
             extra_headers: _,
             extra_cache_key: _,
+            requested_api_type: _,
             inference_params_v2: _,
         } = self;
 

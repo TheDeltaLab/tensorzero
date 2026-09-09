@@ -17,6 +17,7 @@ use crate::error::{Error, ErrorDetails};
 use crate::inference::types::current_timestamp;
 use crate::utils::gateway::AppState;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
+use tensorzero_types::ApiType;
 
 use super::infer::{error_response, infer_openai_compatible};
 use super::synapse::SynapseRequestContext;
@@ -44,6 +45,7 @@ pub async fn completions_handler(
         api_key_ext,
         &headers,
         chat_params,
+        ApiType::ChatCompletions,
     ))
     .await
     {

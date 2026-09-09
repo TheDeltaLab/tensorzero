@@ -862,6 +862,7 @@ impl BestOfNEvaluatorConfig {
                 extra_body,
                 extra_headers,
                 extra_cache_key: inference_config.extra_cache_key.clone(),
+                requested_api_type: inference_config.requested_api_type,
                 inference_params_v2: ChatCompletionInferenceParamsV2 {
                     reasoning_effort: inference_params.chat_completion.reasoning_effort.clone(),
                     service_tier: inference_params.chat_completion.service_tier.clone(),
@@ -1505,6 +1506,7 @@ mod tests {
             messages: vec![],
         };
         let inference_config = InferenceConfig {
+            requested_api_type: None,
             ids: InferenceIds {
                 inference_id: Uuid::now_v7(),
                 episode_id: Uuid::now_v7(),

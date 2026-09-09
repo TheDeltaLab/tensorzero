@@ -160,6 +160,7 @@ impl TryFrom<ClientInferenceParams> for Params {
             extra_headers: this.extra_headers,
             internal_dynamic_variant_config: this.internal_dynamic_variant_config,
             extra_internal_tags: HashMap::new(),
+            requested_api_type: None,
         })
     }
 }
@@ -220,6 +221,7 @@ fn assert_params_match(client_params: ClientInferenceParams) {
         extra_body,
         extra_headers,
         extra_internal_tags: HashMap::new(),
+        requested_api_type: None,
         internal_dynamic_variant_config,
     };
 }

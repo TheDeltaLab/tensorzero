@@ -134,6 +134,11 @@ pub enum StoredProviderConfig {
         include_encrypted_reasoning: Option<bool>,
         provider_tools: Option<Vec<Value>>,
         content_type_overrides: Option<BTreeMap<String, StoredContentBlockType>>,
+        /// Delta-AI fork: for endpoints whose Responses API ignores
+        /// `text.format` (e.g. Alibaba Bailian), downgrade inbound Responses
+        /// requests with a response format to chat completions outbound.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        responses_structured_output_fallback_to_chat: Option<bool>,
     },
     OpenRouter {
         model_name: String,

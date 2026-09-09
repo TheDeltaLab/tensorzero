@@ -752,6 +752,7 @@ mod tests {
                 extra_headers: Default::default(),
                 fetch_and_encode_input_files_before_inference: false,
                 extra_cache_key: Some("baseline".to_string()),
+                requested_api_type: None,
                 stop_sequences: Some(Cow::Owned(vec!["stop".to_string()])),
                 inference_params_v2: ChatCompletionInferenceParamsV2 {
                     reasoning_effort: Some("high".to_string()),
@@ -813,6 +814,7 @@ mod tests {
             extra_headers: _,
             fetch_and_encode_input_files_before_inference: _,
             extra_cache_key: _,
+            requested_api_type: _,
             stop_sequences: _,
             inference_params_v2: _,
         } = fixture.request;
@@ -939,6 +941,18 @@ mod tests {
     fn test_cache_key_changes_with_seed(fixture: &CacheKeyFixture) {
         let mut req = fixture.request.clone();
         req.seed = Some(99);
+        expect_that!(
+            cache_key_for(&req, "model", "provider"),
+            not(eq(fixture.key))
+        );
+    }
+
+    #[gtest]
+    fn test_cache_key_changes_with_requested_api_type(fixture: &CacheKeyFixture) {
+        // The protocol preference changes the outbound request shape, so it
+        // must participate in the cache key (when set).
+        let mut req = fixture.request.clone();
+        req.requested_api_type = Some(tensorzero_types::ApiType::Responses);
         expect_that!(
             cache_key_for(&req, "model", "provider"),
             not(eq(fixture.key))

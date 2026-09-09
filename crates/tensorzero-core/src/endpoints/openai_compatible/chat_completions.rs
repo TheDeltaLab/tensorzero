@@ -15,6 +15,7 @@ use futures::StreamExt;
 use crate::endpoints::inference::{InferenceOutput, InferenceResponse};
 use crate::utils::gateway::{AppState, AppStateData};
 use tensorzero_auth::middleware::RequestApiKeyExtension;
+use tensorzero_types::ApiType;
 
 use super::anthropic_messages::{anthropic_from_inference, prepare_anthropic_sse};
 use super::infer::infer_openai_compatible;
@@ -49,6 +50,7 @@ pub(super) async fn handle_chat_completions(
         api_key_ext,
         headers,
         openai_compatible_params,
+        ApiType::ChatCompletions,
     ))
     .await
     {

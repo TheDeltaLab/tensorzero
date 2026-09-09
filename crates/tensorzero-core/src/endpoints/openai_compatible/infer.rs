@@ -10,6 +10,7 @@ use crate::error::{Error, ErrorDetails};
 use crate::routing::RoutingSession;
 use crate::utils::gateway::AppStateData;
 use tensorzero_auth::middleware::RequestApiKeyExtension;
+use tensorzero_types::ApiType;
 
 use super::synapse::{
     SynapseRequestContext, apply_compat_to_params, resolve_cache_options,
@@ -59,6 +60,7 @@ pub struct OpenAICompatibleExecutionError {
 pub fn validate_openai_compatible_request(
     headers: &HeaderMap,
     mut openai_compatible_params: OpenAICompatibleParams,
+    requested_api_type: ApiType,
 ) -> Result<ValidatedOpenAICompatibleRequest, OpenAICompatibleValidationError> {
     let mut synapse = SynapseRequestContext::try_from_headers(headers).map_err(|error| {
         OpenAICompatibleValidationError {
@@ -152,6 +154,7 @@ pub fn validate_openai_compatible_request(
             include_raw_response,
         }
     })?;
+    params.requested_api_type = Some(requested_api_type);
     apply_compat_to_params(headers, &mut params).map_err(|error| {
         OpenAICompatibleValidationError {
             error,
@@ -274,8 +277,13 @@ pub async fn infer_openai_compatible(
     api_key_ext: Option<Extension<RequestApiKeyExtension>>,
     headers: &HeaderMap,
     openai_compatible_params: OpenAICompatibleParams,
+    requested_api_type: ApiType,
 ) -> Result<OpenAICompatibleInference, Response> {
-    let validated = match validate_openai_compatible_request(headers, openai_compatible_params) {
+    let validated = match validate_openai_compatible_request(
+        headers,
+        openai_compatible_params,
+        requested_api_type,
+    ) {
         Ok(validated) => validated,
         Err(rejection) => {
             return Err(error_response(

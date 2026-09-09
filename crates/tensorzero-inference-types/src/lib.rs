@@ -1127,6 +1127,14 @@ pub struct ModelInferenceRequest<'a> {
     pub extra_body: extra_body::FullExtraBodyConfig,
     pub extra_headers: extra_headers::FullExtraHeadersConfig,
     pub extra_cache_key: Option<String>,
+    /// Inbound-protocol preference injected by the gateway's OpenAI-compatible
+    /// endpoints (`Some(Responses)` for `/openai/v1/responses`,
+    /// `Some(ChatCompletions)` for `/openai/v1/chat/completions`).
+    /// Dual-protocol providers follow it per-request; single-protocol
+    /// providers ignore it and use their configured/default protocol.
+    /// Skipped when `None` so existing cache keys are unaffected.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_api_type: Option<tensorzero_types::ApiType>,
     #[serde(flatten)]
     pub inference_params_v2: tensorzero_types::inference_params::ChatCompletionInferenceParamsV2,
     pub fetch_and_encode_input_files_before_inference: bool,

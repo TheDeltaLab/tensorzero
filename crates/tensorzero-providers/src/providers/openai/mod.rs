@@ -75,7 +75,7 @@ use tensorzero_inference_types::provider_trait::TensorZeroEventError;
 use tensorzero_inference_types::provider_trait::WrappedProvider;
 
 pub mod grader;
-mod responses;
+pub(crate) mod responses;
 
 lazy_static! {
     pub static ref OPENAI_DEFAULT_BASE_URL: Url = {
@@ -154,6 +154,14 @@ pub struct OpenAIProvider {
     #[serde(skip)]
     #[ts(skip)]
     volcengine_audio_compat: bool,
+    /// Set for endpoints whose Responses API does not honor structured-output
+    /// constraints (e.g. Alibaba Bailian's `/compatible-mode/v1/responses`
+    /// silently ignores `text.format`): an inbound Responses request that
+    /// asks for a response format goes out over chat completions instead,
+    /// where `response_format` is enforced.
+    #[serde(skip)]
+    #[ts(skip)]
+    responses_structured_output_fallback_to_chat: bool,
 }
 
 impl OpenAIProvider {
@@ -193,7 +201,13 @@ impl OpenAIProvider {
             provider_tools,
             content_type_overrides,
             volcengine_audio_compat: false,
+            responses_structured_output_fallback_to_chat: false,
         })
+    }
+
+    pub fn with_responses_structured_output_fallback_to_chat(mut self) -> Self {
+        self.responses_structured_output_fallback_to_chat = true;
+        self
     }
 
     pub fn with_volcengine_audio_compat(mut self) -> Self {
@@ -207,6 +221,92 @@ impl OpenAIProvider {
 
     pub fn api_type(&self) -> OpenAIAPIType {
         self.api_type
+    }
+
+    /// The protocol to use for this specific request: the inbound protocol
+    /// preference (`request.requested_api_type`, set by the gateway's
+    /// OpenAI-compatible endpoints) takes precedence so that
+    /// `/openai/v1/responses` stays Responses outbound and
+    /// `/openai/v1/chat/completions` stays chat outbound; otherwise the
+    /// provider's configured `api_type` is used.
+    fn effective_api_type(&self, request: &ModelInferenceRequest) -> OpenAIAPIType {
+        match request.requested_api_type {
+            Some(ApiType::Responses) => {
+                // Endpoints flagged via `responses_structured_output_fallback_to_chat`
+                // (e.g. Alibaba Bailian) silently ignore `text.format` on their
+                // Responses API, so structured-output requests go out over chat
+                // completions, where `response_format` is enforced.
+                if self.responses_structured_output_fallback_to_chat
+                    && (request.json_mode != ModelInferenceRequestJsonMode::Off
+                        || request.output_schema.is_some())
+                {
+                    tracing::warn!(
+                        provider_model_name = %self.model_name,
+                        "This provider's Responses API does not support structured output \
+                         (json_schema / text.format is ignored); downgrading the outbound \
+                         request to chat completions where response_format is honored \
+                         (config: responses_structured_output_fallback_to_chat)"
+                    );
+                    return OpenAIAPIType::ChatCompletions;
+                }
+                OpenAIAPIType::Responses
+            }
+            Some(ApiType::ChatCompletions) => OpenAIAPIType::ChatCompletions,
+            _ => self.api_type,
+        }
+    }
+
+    /// Builds the outbound body for `api_type`. `InferenceProvider::infer`
+    /// passes the effective (request-aware) type; the `WrappedProvider`
+    /// entry point passes the configured type.
+    async fn make_body_with_api_type<'a>(
+        &'a self,
+        request: &'a ModelInferenceRequest<'a>,
+        model_name: &str,
+        provider_name: &str,
+        api_type: OpenAIAPIType,
+    ) -> Result<serde_json::Value, Error> {
+        match api_type {
+            OpenAIAPIType::Responses => Ok(serde_json::to_value(
+                OpenAIResponsesRequest::new(
+                    &self.model_name,
+                    request,
+                    self.include_encrypted_reasoning,
+                    &self.provider_tools,
+                    model_name,
+                    provider_name,
+                )
+                .await?,
+            )
+            .map_err(|e| {
+                Error::new(ErrorDetails::Serialization {
+                    message: format!(
+                        "Error serializing OpenAI request: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                })
+            })?),
+            OpenAIAPIType::ChatCompletions => Ok(serde_json::to_value(
+                VOLCENGINE_AUDIO_COMPAT
+                    .scope(
+                        self.volcengine_audio_compat,
+                        OpenAIRequest::new(
+                            &self.model_name,
+                            request,
+                            Some(&self.content_type_overrides),
+                        ),
+                    )
+                    .await?,
+            )
+            .map_err(|e| {
+                Error::new(ErrorDetails::Serialization {
+                    message: format!(
+                        "Error serializing OpenAI request: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                })
+            })?),
+        }
     }
 
     /// Returns whether this OpenAI provider supports provider tools.
@@ -319,47 +419,12 @@ impl WrappedProvider for OpenAIProvider {
             model_inference_id: _,
         }: ProviderInferenceRequest<'a>,
     ) -> Result<serde_json::Value, Error> {
-        match self.api_type {
-            OpenAIAPIType::Responses => Ok(serde_json::to_value(
-                OpenAIResponsesRequest::new(
-                    &self.model_name,
-                    request,
-                    self.include_encrypted_reasoning,
-                    &self.provider_tools,
-                    model_name,
-                    provider_name,
-                )
-                .await?,
-            )
-            .map_err(|e| {
-                Error::new(ErrorDetails::Serialization {
-                    message: format!(
-                        "Error serializing OpenAI request: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                })
-            })?),
-            OpenAIAPIType::ChatCompletions => Ok(serde_json::to_value(
-                VOLCENGINE_AUDIO_COMPAT
-                    .scope(
-                        self.volcengine_audio_compat,
-                        OpenAIRequest::new(
-                            &self.model_name,
-                            request,
-                            Some(&self.content_type_overrides),
-                        ),
-                    )
-                    .await?,
-            )
-            .map_err(|e| {
-                Error::new(ErrorDetails::Serialization {
-                    message: format!(
-                        "Error serializing OpenAI request: {}",
-                        DisplayOrDebugGateway::new(e)
-                    ),
-                })
-            })?),
-        }
+        // This is also the WrappedProvider entry point used by hosting
+        // providers (e.g. AWS SageMaker). Those endpoints only speak the
+        // protocol declared by the configured `api_type`, so the per-request
+        // inbound preference must not upgrade them.
+        self.make_body_with_api_type(request, model_name, provider_name, self.api_type)
+            .await
     }
 
     fn parse_response(
@@ -372,7 +437,12 @@ impl WrappedProvider for OpenAIProvider {
         provider_name: &str,
         model_inference_id: Uuid,
     ) -> Result<ProviderInferenceResponse, Error> {
-        match self.api_type {
+        // WrappedProvider entry point (used by hosting providers such as AWS
+        // SageMaker): the hosted endpoint only speaks the configured
+        // `api_type`, so the per-request inbound preference must not change
+        // how its responses are parsed.
+        let api_type = self.api_type;
+        match api_type {
             OpenAIAPIType::Responses => {
                 // TODO - include 'responses' somewhere in the error message
                 let response: OpenAIResponsesResponse = serde_json::from_str(&raw_response)
@@ -385,7 +455,7 @@ impl WrappedProvider for OpenAIProvider {
                             raw_request: Some(raw_request.clone()),
                             raw_response: Some(raw_response.clone()),
                             provider_type: PROVIDER_TYPE.to_string(),
-                            api_type: self.api_type.into(),
+                            api_type: api_type.into(),
                         })
                     })?;
 
@@ -409,7 +479,7 @@ impl WrappedProvider for OpenAIProvider {
                         raw_request: Some(raw_request.clone()),
                         raw_response: Some(raw_response.clone()),
                         provider_type: PROVIDER_TYPE.to_string(),
-                        api_type: self.api_type.into(),
+                        api_type: api_type.into(),
                     })
                 })?;
 
@@ -435,14 +505,30 @@ impl WrappedProvider for OpenAIProvider {
         raw_request: &str,
         model_inference_id: Uuid,
     ) -> ProviderInferenceResponseStreamInner {
-        stream_openai(
-            PROVIDER_TYPE.to_string(),
-            model_inference_id,
-            event_source,
-            start_time,
-            None,
-            raw_request,
-        )
+        // No per-request protocol preference is available in this context
+        // (used by the AWS SageMaker wrapper), so follow the configured
+        // `api_type` instead of always streaming as chat completions.
+        match self.api_type {
+            OpenAIAPIType::Responses => stream_openai_responses(
+                PROVIDER_TYPE.to_string(),
+                model_inference_id,
+                event_source,
+                start_time,
+                false,
+                "",
+                "",
+                None,
+                raw_request,
+            ),
+            OpenAIAPIType::ChatCompletions => stream_openai(
+                PROVIDER_TYPE.to_string(),
+                model_inference_id,
+                event_source,
+                start_time,
+                None,
+                raw_request,
+            ),
+        }
     }
 }
 
@@ -454,7 +540,8 @@ impl InferenceProvider for OpenAIProvider {
         dynamic_api_keys: &'a InferenceCredentials,
         model_provider: &'a ModelProviderRequestInfo,
     ) -> Result<ProviderInferenceResponse, Error> {
-        let request_url = match self.api_type {
+        let openai_api_type = self.effective_api_type(request.request);
+        let request_url = match openai_api_type {
             OpenAIAPIType::Responses => {
                 get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?
             }
@@ -467,14 +554,21 @@ impl InferenceProvider for OpenAIProvider {
             .get_api_key(dynamic_api_keys)
             .map_err(|e| e.log())?;
         let start_time = Instant::now();
-        let request_body = self.make_body(request).await?;
+        let request_body = self
+            .make_body_with_api_type(
+                request.request,
+                request.model_name,
+                request.provider_name,
+                openai_api_type,
+            )
+            .await?;
         let mut request_builder = http_client.post(request_url);
 
         if let Some(api_key) = api_key {
             request_builder = request_builder.bearer_auth(api_key.expose_secret());
         }
 
-        let api_type: ApiType = self.api_type.into();
+        let api_type: ApiType = openai_api_type.into();
         let InjectedResponse {
             response: res,
             raw_request,
@@ -512,7 +606,7 @@ impl InferenceProvider for OpenAIProvider {
                 })
             })?;
 
-            match self.api_type {
+            match openai_api_type {
                 OpenAIAPIType::Responses => {
                     let response: OpenAIResponsesResponse = serde_json::from_str(&raw_response)
                         .map_err(|e| {
@@ -619,7 +713,7 @@ impl InferenceProvider for OpenAIProvider {
             .map_err(|e| e.log())?;
         let start_time = Instant::now();
 
-        match self.api_type {
+        match self.effective_api_type(request) {
             OpenAIAPIType::Responses => {
                 let request_url =
                     get_responses_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
@@ -759,7 +853,27 @@ impl InferenceProvider for OpenAIProvider {
         client: &'a TensorzeroHttpClient,
         dynamic_api_keys: &'a InferenceCredentials,
     ) -> Result<StartBatchProviderInferenceResponse, Error> {
-        let api_type: ApiType = self.api_type.into();
+        // A batch file targets a single endpoint, so pick the protocol once for
+        // the whole batch: an explicit per-request protocol (protocol
+        // preservation) wins, otherwise the provider `api_type` config applies.
+        // Rows currently all carry the same `requested_api_type` (the batch
+        // entrypoint leaves it unset); if that ever changes, refuse instead of
+        // silently letting one row's preference decide for the whole file.
+        let batch_api_type = requests
+            .first()
+            .map(|request| self.effective_api_type(request))
+            .unwrap_or(self.api_type);
+        if requests
+            .iter()
+            .any(|request| self.effective_api_type(request) != batch_api_type)
+        {
+            return Err(Error::new(ErrorDetails::InternalError {
+                message: "Batch rows disagree on the requested API type; a batch file must \
+                          target a single endpoint."
+                    .to_string(),
+            }));
+        }
+        let api_type: ApiType = batch_api_type.into();
         let api_key = self
             .credentials
             .get_api_key(dynamic_api_keys)
@@ -767,7 +881,15 @@ impl InferenceProvider for OpenAIProvider {
         let mut batch_requests = Vec::with_capacity(requests.len());
         for request in requests {
             batch_requests.push(
-                OpenAIBatchFileInput::new(request.inference_id, &self.model_name, request).await?,
+                OpenAIBatchFileInput::new(
+                    request.inference_id,
+                    &self.model_name,
+                    request,
+                    batch_api_type,
+                    self.include_encrypted_reasoning,
+                    &self.provider_tools,
+                )
+                .await?,
             );
         }
         let raw_requests: Result<Vec<String>, serde_json::Error> = batch_requests
@@ -787,7 +909,11 @@ impl InferenceProvider for OpenAIProvider {
             "batch".to_string(),
         )
         .await?;
-        let batch_request = OpenAIBatchRequest::new(&file_id);
+        let batch_endpoint = match batch_api_type {
+            OpenAIAPIType::Responses => "/v1/responses",
+            OpenAIAPIType::ChatCompletions => "/v1/chat/completions",
+        };
+        let batch_request = OpenAIBatchRequest::new(&file_id, batch_endpoint);
         let raw_request = serde_json::to_string(&batch_request).map_err(|_| Error::new(ErrorDetails::Serialization { message: "Error serializing OpenAI batch request. This should never happen. Please file a bug report: https://github.com/tensorzero/tensorzero/issues/new".to_string() }))?;
         let request_url =
             get_batch_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
@@ -2792,7 +2918,16 @@ struct OpenAIBatchFileInput<'a> {
     custom_id: String,
     method: String,
     url: String,
-    body: OpenAIRequest<'a>,
+    body: OpenAIBatchFileBody<'a>,
+}
+
+/// The per-line batch request body: chat completions or Responses API shape,
+/// matching the batch file's target endpoint.
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum OpenAIBatchFileBody<'a> {
+    ChatCompletions(Box<OpenAIRequest<'a>>),
+    Responses(Box<OpenAIResponsesRequest<'a>>),
 }
 
 impl<'a> OpenAIBatchFileInput<'a> {
@@ -2800,12 +2935,39 @@ impl<'a> OpenAIBatchFileInput<'a> {
         inference_id: Uuid,
         model: &'a str,
         request: &'a ModelInferenceRequest<'_>,
+        api_type: OpenAIAPIType,
+        include_encrypted_reasoning: bool,
+        provider_tools: &'a [Value],
     ) -> Result<Self, Error> {
-        let body = OpenAIRequest::new(model, request, None).await?;
+        let (url, body) = match api_type {
+            OpenAIAPIType::Responses => (
+                "/v1/responses",
+                OpenAIBatchFileBody::Responses(Box::new(
+                    OpenAIResponsesRequest::new(
+                        model,
+                        request,
+                        include_encrypted_reasoning,
+                        provider_tools,
+                        // No TensorZero model/provider names are available on the
+                        // batch path; they are only used for scoped provider tools
+                        // and `Unknown` block attribution.
+                        "",
+                        "",
+                    )
+                    .await?,
+                )),
+            ),
+            OpenAIAPIType::ChatCompletions => (
+                "/v1/chat/completions",
+                OpenAIBatchFileBody::ChatCompletions(Box::new(
+                    OpenAIRequest::new(model, request, None).await?,
+                )),
+            ),
+        };
         Ok(Self {
             custom_id: inference_id.to_string(),
             method: "POST".to_string(),
-            url: "/v1/chat/completions".to_string(),
+            url: url.to_string(),
             body,
         })
     }
@@ -2820,10 +2982,10 @@ struct OpenAIBatchRequest<'a> {
 }
 
 impl<'a> OpenAIBatchRequest<'a> {
-    fn new(input_file_id: &'a str) -> Self {
+    fn new(input_file_id: &'a str, endpoint: &'a str) -> Self {
         Self {
             input_file_id,
-            endpoint: "/v1/chat/completions",
+            endpoint,
             completion_window: "24h",
         }
     }
@@ -3346,7 +3508,49 @@ impl TryFrom<OpenAIBatchFileRow> for ProviderBatchInferenceOutput {
     type Error = Error;
 
     fn try_from(row: OpenAIBatchFileRow) -> Result<Self, Self::Error> {
-        let mut response = row.response.body;
+        // Batch output rows carry whichever body shape the target endpoint
+        // produced: Responses API bodies have `"object": "response"` and an
+        // `output` array; chat completion bodies have `choices`.
+        let is_responses_body = row.response.body.get("object").and_then(Value::as_str)
+            == Some("response")
+            || (row.response.body.get("output").is_some()
+                && row.response.body.get("choices").is_none());
+        if is_responses_body {
+            let body = serde_json::to_string(&row.response.body).map_err(|e| {
+                Error::new(ErrorDetails::Serialization {
+                    message: format!(
+                        "Error serializing batch responses body: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                })
+            })?;
+            let response: OpenAIResponsesResponse = serde_json::from_str(&body).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing batch responses body: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: None,
+                    raw_response: Some(body.clone()),
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::Responses,
+                })
+            })?;
+            return response.into_batch_output(row.inference_id, body.clone());
+        }
+        let mut response: OpenAIResponse =
+            serde_json::from_value(row.response.body).map_err(|e| {
+                Error::new(ErrorDetails::InferenceServer {
+                    message: format!(
+                        "Error parsing batch chat completion body: {}",
+                        DisplayOrDebugGateway::new(e)
+                    ),
+                    raw_request: None,
+                    raw_response: None,
+                    provider_type: PROVIDER_TYPE.to_string(),
+                    api_type: ApiType::ChatCompletions,
+                })
+            })?;
         // Validate we have exactly one choice
         if response.choices.len() != 1 {
             return Err(ErrorDetails::InferenceServer {
@@ -3433,7 +3637,9 @@ struct OpenAIBatchFileRow {
 struct OpenAIBatchFileResponse {
     // status_code: u16,
     // request_id: String,
-    body: OpenAIResponse,
+    // Kept as a raw value so we can detect the body shape (chat completions vs
+    // Responses API) before parsing.
+    body: Value,
 }
 
 #[cfg(test)]
@@ -3476,6 +3682,147 @@ mod tests {
         assert_eq!(value["input_audio"]["url"], "https://audio.test/a.wav");
         assert_eq!(value["input_audio"]["format"], "wav");
         assert!(value["input_audio"].get("data").is_none());
+    }
+
+    #[gtest]
+    fn test_effective_api_type_request_override() {
+        let make_provider = |api_type| {
+            OpenAIProvider::new(
+                "gpt-4.1-mini".to_string(),
+                None,
+                OpenAICredentials::None,
+                api_type,
+                false,
+                vec![],
+                HashMap::new(),
+            )
+            .expect("provider should construct")
+        };
+        let provider_chat = make_provider(OpenAIAPIType::ChatCompletions);
+        let provider_responses = make_provider(OpenAIAPIType::Responses);
+
+        // No inbound preference: the configured `api_type` wins.
+        let request = ModelInferenceRequest::default();
+        expect_that!(
+            provider_chat.effective_api_type(&request),
+            eq(OpenAIAPIType::ChatCompletions)
+        );
+        expect_that!(
+            provider_responses.effective_api_type(&request),
+            eq(OpenAIAPIType::Responses)
+        );
+
+        // Inbound `/openai/v1/responses`: Responses outbound even for a
+        // chat-configured provider (protocol preservation).
+        let request = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::Responses),
+            ..Default::default()
+        };
+        expect_that!(
+            provider_chat.effective_api_type(&request),
+            eq(OpenAIAPIType::Responses)
+        );
+
+        // Inbound `/openai/v1/chat/completions`: chat outbound even for a
+        // responses-configured provider (downgrade conversion).
+        let request = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::ChatCompletions),
+            ..Default::default()
+        };
+        expect_that!(
+            provider_responses.effective_api_type(&request),
+            eq(OpenAIAPIType::ChatCompletions)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wrapped_provider_make_body_uses_configured_api_type() {
+        // Hosting providers (e.g. AWS SageMaker) pin the OpenAI provider to
+        // the configured protocol regardless of the inbound preference: the
+        // `WrappedProvider` entry point must follow `self.api_type`, not
+        // `requested_api_type` (that override only applies on the
+        // provider-owned `infer`/`infer_stream` paths).
+        let provider = OpenAIProvider::new(
+            "gpt-4.1-mini".to_string(),
+            None,
+            OpenAICredentials::None,
+            OpenAIAPIType::ChatCompletions,
+            false,
+            vec![],
+            HashMap::new(),
+        )
+        .expect("provider should construct");
+
+        let request = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::Responses),
+            ..Default::default()
+        };
+        let provider_request = ProviderInferenceRequest {
+            request: &request,
+            model_name: "model",
+            provider_name: "provider",
+            model_inference_id: Uuid::now_v7(),
+        };
+        let body = provider.make_body(provider_request).await.unwrap();
+        // Chat-completions shape: `messages` present, Responses-only `input` absent.
+        assert!(body.get("messages").is_some());
+        assert!(body.get("input").is_none());
+    }
+
+    #[gtest]
+    fn test_effective_api_type_structured_output_fallback_to_chat() {
+        let make_provider = |fallback| {
+            let provider = OpenAIProvider::new(
+                "gpt-4.1-mini".to_string(),
+                None,
+                OpenAICredentials::None,
+                OpenAIAPIType::ChatCompletions,
+                false,
+                vec![],
+                HashMap::new(),
+            )
+            .expect("provider should construct");
+            if fallback {
+                provider.with_responses_structured_output_fallback_to_chat()
+            } else {
+                provider
+            }
+        };
+        let flagged = make_provider(true);
+        let plain = make_provider(false);
+
+        // Inbound Responses WITHOUT a response format: stays on Responses
+        // (streaming/reasoning benefits keep working).
+        let request = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::Responses),
+            ..Default::default()
+        };
+        expect_that!(
+            flagged.effective_api_type(&request),
+            eq(OpenAIAPIType::Responses)
+        );
+
+        // Inbound Responses WITH structured output (json_schema -> json_mode
+        // Strict, json_object -> On): downgraded to chat completions.
+        for json_mode in [
+            ModelInferenceRequestJsonMode::Strict,
+            ModelInferenceRequestJsonMode::On,
+        ] {
+            let request = ModelInferenceRequest {
+                requested_api_type: Some(ApiType::Responses),
+                json_mode,
+                ..Default::default()
+            };
+            expect_that!(
+                flagged.effective_api_type(&request),
+                eq(OpenAIAPIType::ChatCompletions)
+            );
+            // Without the flag: no downgrade (protocol preservation).
+            expect_that!(
+                plain.effective_api_type(&request),
+                eq(OpenAIAPIType::Responses)
+            );
+        }
     }
 
     #[test]
@@ -6886,5 +7233,141 @@ mod tests {
         let delta: OpenAIDelta =
             serde_json::from_value(json_with_both_null).expect("should deserialize with both null");
         expect_that!(delta.reasoning_content, none());
+    }
+
+    #[tokio::test]
+    async fn test_batch_file_input_responses_api_shape() {
+        // A Responses-protocol batch row targets `/v1/responses` with a
+        // Responses API body (`input`, no `messages`).
+        let request = ModelInferenceRequest::default();
+        let input = OpenAIBatchFileInput::new(
+            Uuid::now_v7(),
+            "gpt-4.1-mini",
+            &request,
+            OpenAIAPIType::Responses,
+            false,
+            &[],
+        )
+        .await
+        .expect("responses batch file input should build");
+        let value = serde_json::to_value(&input).expect("should serialize");
+        assert_eq!(value["url"], json!("/v1/responses"));
+        assert_eq!(value["method"], json!("POST"));
+        assert_eq!(value["body"]["model"], json!("gpt-4.1-mini"));
+        assert!(
+            value["body"].get("input").is_some(),
+            "responses body should have `input`"
+        );
+        assert!(
+            value["body"].get("messages").is_none(),
+            "responses body should not have `messages`"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_batch_file_input_chat_completions_shape() {
+        // A chat-protocol batch row keeps the existing behavior:
+        // `/v1/chat/completions` with a chat completions body.
+        let request = ModelInferenceRequest::default();
+        let input = OpenAIBatchFileInput::new(
+            Uuid::now_v7(),
+            "gpt-4.1-mini",
+            &request,
+            OpenAIAPIType::ChatCompletions,
+            false,
+            &[],
+        )
+        .await
+        .expect("chat batch file input should build");
+        let value = serde_json::to_value(&input).expect("should serialize");
+        assert_eq!(value["url"], json!("/v1/chat/completions"));
+        assert_eq!(value["method"], json!("POST"));
+        assert!(
+            value["body"].get("messages").is_some(),
+            "chat body should have `messages`"
+        );
+        assert!(
+            value["body"].get("input").is_none(),
+            "chat body should not have `input`"
+        );
+    }
+
+    #[gtest]
+    fn test_batch_file_row_parses_responses_body() {
+        // Output-file rows from a `/v1/responses` batch are detected by body
+        // shape and parsed as Responses API bodies (including reasoning content).
+        let inference_id = Uuid::now_v7();
+        let row_json = json!({
+            "custom_id": inference_id.to_string(),
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "id": "resp_123",
+                    "object": "response",
+                    "output": [
+                        {
+                            "type": "reasoning",
+                            "summary": [],
+                            "content": [{"type": "reasoning_text", "text": "thinking hard"}]
+                        },
+                        {
+                            "type": "message",
+                            "role": "assistant",
+                            "content": [{"type": "output_text", "text": "Hello from batch"}]
+                        }
+                    ],
+                    "usage": {"input_tokens": 3, "output_tokens": 4},
+                    "incomplete_details": null
+                }
+            }
+        });
+        let row: OpenAIBatchFileRow =
+            serde_json::from_value(row_json).expect("row should deserialize");
+        let output: ProviderBatchInferenceOutput =
+            row.try_into().expect("responses row should convert");
+        expect_that!(output.id, eq(inference_id));
+        expect_that!(output.usage.input_tokens, some(eq(3)));
+        expect_that!(output.usage.output_tokens, some(eq(4)));
+        let has_text = output.output.iter().any(
+            |block| matches!(block, ContentBlockOutput::Text(text) if text.text == "Hello from batch"),
+        );
+        let has_thought = output.output.iter().any(|block| {
+            matches!(block, ContentBlockOutput::Thought(thought) if thought.text.as_deref() == Some("thinking hard"))
+        });
+        expect_that!(has_text, eq(true), "expected a text output block");
+        expect_that!(has_thought, eq(true), "expected a thought output block");
+    }
+
+    #[gtest]
+    fn test_batch_file_row_parses_chat_body() {
+        // Regression: chat completions output rows still parse as before.
+        let inference_id = Uuid::now_v7();
+        let row_json = json!({
+            "custom_id": inference_id.to_string(),
+            "response": {
+                "status_code": 200,
+                "body": {
+                    "id": "chatcmpl-123",
+                    "object": "chat.completion",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "chat hello"},
+                        "finish_reason": "stop"
+                    }],
+                    "usage": {"prompt_tokens": 5, "completion_tokens": 6}
+                }
+            }
+        });
+        let row: OpenAIBatchFileRow =
+            serde_json::from_value(row_json).expect("row should deserialize");
+        let output: ProviderBatchInferenceOutput = row.try_into().expect("chat row should convert");
+        expect_that!(output.id, eq(inference_id));
+        expect_that!(output.usage.input_tokens, some(eq(5)));
+        expect_that!(output.usage.output_tokens, some(eq(6)));
+        expect_that!(output.finish_reason, some(eq(FinishReason::Stop)));
+        let has_text = output.output.iter().any(
+            |block| matches!(block, ContentBlockOutput::Text(text) if text.text == "chat hello"),
+        );
+        expect_that!(has_text, eq(true), "expected a text output block");
     }
 }

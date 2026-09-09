@@ -46,6 +46,7 @@ use crate::endpoints::inference::{
 use crate::error::{Error, ErrorDetails};
 use crate::observability_tags::{API_KEY_PUBLIC_ID_TAG, ASYNC_TAG, ASYNC_TASK_ID_TAG};
 use crate::utils::gateway::{AppState, AppStateData};
+use tensorzero_types::ApiType;
 
 use super::anthropic_messages::{
     AnthropicMessagesParams, anthropic_from_inference, execute_anthropic, prepare_anthropic_sse,
@@ -212,14 +213,14 @@ fn validate_submit_body(
         AsyncInferenceApiKind::Chat => {
             let mut params: OpenAICompatibleParams = deserialize_body(body)?;
             params.stream = Some(true);
-            validate_openai_compatible_request(headers, params)
+            validate_openai_compatible_request(headers, params, ApiType::ChatCompletions)
                 .map_err(|rejection| rejection.error)?;
         }
         AsyncInferenceApiKind::Responses => {
             let responses_params: OpenAICompatibleResponsesParams = deserialize_body(body)?;
             let mut params = responses_params.into_chat_params()?;
             params.stream = Some(true);
-            validate_openai_compatible_request(headers, params)
+            validate_openai_compatible_request(headers, params, ApiType::Responses)
                 .map_err(|rejection| rejection.error)?;
         }
         AsyncInferenceApiKind::Messages => {
@@ -795,10 +796,16 @@ async fn run_openai_style(
     };
     openai_params.stream = Some(true);
 
+    let requested_api_type = match style {
+        OpenAIStyle::Chat => ApiType::ChatCompletions,
+        OpenAIStyle::Responses => ApiType::Responses,
+    };
     let mut validated =
-        validate_openai_compatible_request(headers, openai_params).map_err(|rejection| {
-            AsyncInferenceError::from_error(&rejection.error, rejection.include_raw_response)
-        })?;
+        validate_openai_compatible_request(headers, openai_params, requested_api_type).map_err(
+            |rejection| {
+                AsyncInferenceError::from_error(&rejection.error, rejection.include_raw_response)
+            },
+        )?;
     validated.params.include_aggregated_response = true;
     insert_api_key_public_id_tag(&mut validated.params.extra_internal_tags, api_key_public_id);
     insert_async_tags(&mut validated.params.extra_internal_tags, task_id);
@@ -1312,8 +1319,9 @@ mod tests {
         });
         let params: OpenAICompatibleParams =
             serde_json::from_value(body).expect("should deserialize");
-        let validated = validate_openai_compatible_request(&HeaderMap::new(), params)
-            .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
+        let validated =
+            validate_openai_compatible_request(&HeaderMap::new(), params, ApiType::ChatCompletions)
+                .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
 
         // Forged tags survive submit-time validation in the client-visible map,
         // where `inference()`'s `validate_tags` rejects them: callers cannot
@@ -1339,8 +1347,9 @@ mod tests {
         });
         let params: OpenAICompatibleParams =
             serde_json::from_value(body).expect("should deserialize");
-        let mut validated = validate_openai_compatible_request(&HeaderMap::new(), params)
-            .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
+        let mut validated =
+            validate_openai_compatible_request(&HeaderMap::new(), params, ApiType::ChatCompletions)
+                .unwrap_or_else(|rejection| panic!("should validate: {}", rejection.error));
 
         // Same stamping sequence as `run_openai_style`, after validation.
         insert_api_key_public_id_tag(&mut validated.params.extra_internal_tags, None);
