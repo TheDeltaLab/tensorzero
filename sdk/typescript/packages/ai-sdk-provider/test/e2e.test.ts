@@ -112,15 +112,7 @@ describe.skipIf(!RUN_E2E)("e2e responsesModel against a real gateway", () => {
     });
     expect(batch.status).toBe("pending");
 
-    let status = await experimental_getBatchStatus({ model, batch });
-    const deadline = Date.now() + 120_000;
-    while (status.status === "pending") {
-      if (Date.now() > deadline) {
-        throw new Error("batch did not reach a terminal state in time");
-      }
-      await new Promise((resolve) => setTimeout(resolve, 1_000));
-      status = await experimental_getBatchStatus({ model, batch });
-    }
+    const status = await model.waitForBatch(batch.id, { timeoutMs: 120_000 });
     expect(status.status).toBe("completed");
 
     for await (const item of experimental_getBatchResults({ model, batch })) {

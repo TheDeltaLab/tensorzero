@@ -445,3 +445,82 @@ describe("responsesModel", () => {
     }
   });
 });
+
+describe("waitForBatch", () => {
+  const batchId = JSON.stringify({
+    v: 1,
+    items: [{ id: "req-a", taskId: "task-0" }],
+  });
+
+  it("polls with backoff until the batch reaches a terminal state", async () => {
+    let polls = 0;
+    const { fetchImpl } = gatewayFetch((request) => {
+      const match = /\/v1\/async_tasks\/([^/]+)$/.exec(request.url);
+      const taskId = match?.[1] ?? "";
+      polls += 1;
+      return {
+        body:
+          polls < 3
+            ? { status: "running", task_id: taskId, elapsed_ms: polls * 10 }
+            : { status: "completed", task_id: taskId, response: {} },
+      };
+    });
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+
+    const status = await provider
+      .responsesModel("m")
+      .waitForBatch(batchId, { intervalMs: 1 });
+
+    expect(polls).toBe(3);
+    expect(status.status).toBe("completed");
+    expect(status.requestCounts).toMatchObject({ total: 1, completed: 1 });
+  });
+
+  it("returns the failed status instead of throwing when tasks fail", async () => {
+    const { fetchImpl } = gatewayFetch(() => ({
+      body: { status: "failed", task_id: "task-0", error: { message: "boom" } },
+    }));
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+
+    const status = await provider
+      .responsesModel("m")
+      .waitForBatch(batchId, { intervalMs: 1 });
+
+    expect(status.status).toBe("failed");
+    expect(status.error).toEqual({ message: "boom" });
+  });
+
+  it("throws TensorZeroTimeoutError when timeoutMs elapses first", async () => {
+    const { fetchImpl } = gatewayFetch((request) => {
+      const match = /\/v1\/async_tasks\/([^/]+)$/.exec(request.url);
+      return {
+        body: { status: "running", task_id: match?.[1] ?? "" },
+      };
+    });
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+
+    await expect(
+      provider
+        .responsesModel("m")
+        .waitForBatch(batchId, { intervalMs: 1, timeoutMs: 5 }),
+    ).rejects.toThrow(/did not reach a terminal state within 5ms/);
+  });
+
+  it("rejects immediately when the signal aborts during the wait", async () => {
+    const { fetchImpl } = gatewayFetch((request) => {
+      const match = /\/v1\/async_tasks\/([^/]+)$/.exec(request.url);
+      return {
+        body: { status: "running", task_id: match?.[1] ?? "" },
+      };
+    });
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new Error("deadline")), 10);
+
+    await expect(
+      provider
+        .responsesModel("m")
+        .waitForBatch(batchId, { intervalMs: 1_000, signal: controller.signal }),
+    ).rejects.toThrow("deadline");
+  });
+});
