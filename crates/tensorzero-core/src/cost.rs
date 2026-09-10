@@ -235,6 +235,20 @@ fn pointers_for_mode(entry: &CostConfigEntry, mode: ResponseMode) -> &[String] {
 }
 
 fn lookup_in_json(json: &Value, pointer: &str) -> Result<Option<Decimal>, Error> {
+    if let Some(numeric) = lookup_pointer_in_json(json, pointer)? {
+        return Ok(Some(numeric));
+    }
+    // Responses-API SSE frames (`response.completed` etc.) wrap the response
+    // object — and its `usage` — under a top-level `response` key, so cost
+    // pointers written for flat usage objects (`/usage/input_tokens`) would
+    // otherwise miss streaming usage entirely.
+    if json.get("response").is_some() {
+        return lookup_pointer_in_json(json, &format!("/response{pointer}"));
+    }
+    Ok(None)
+}
+
+fn lookup_pointer_in_json(json: &Value, pointer: &str) -> Result<Option<Decimal>, Error> {
     match json.pointer(pointer) {
         Some(value) => {
             let numeric = value_to_decimal(value).ok_or_else(|| {
@@ -1623,6 +1637,29 @@ cost_per_million = 3.0
             cost,
             Decimal::from(150),
             "should take the max value across cumulative chunks"
+        );
+    }
+
+    #[test]
+    fn test_streaming_chunks_responses_frame_wraps_usage_under_response() {
+        // Responses-API SSE frames wrap the response object under a top-level
+        // `response` key; flat cost pointers must resolve through the wrapper.
+        let delta = r#"{"type":"response.output_text.delta","delta":"hello"}"#;
+        let completed = r#"{"type":"response.completed","response":{"id":"resp_1","usage":{"input_tokens":100,"output_tokens":50,"input_tokens_details":{"cached_tokens":10}}}}"#;
+        let config = vec![
+            unified_config("/usage/input_tokens", Decimal::from(3), true),
+            unified_config("/usage/output_tokens", Decimal::from(15), false),
+            unified_config("/usage/input_tokens_details/cached_tokens", Decimal::from(1), false),
+        ];
+        let chunks: Vec<&str> = vec![delta, completed];
+        let cost = compute_cost_from_streaming_chunks(&chunks, &config)
+            .expect("should compute cost through the `response` wrapper");
+        let expected = Decimal::from(100) * Decimal::from(3)
+            + Decimal::from(50) * Decimal::from(15)
+            + Decimal::from(10) * Decimal::from(1);
+        assert_eq!(
+            cost, expected,
+            "flat pointers should resolve against /response-wrapped usage"
         );
     }
 
