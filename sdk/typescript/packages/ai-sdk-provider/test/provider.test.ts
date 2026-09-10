@@ -275,3 +275,173 @@ describe("experimental_doGetBatchResults", () => {
     });
   });
 });
+
+describe("responsesModel", () => {
+  const responsesBody = {
+    id: "resp-1",
+    object: "response",
+    created_at: 1789044000,
+    model: "tensorzero::model_name::deepseek-v4-flash",
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        id: "msg-1",
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: '{"ok":true}', annotations: [] }],
+      },
+    ],
+    usage: {
+      input_tokens: 84,
+      output_tokens: 20,
+      total_tokens: 104,
+      input_tokens_details: { cached_tokens: 40 },
+      output_tokens_details: { reasoning_tokens: 5 },
+    },
+  };
+
+  it("returns a v4 model with the batch capability", () => {
+    const provider = createTensorZero({
+      ...baseSettings,
+      fetch: gatewayFetch(() => ({ body: {} })).fetchImpl,
+    });
+    const model = provider.responsesModel("deepseek-v4-flash");
+    expect(model.specificationVersion).toBe("v4");
+    expect(model.modelId).toBe("deepseek-v4-flash");
+    expect(typeof model.doGenerate).toBe("function");
+    expect(typeof model.doStream).toBe("function");
+    expect(typeof model.experimental_doStartBatch).toBe("function");
+    expect(typeof model.experimental_doGetBatchResults).toBe("function");
+  });
+
+  it("doGenerate posts to the synchronous responses endpoint", async () => {
+    const { fetchImpl, requests } = gatewayFetch(() => ({ body: responsesBody }));
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+    const model = provider.responsesModel("deepseek-v4-flash");
+
+    const result = await model.doGenerate({ prompt: prompt("hi") });
+
+    expect(requests[0]!.url).toBe("http://gateway.test/v1/responses");
+    expect(result.content).toEqual([
+      expect.objectContaining({ type: "text", text: '{"ok":true}' }),
+    ]);
+    expect(result.finishReason).toMatchObject({ unified: "stop" });
+    expect(result.usage.inputTokens).toEqual({
+      total: 84,
+      noCache: 44,
+      cacheRead: 40,
+      cacheWrite: undefined,
+    });
+    expect(result.usage.outputTokens).toEqual({
+      total: 20,
+      text: 15,
+      reasoning: 5,
+    });
+  });
+
+  it("experimental_doStartBatch captures a Responses body and submits to /responses/async", async () => {
+    const { fetchImpl, requests } = gatewayFetch(() => ({
+      status: 202,
+      body: { task_id: "task-0" },
+    }));
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+    const model = provider.responsesModel("deepseek-v4-flash");
+
+    const result = await model.experimental_doStartBatch({
+      requests: [
+        {
+          id: "req-a",
+          options: {
+            prompt: [
+              { role: "system", content: "extract" },
+              { role: "user", content: [{ type: "text", text: "hi" }] },
+            ],
+            responseFormat: {
+              type: "json",
+              schema: { type: "object" },
+              name: "extraction",
+            },
+          },
+        },
+      ],
+    });
+
+    expect(decodeBatchId(result.batchId)).toEqual({
+      v: 1,
+      items: [{ id: "req-a", taskId: "task-0" }],
+    });
+
+    const submits = requests.filter((r) => r.url.endsWith("/responses/async"));
+    expect(submits).toHaveLength(1);
+    const body = submits[0]!.body as Record<string, any>;
+    expect(body["model"]).toBe("deepseek-v4-flash");
+    expect(Array.isArray(body["input"])).toBe(true);
+    expect(body["text"]).toMatchObject({
+      format: { type: "json_schema", name: "extraction" },
+    });
+  });
+
+  it("experimental_doGetBatchResults converts a completed Responses task", async () => {
+    const { fetchImpl } = gatewayFetch(() => ({
+      body: { status: "completed", task_id: "task-0", response: responsesBody },
+    }));
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+
+    const batchId = JSON.stringify({
+      v: 1,
+      items: [{ id: "req-a", taskId: "task-0" }],
+    });
+    const stream = await provider
+      .responsesModel("deepseek-v4-flash")
+      .experimental_doGetBatchResults({ batchId });
+    const items = [];
+    const reader = stream.getReader();
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      items.push(value);
+    }
+
+    const item = items[0]!;
+    expect(item.status).toBe("succeeded");
+    if (item.status === "succeeded") {
+      expect(item.result.content).toEqual([{ type: "text", text: '{"ok":true}' }]);
+      expect(item.result.finishReason.unified).toBe("stop");
+      expect(item.result.usage.inputTokens.cacheRead).toBe(40);
+    }
+  });
+
+  it("maps an incomplete response to a length finish reason", async () => {
+    const { fetchImpl } = gatewayFetch(() => ({
+      body: {
+        status: "completed",
+        task_id: "task-0",
+        response: {
+          ...responsesBody,
+          status: "incomplete",
+          incomplete_details: { reason: "max_output_tokens" },
+        },
+      },
+    }));
+    const provider = createTensorZero({ ...baseSettings, fetch: fetchImpl });
+
+    const batchId = JSON.stringify({
+      v: 1,
+      items: [{ id: "req-a", taskId: "task-0" }],
+    });
+    const stream = await provider
+      .responsesModel("deepseek-v4-flash")
+      .experimental_doGetBatchResults({ batchId });
+    const reader = stream.getReader();
+    const { value } = await reader.read();
+
+    expect(value!.status).toBe("succeeded");
+    if (value!.status === "succeeded") {
+      expect(value!.result.finishReason).toEqual({
+        unified: "length",
+        raw: "max_output_tokens",
+      });
+    }
+  });
+});

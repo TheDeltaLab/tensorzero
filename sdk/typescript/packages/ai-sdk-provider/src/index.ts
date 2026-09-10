@@ -4,7 +4,11 @@ export type {
   TensorZeroProvider,
   TensorZeroProviderSettings,
 } from "./tensorzero-provider.js";
-export type { TensorZeroChatLanguageModel } from "./batch-model.js";
+export type {
+  TensorZeroAsyncLanguageModel,
+  TensorZeroChatLanguageModel,
+  TensorZeroResponsesLanguageModel,
+} from "./batch-model.js";
 export { decodeBatchId, encodeBatchId } from "./batch-reference.js";
 export type {
   TensorZeroBatchItem,
