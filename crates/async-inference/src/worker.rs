@@ -24,7 +24,7 @@ pub struct AsyncInferenceWorkerConfig {
 
 /// Spawn the async inference worker as a background task.
 ///
-/// The durable worker is started before spawning so configuration errors
+/// The queue is ensured before the worker is started, so configuration errors
 /// (missing queue, missing migrations, database issues) surface at gateway
 /// startup instead of failing silently in the background. The worker shuts
 /// down when `cancel_token` is cancelled.
@@ -43,6 +43,12 @@ pub async fn spawn_async_inference_worker(
         .register_instance(AsyncInferenceTask)?
         .build_with_state(config.state)
         .await?;
+
+    // Migration 20260903000000 creates the queue, but the queue is a runtime
+    // object that can be dropped later (`durable.drop_queue`, manual SQL) while
+    // the migration stays recorded, leaving the worker polling a missing table.
+    // `durable.create_queue` is idempotent, so re-ensure it on every startup.
+    durable.create_queue(None).await?;
 
     let worker = durable.start_worker(config.worker_options).await?;
 
