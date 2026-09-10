@@ -1,5 +1,6 @@
 // Modified by Delta-AI under Apache 2.0
 import type { LanguageModelV4, ProviderV4 } from "@ai-sdk/provider";
+import { createOpenAI, type OpenAIProviderSettings } from "@ai-sdk/openai";
 import {
   createOpenAICompatible,
   type OpenAICompatibleProviderSettings,
@@ -10,8 +11,12 @@ import {
   type TensorZeroClientOptions,
 } from "@delta-ai/tensorzero-sdk";
 import {
-  TensorZeroChatLanguageModelImpl,
+  TensorZeroBatchLanguageModelImpl,
+  chatCompletionsProtocol,
+  responsesProtocol,
+  type CaptureModelFactory,
   type TensorZeroChatLanguageModel,
+  type TensorZeroResponsesLanguageModel,
 } from "./batch-model.js";
 
 export interface TensorZeroProviderSettings {
@@ -43,6 +48,14 @@ export interface TensorZeroProvider extends ProviderV4 {
   (modelId: string): TensorZeroChatLanguageModel;
   languageModel(modelId: string): TensorZeroChatLanguageModel;
   chatModel(modelId: string): TensorZeroChatLanguageModel;
+  /**
+   * A model over the OpenAI-compatible Responses API: synchronous
+   * `doGenerate`/`doStream` against `POST /v1/responses`, async batch
+   * against `POST /v1/responses/async`. Structured output rides in the
+   * request's `text.format` (strict json_schema), which providers like
+   * DeepSeek only enforce on the Responses API — not on chat completions.
+   */
+  responsesModel(modelId: string): TensorZeroResponsesLanguageModel;
   /** Async-task client for the same gateway (submit / poll / stream / wait). */
   readonly asyncClient: TensorZeroClient;
 }
@@ -53,6 +66,30 @@ export interface TensorZeroProvider extends ProviderV4 {
  */
 function gatewayBaseURL(baseURL: string): string {
   return baseURL.replace(/\/+$/, "").replace(/\/v1$/, "");
+}
+
+/**
+ * One-shot model whose fetch records the request body instead of performing
+ * the HTTP call — driving `doGenerate` on it yields exactly the body the
+ * sync path would send (see `TensorZeroBatchLanguageModelImpl`).
+ */
+function captureFetchFactory(): {
+  captured: { value?: { url: string; body: Record<string, unknown> } };
+  fetch: NonNullable<OpenAICompatibleProviderSettings["fetch"]>;
+} {
+  const captured: { value?: { url: string; body: Record<string, unknown> } } = {};
+  return {
+    captured,
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      captured.value = {
+        url: String(input),
+        body: init?.body
+          ? (JSON.parse(String(init.body)) as Record<string, unknown>)
+          : {},
+      };
+      throw new Error("tensorzero batch request body captured");
+    }) as NonNullable<OpenAICompatibleProviderSettings["fetch"]>,
+  };
 }
 
 export function createTensorZero(
@@ -69,6 +106,14 @@ export function createTensorZero(
 
   const provider = createOpenAICompatible(compatibleSettings);
 
+  const responsesSettings: OpenAIProviderSettings = {
+    name: "tensorzero",
+    baseURL: settings.baseURL,
+    apiKey: settings.apiKey,
+    headers: settings.headers,
+    fetch: settings.fetch as OpenAIProviderSettings["fetch"],
+  };
+
   const clientOptions: TensorZeroClientOptions = {
     baseURL: gatewayBaseURL(settings.baseURL),
     apiKey: settings.apiKey,
@@ -79,28 +124,39 @@ export function createTensorZero(
 
   const createChatModel = (modelId: string): TensorZeroChatLanguageModel => {
     const inner = provider.chatModel(modelId);
-    return new TensorZeroChatLanguageModelImpl(
+    const createCaptureModel: CaptureModelFactory = () => {
+      const { captured, fetch } = captureFetchFactory();
+      const captureProvider = createOpenAICompatible({
+        ...compatibleSettings,
+        fetch,
+      });
+      return { model: captureProvider.chatModel(modelId), captured };
+    };
+    return new TensorZeroBatchLanguageModelImpl(
       inner,
-      () => {
-        // One-shot model whose fetch records the request body instead of
-        // performing the HTTP call (see `captureRequestBody`).
-        const captured: { value?: { url: string; body: Record<string, unknown> } } =
-          {};
-        const captureProvider = createOpenAICompatible({
-          ...compatibleSettings,
-          fetch: (async (input: string | URL | Request, init?: RequestInit) => {
-            captured.value = {
-              url: String(input),
-              body: init?.body
-                ? (JSON.parse(String(init.body)) as Record<string, unknown>)
-                : {},
-            };
-            throw new Error("tensorzero batch request body captured");
-          }) as NonNullable<OpenAICompatibleProviderSettings["fetch"]>,
-        });
-        return { model: captureProvider.chatModel(modelId), captured };
-      },
+      createCaptureModel,
       asyncClient,
+      chatCompletionsProtocol,
+    );
+  };
+
+  const createResponsesModel = (
+    modelId: string,
+  ): TensorZeroResponsesLanguageModel => {
+    const inner = createOpenAI(responsesSettings).responses(modelId);
+    const createCaptureModel: CaptureModelFactory = () => {
+      const { captured, fetch } = captureFetchFactory();
+      const captureProvider = createOpenAI({
+        ...responsesSettings,
+        fetch: fetch as OpenAIProviderSettings["fetch"],
+      });
+      return { model: captureProvider.responses(modelId), captured };
+    };
+    return new TensorZeroBatchLanguageModelImpl(
+      inner,
+      createCaptureModel,
+      asyncClient,
+      responsesProtocol,
     );
   };
 
@@ -111,6 +167,7 @@ export function createTensorZero(
     specificationVersion: "v4" as const,
     languageModel: (modelId: string) => createChatModel(modelId),
     chatModel: (modelId: string) => createChatModel(modelId),
+    responsesModel: (modelId: string) => createResponsesModel(modelId),
     embeddingModel: (modelId: string) => provider.embeddingModel(modelId),
     imageModel: (modelId: string) => provider.imageModel(modelId),
     asyncClient,

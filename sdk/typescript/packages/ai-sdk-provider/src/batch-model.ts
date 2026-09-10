@@ -13,14 +13,29 @@ import type {
 } from "@ai-sdk/provider";
 import type { AsyncTaskStatus, TensorZeroClient } from "@delta-ai/tensorzero-sdk";
 import { decodeBatchId, encodeBatchId } from "./batch-reference.js";
-import { chatCompletionToGenerateResult } from "./convert-response.js";
+import {
+  chatCompletionToGenerateResult,
+  responsesApiToGenerateResult,
+} from "./convert-response.js";
 
 type BatchModel = Experimental_BatchModelV4<
   Experimental_LanguageModelV4BatchRequest,
   LanguageModelV4GenerateResult
 >;
 
-export type TensorZeroChatLanguageModel = LanguageModelV4 & BatchModel;
+/**
+ * A TensorZero language model: the wrapped protocol's synchronous
+ * `doGenerate`/`doStream` plus the async-task batch capability
+ * (`experimental_doStartBatch` submits each request as a durable async task
+ * over the same protocol).
+ */
+export type TensorZeroAsyncLanguageModel = LanguageModelV4 & BatchModel;
+
+/** Chat-completions flavor (`chatModel`). */
+export type TensorZeroChatLanguageModel = TensorZeroAsyncLanguageModel;
+
+/** OpenAI-Responses flavor (`responsesModel`). */
+export type TensorZeroResponsesLanguageModel = TensorZeroAsyncLanguageModel;
 
 interface CapturedRequest {
   url: string;
@@ -28,7 +43,7 @@ interface CapturedRequest {
 }
 
 /**
- * The openai-compatible chat model keeps its request-body serialization
+ * The wrapped protocol models keep their request-body serialization
  * (`getArgs`) private. To reuse it, the provider factory hands us a function
  * that builds a one-shot model whose fetch records the outgoing request body
  * instead of performing I/O; driving `doGenerate` then yields exactly the
@@ -38,6 +53,19 @@ export type CaptureModelFactory = () => {
   model: LanguageModelV4;
   captured: { value?: CapturedRequest };
 };
+
+/** How the async batch talks to the gateway for one wire protocol. */
+export interface AsyncBatchProtocol {
+  /** Protocol label for error messages, e.g. `"chat completions"`. */
+  label: string;
+  /** Submit a captured request body to the protocol's `/async` endpoint. */
+  submit(
+    client: TensorZeroClient,
+    body: Record<string, unknown>,
+  ): Promise<{ taskId: string }>;
+  /** Convert a completed task's response payload into a generate result. */
+  convert(response: unknown): LanguageModelV4GenerateResult;
+}
 
 function errorMessage(error: unknown): string {
   if (typeof error === "string") return error;
@@ -52,13 +80,14 @@ function errorMessage(error: unknown): string {
   return JSON.stringify(error);
 }
 
-export class TensorZeroChatLanguageModelImpl implements TensorZeroChatLanguageModel {
+export class TensorZeroBatchLanguageModelImpl implements TensorZeroAsyncLanguageModel {
   readonly specificationVersion = "v4" as const;
 
   constructor(
     private readonly inner: LanguageModelV4,
     private readonly createCaptureModel: CaptureModelFactory,
     private readonly asyncClient: TensorZeroClient,
+    private readonly protocol: AsyncBatchProtocol,
   ) {}
 
   get provider(): string {
@@ -81,7 +110,7 @@ export class TensorZeroChatLanguageModelImpl implements TensorZeroChatLanguageMo
     return this.inner.doStream(options);
   }
 
-  /** Serialize a normalized batch request into a chat completions body. */
+  /** Serialize a normalized batch request into a protocol request body. */
   private async captureRequestBody(
     request: Experimental_LanguageModelV4BatchRequest,
     abortSignal?: AbortSignal,
@@ -110,7 +139,7 @@ export class TensorZeroChatLanguageModelImpl implements TensorZeroChatLanguageMo
     }
     if (!captured.value) {
       throw new Error(
-        `Failed to serialize batch request "${request.id}" into a chat completions body`,
+        `Failed to serialize batch request "${request.id}" into a ${this.protocol.label} body`,
       );
     }
     return captured.value.body;
@@ -138,7 +167,7 @@ export class TensorZeroChatLanguageModelImpl implements TensorZeroChatLanguageMo
       bodies.push(await this.captureRequestBody(request, options.abortSignal));
     }
     const launches = await Promise.all(
-      bodies.map((body) => this.asyncClient.submitChatCompletion(body)),
+      bodies.map((body) => this.protocol.submit(this.asyncClient, body)),
     );
 
     const items = options.requests.map((request, index) => ({
@@ -209,7 +238,7 @@ export class TensorZeroChatLanguageModelImpl implements TensorZeroChatLanguageMo
     );
 
     const results = reference.items.map((item, index) =>
-      toItemResult(item.id, statuses[index]!),
+      toItemResult(item.id, statuses[index]!, this.protocol),
     );
 
     return new ReadableStream<
@@ -228,12 +257,13 @@ export class TensorZeroChatLanguageModelImpl implements TensorZeroChatLanguageMo
 function toItemResult(
   id: string,
   status: AsyncTaskStatus,
+  protocol: AsyncBatchProtocol,
 ): Experimental_BatchV4ItemResult<LanguageModelV4GenerateResult> {
   if (status.status === "completed") {
     return {
       id,
       status: "succeeded",
-      result: chatCompletionToGenerateResult(status.response),
+      result: protocol.convert(status.response),
     };
   }
   if (status.status === "failed") {
@@ -266,3 +296,17 @@ function toItemResult(
     error: { message: `Async task ${status.taskId} is still ${status.status}` },
   };
 }
+
+/** Async batch over `POST /v1/chat/completions/async`. */
+export const chatCompletionsProtocol: AsyncBatchProtocol = {
+  label: "chat completions",
+  submit: (client, body) => client.submitChatCompletion(body),
+  convert: chatCompletionToGenerateResult,
+};
+
+/** Async batch over `POST /v1/responses/async`. */
+export const responsesProtocol: AsyncBatchProtocol = {
+  label: "responses",
+  submit: (client, body) => client.submitResponses(body),
+  convert: responsesApiToGenerateResult,
+};

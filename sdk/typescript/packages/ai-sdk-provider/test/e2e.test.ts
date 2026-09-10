@@ -2,10 +2,12 @@
 import { describe, expect, it } from "vitest";
 import {
   generateText,
+  generateObject,
   experimental_startTextBatch,
   experimental_getBatchStatus,
   experimental_getBatchResults,
 } from "ai";
+import { z } from "zod";
 import { createTensorZero } from "../src/index.js";
 
 const GATEWAY = process.env["TZ_E2E_GATEWAY"];
@@ -37,12 +39,12 @@ describe.skipIf(!RUN_E2E)("e2e against a real gateway", () => {
         {
           id: "e2e-req-1",
           prompt: "Say hello in one word.",
-          maxOutputTokens: 32,
+          maxOutputTokens: 512,
         },
         {
           id: "e2e-req-2",
           prompt: "Say goodbye in one word.",
-          maxOutputTokens: 32,
+          maxOutputTokens: 512,
         },
       ],
     });
@@ -77,5 +79,55 @@ describe.skipIf(!RUN_E2E)("e2e against a real gateway", () => {
       }
     }
     expect([...byId.keys()].sort()).toEqual(["e2e-req-1", "e2e-req-2"]);
+  }, 180_000);
+});
+
+describe.skipIf(!RUN_E2E)("e2e responsesModel against a real gateway", () => {
+  it("generateText works over the synchronous Responses API", async () => {
+    const result = await generateText({
+      model: tensorzero!.responsesModel(MODEL),
+      prompt: "Say hello in one word.",
+      maxOutputTokens: 512,
+    });
+    expect(result.text.length).toBeGreaterThan(0);
+  }, 120_000);
+
+  it("generateObject uses strict json_schema over the Responses API", async () => {
+    const { object } = await generateObject({
+      model: tensorzero!.responsesModel(MODEL),
+      prompt: 'Reply with {"ok": true}',
+      schema: z.object({ ok: z.boolean() }),
+    });
+    expect(object).toEqual({ ok: true });
+  }, 120_000);
+
+  it("responses startTextBatch → getBatchStatus → getBatchResults end to end", async () => {
+    const model = tensorzero!.responsesModel(MODEL);
+
+    const batch = await experimental_startTextBatch({
+      model,
+      requests: [
+        { id: "resp-req-1", prompt: "Say hello in one word.", maxOutputTokens: 512 },
+      ],
+    });
+    expect(batch.status).toBe("pending");
+
+    let status = await experimental_getBatchStatus({ model, batch });
+    const deadline = Date.now() + 120_000;
+    while (status.status === "pending") {
+      if (Date.now() > deadline) {
+        throw new Error("batch did not reach a terminal state in time");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      status = await experimental_getBatchStatus({ model, batch });
+    }
+    expect(status.status).toBe("completed");
+
+    for await (const item of experimental_getBatchResults({ model, batch })) {
+      expect(item.status).toBe("succeeded");
+      if (item.status === "succeeded") {
+        expect(item.text.length).toBeGreaterThan(0);
+      }
+    }
   }, 180_000);
 });
