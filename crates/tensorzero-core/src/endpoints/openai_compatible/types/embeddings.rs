@@ -63,12 +63,9 @@ impl TryFrom<OpenAICompatibleEmbeddingParams> for EmbeddingParams {
             .strip_prefix(TENSORZERO_EMBEDDING_MODEL_NAME_PREFIX)
         {
             Some(model_name) => model_name.to_string(),
-            None => {
-                crate::utils::deprecation_warning(
-                    "Model names in the OpenAI-compatible embeddings endpoint should be prefixed with 'tensorzero::embedding_model_name::'",
-                );
-                params.model
-            }
+            // Bare model names (Synapse-compat callers) are the supported form;
+            // the `tensorzero::embedding_model_name::` prefix is optional.
+            None => params.model,
         };
         Ok(EmbeddingParams {
             input: params.input,
@@ -148,7 +145,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_try_from_embedding_params_deprecated() {
+    fn test_try_from_embedding_params_bare_model_name() {
         let logs_contain = crate::utils::testing::capture_logs();
         let openai_embedding_params = OpenAICompatibleEmbeddingParams {
             input: EmbeddingInput::Single("foo".to_string()),
@@ -164,14 +161,11 @@ mod tests {
         assert_eq!(param.model_name, "text-embedding-ada-002");
         assert_eq!(param.dimensions, Some(15));
         assert_eq!(param.encoding_format, EmbeddingEncodingFormat::Float);
-        assert!(logs_contain(
-            "Deprecation Warning: Model names in the OpenAI-compatible embeddings endpoint should be prefixed with 'tensorzero::embedding_model_name::'"
-        ));
+        assert!(!logs_contain("Deprecation Warning"));
     }
 
     #[test]
     fn test_try_from_embedding_params_strip() {
-        let logs_contain = crate::utils::testing::capture_logs();
         let openai_embedding_params = OpenAICompatibleEmbeddingParams {
             input: EmbeddingInput::Single("foo".to_string()),
             model: "tensorzero::embedding_model_name::text-embedding-ada-002".to_string(),
@@ -186,8 +180,5 @@ mod tests {
         assert_eq!(param.model_name, "text-embedding-ada-002");
         assert_eq!(param.dimensions, Some(15));
         assert_eq!(param.encoding_format, EmbeddingEncodingFormat::Float);
-        assert!(!logs_contain(
-            "Deprecation Warning: Model names in the OpenAI-compatible embeddings endpoint should be prefixed with 'tensorzero::embedding_model_name::'"
-        ));
     }
 }
