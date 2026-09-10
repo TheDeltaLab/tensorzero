@@ -6,6 +6,7 @@ export type {
 } from "./tensorzero-provider.js";
 export type {
   TensorZeroAsyncLanguageModel,
+  TensorZeroBatchWaitOptions,
   TensorZeroChatLanguageModel,
   TensorZeroResponsesLanguageModel,
 } from "./batch-model.js";
@@ -24,3 +25,4 @@ export type {
   TensorZeroClient,
   TensorZeroClientOptions,
 } from "@delta-ai/tensorzero-sdk";
+export { TensorZeroTimeoutError } from "@delta-ai/tensorzero-sdk";

@@ -11,7 +11,11 @@ import type {
   LanguageModelV4GenerateResult,
   SharedV4Warning,
 } from "@ai-sdk/provider";
-import type { AsyncTaskStatus, TensorZeroClient } from "@delta-ai/tensorzero-sdk";
+import {
+  TensorZeroTimeoutError,
+  type AsyncTaskStatus,
+  type TensorZeroClient,
+} from "@delta-ai/tensorzero-sdk";
 import { decodeBatchId, encodeBatchId } from "./batch-reference.js";
 import {
   chatCompletionToGenerateResult,
@@ -23,13 +27,32 @@ type BatchModel = Experimental_BatchModelV4<
   LanguageModelV4GenerateResult
 >;
 
+/** Options for `TensorZeroAsyncLanguageModel.waitForBatch`. */
+export interface TensorZeroBatchWaitOptions {
+  /** Initial poll interval in ms. Defaults to 1_000. */
+  intervalMs?: number;
+  /** Maximum poll interval in ms (exponential backoff cap). Defaults to 10_000. */
+  maxIntervalMs?: number;
+  /** Give up after this many ms with a `TensorZeroTimeoutError`. Defaults to no timeout. */
+  timeoutMs?: number;
+  /** Abort the wait loop. */
+  signal?: AbortSignal;
+}
+
 /**
  * A TensorZero language model: the wrapped protocol's synchronous
  * `doGenerate`/`doStream` plus the async-task batch capability
  * (`experimental_doStartBatch` submits each request as a durable async task
- * over the same protocol).
+ * over the same protocol), plus a convenience wait that polls the batch
+ * status with exponential backoff until it reaches a terminal state.
  */
-export type TensorZeroAsyncLanguageModel = LanguageModelV4 & BatchModel;
+export type TensorZeroAsyncLanguageModel = LanguageModelV4 &
+  BatchModel & {
+    waitForBatch(
+      batchId: string,
+      options?: TensorZeroBatchWaitOptions,
+    ): Promise<Experimental_BatchV4Status>;
+  };
 
 /** Chat-completions flavor (`chatModel`). */
 export type TensorZeroChatLanguageModel = TensorZeroAsyncLanguageModel;
@@ -227,6 +250,41 @@ export class TensorZeroBatchLanguageModelImpl implements TensorZeroAsyncLanguage
     };
   }
 
+  /**
+   * Poll `experimental_doGetBatchStatus` with exponential backoff until the
+   * batch reaches a terminal state (completed or failed). Mirrors the raw
+   * client's `waitForCompletion`, but aggregates every task in the batch.
+   */
+  async waitForBatch(
+    batchId: string,
+    options?: TensorZeroBatchWaitOptions,
+  ): Promise<Experimental_BatchV4Status> {
+    const intervalMs = options?.intervalMs ?? 1_000;
+    const maxIntervalMs = options?.maxIntervalMs ?? Math.max(intervalMs, 10_000);
+    const deadline =
+      options?.timeoutMs !== undefined
+        ? Date.now() + options.timeoutMs
+        : undefined;
+    let attempt = 0;
+    for (;;) {
+      const status = await this.experimental_doGetBatchStatus({
+        batchId,
+        abortSignal: options?.signal,
+      });
+      if (status.status !== "pending") {
+        return status;
+      }
+      const delay = Math.min(intervalMs * 2 ** attempt, maxIntervalMs);
+      attempt += 1;
+      if (deadline !== undefined && Date.now() + delay > deadline) {
+        throw new TensorZeroTimeoutError(
+          `Batch ${batchId} did not reach a terminal state within ${options?.timeoutMs}ms`,
+        );
+      }
+      await sleep(delay, options?.signal);
+    }
+  }
+
   async experimental_doGetBatchResults(
     options: Experimental_BatchV4OperationOptions,
   ): Promise<
@@ -310,3 +368,22 @@ export const responsesProtocol: AsyncBatchProtocol = {
   submit: (client, body) => client.submitResponses(body),
   convert: responsesApiToGenerateResult,
 };
+
+/** Sleep, rejecting immediately if the signal aborts. */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason ?? new DOMException("Aborted", "AbortError"));
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new DOMException("Aborted", "AbortError"));
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
