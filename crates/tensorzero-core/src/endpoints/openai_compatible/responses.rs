@@ -97,6 +97,9 @@ struct OpenOutputItem {
     output_index: usize,
     /// Accumulated message text, reasoning summary text, or function arguments.
     text: String,
+    /// Reasoning items only: the provider's `encrypted_content`, replayed back
+    /// by clients (e.g. the Vercel AI SDK) on subsequent agent-loop steps.
+    signature: Option<String>,
     /// Function name (FunctionCall only).
     name: String,
     /// Provider call id (FunctionCall only).
@@ -120,6 +123,9 @@ struct ResponsesStreamState {
     current: Option<OpenOutputItem>,
     completed_items: Vec<Value>,
     last_usage: Option<Usage>,
+    /// `encrypted_content` seen on a provider reasoning item before its text
+    /// deltas open the synthesized item; applied when the item opens.
+    pending_reasoning_signature: Option<String>,
 }
 
 impl ResponsesStreamState {
@@ -134,6 +140,7 @@ impl ResponsesStreamState {
             current: None,
             completed_items: Vec::new(),
             last_usage: None,
+            pending_reasoning_signature: None,
         }
     }
 
@@ -172,6 +179,11 @@ impl ResponsesStreamState {
         if already_open {
             return;
         }
+        // Consumed by the Reasoning arm below and the OpenOutputItem at the
+        // end of this function; None for the other item kinds.
+        let signature = (kind == OutputItemKind::Reasoning)
+            .then(|| self.pending_reasoning_signature.take())
+            .flatten();
         self.close_current(frames);
         let output_index = self.next_output_index;
         self.next_output_index += 1;
@@ -208,12 +220,23 @@ impl ResponsesStreamState {
                 ));
             }
             OutputItemKind::Reasoning => {
+                let mut item = json!({
+                    "id": item_id,
+                    "type": "reasoning",
+                    "summary": [],
+                    "encrypted_content": signature,
+                });
+                if signature.is_none()
+                    && let Some(object) = item.as_object_mut()
+                {
+                    object.remove("encrypted_content");
+                }
                 frames.push((
                     Some("response.output_item.added"),
                     json!({
                         "type": "response.output_item.added",
                         "output_index": output_index,
-                        "item": {"id": item_id, "type": "reasoning", "summary": []},
+                        "item": item,
                     }),
                 ));
                 frames.push((
@@ -250,6 +273,7 @@ impl ResponsesStreamState {
             item_id,
             output_index,
             text: String::new(),
+            signature,
             name: name.to_string(),
             call_id: call_id.to_string(),
         });
@@ -325,11 +349,17 @@ impl ResponsesStreamState {
                         "part": part,
                     }),
                 ));
-                let reasoning = json!({
+                let mut reasoning = json!({
                     "id": item.item_id,
                     "type": "reasoning",
                     "summary": [part],
+                    "encrypted_content": item.signature,
                 });
+                if item.signature.is_none()
+                    && let Some(object) = reasoning.as_object_mut()
+                {
+                    object.remove("encrypted_content");
+                }
                 frames.push((
                     Some("response.output_item.done"),
                     json!({
@@ -452,7 +482,32 @@ impl ResponsesStreamState {
                                 }),
                             ));
                         }
-                        ContentBlockChunk::Unknown(_) => {}
+                        ContentBlockChunk::Unknown(unknown) => {
+                            // Provider reasoning items arrive as Unknown
+                            // blocks carrying the raw item JSON. Harvest the
+                            // `encrypted_content` so the synthesized reasoning
+                            // item stays replayable: without it clients like
+                            // the Vercel AI SDK cannot reconstruct a reasoning
+                            // part for the next agent-loop step, and DeepSeek
+                            // rejects the follow-up request for missing
+                            // reasoning_text.
+                            if unknown.data.get("type").and_then(Value::as_str) == Some("reasoning")
+                                && let Some(encrypted) = unknown
+                                    .data
+                                    .get("encrypted_content")
+                                    .and_then(Value::as_str)
+                            {
+                                match &mut self.current {
+                                    Some(item) if item.kind == OutputItemKind::Reasoning => {
+                                        item.signature.get_or_insert_with(|| encrypted.to_string());
+                                    }
+                                    _ => {
+                                        self.pending_reasoning_signature =
+                                            Some(encrypted.to_string());
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -624,7 +679,7 @@ mod tests {
     use super::*;
     use crate::endpoints::inference::ChatInferenceResponseChunk;
     use crate::endpoints::openai_compatible::stream_aggregator::AggregatePart;
-    use crate::inference::types::{TextChunk, ThoughtChunk};
+    use crate::inference::types::{TextChunk, ThoughtChunk, UnknownChunk};
     use crate::tool::ToolCallChunk;
     use googletest::matchers::{elements_are, eq};
     use googletest::{assert_that, expect_that, gtest};
@@ -849,6 +904,92 @@ mod tests {
         expect_that!(output[0]["type"].as_str(), eq(Some("reasoning")));
         expect_that!(
             output[0]["summary"][0]["text"].as_str(),
+            eq(Some("thinking hard"))
+        );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn test_streaming_reasoning_item_carries_encrypted_content() {
+        // Providers forward reasoning output items as Unknown chunks carrying
+        // the raw item JSON. The synthesized Responses events must include the
+        // item's `encrypted_content` — without it, clients like the Vercel AI
+        // SDK cannot build a replayable reasoning part, and DeepSeek rejects
+        // the next agent-loop step for missing reasoning_text.
+        let inference_id = Uuid::now_v7();
+        let provider_reasoning_item = ContentBlockChunk::Unknown(UnknownChunk {
+            id: "0".to_string(),
+            data: serde_json::json!({
+                "type": "reasoning",
+                "id": "rs_provider_1",
+                "status": "in_progress",
+                "content": [],
+                "summary": [],
+                "encrypted_content": "enc-payload",
+            }),
+            model_name: Some("deepseek-v4-flash".to_string()),
+            provider_name: Some("deepseek".to_string()),
+        });
+        let thought = ContentBlockChunk::Thought(ThoughtChunk {
+            id: "0".to_string(),
+            text: None,
+            signature: None,
+            summary_id: None,
+            summary_text: Some("thinking hard".to_string()),
+            provider_type: None,
+            extra_data: None,
+        });
+        let frames = collect_frames(
+            vec![
+                chat_chunk(inference_id, vec![provider_reasoning_item], None),
+                chat_chunk(inference_id, vec![thought], None),
+                chat_chunk(inference_id, vec![text_block("answer")], Some(test_usage())),
+            ],
+            None,
+        )
+        .await;
+
+        let added = frames
+            .iter()
+            .find(|(event, value)| {
+                event.as_deref() == Some("response.output_item.added")
+                    && value["item"]["type"] == "reasoning"
+            })
+            .expect("reasoning output_item.added frame");
+        expect_that!(
+            added.1["item"]["encrypted_content"].as_str(),
+            eq(Some("enc-payload"))
+        );
+
+        let done = frames
+            .iter()
+            .find(|(event, value)| {
+                event.as_deref() == Some("response.output_item.done")
+                    && value["item"]["type"] == "reasoning"
+            })
+            .expect("reasoning output_item.done frame");
+        expect_that!(
+            done.1["item"]["encrypted_content"].as_str(),
+            eq(Some("enc-payload"))
+        );
+
+        let completed = frames
+            .iter()
+            .find(|(event, _)| event.as_deref() == Some("response.completed"))
+            .expect("response.completed frame");
+        let output = completed.1["response"]["output"]
+            .as_array()
+            .expect("output items");
+        let reasoning = output
+            .iter()
+            .find(|item| item["type"] == "reasoning")
+            .expect("reasoning output item");
+        expect_that!(
+            reasoning["encrypted_content"].as_str(),
+            eq(Some("enc-payload"))
+        );
+        expect_that!(
+            reasoning["summary"][0]["text"].as_str(),
             eq(Some("thinking hard"))
         );
     }
