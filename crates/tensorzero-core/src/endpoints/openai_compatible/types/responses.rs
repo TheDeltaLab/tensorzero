@@ -507,7 +507,7 @@ impl From<(InferenceResponse, String)> for OpenAICompatibleResponsesResponse {
     fn from((inference_response, response_model_prefix): (InferenceResponse, String)) -> Self {
         match inference_response {
             InferenceResponse::Chat(response) => {
-                let (content, tool_calls, _extra) = process_chat_content(response.content);
+                let (content, tool_calls, extra) = process_chat_content(response.content);
                 let model = format!("{response_model_prefix}{}", response.variant_name);
                 let usage = OpenAICompatibleResponsesUsage {
                     input_tokens: response.usage.input_tokens,
@@ -524,6 +524,7 @@ impl From<(InferenceResponse, String)> for OpenAICompatibleResponsesResponse {
                         &format!("msg_{}", response.inference_id),
                         content.as_deref(),
                         &tool_calls,
+                        &extra,
                     ),
                     usage,
                 }
@@ -545,6 +546,7 @@ impl From<(InferenceResponse, String)> for OpenAICompatibleResponsesResponse {
                         &format!("msg_{}", response.inference_id),
                         response.output.raw.as_deref(),
                         &[],
+                        &[],
                     ),
                     usage,
                 }
@@ -557,8 +559,43 @@ pub fn responses_output_items(
     message_id: &str,
     text: Option<&str>,
     tool_calls: &[OpenAICompatibleToolCall],
+    extra_content: &[ExtraContentBlock],
 ) -> Vec<Value> {
     let mut output = Vec::new();
+    // Thought blocks become reasoning output items so non-streaming clients can
+    // replay them on the next agent-loop step: the `encrypted_content`
+    // (signature) is what lets e.g. the Vercel AI SDK reconstruct a reasoning
+    // part, and DeepSeek rejects tool-call replays without reasoning.
+    for (index, block) in extra_content.iter().enumerate() {
+        let ExtraContentBlock::Thought { thought, .. } = block else {
+            continue;
+        };
+        let summary_text = thought
+            .summary
+            .as_ref()
+            .map(|summary| {
+                summary
+                    .iter()
+                    .map(|block| match block {
+                        ThoughtSummaryBlock::SummaryText { text } => text.clone(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .or_else(|| thought.text.clone())
+            .unwrap_or_default();
+        let mut reasoning = json!({
+            "id": format!("rs_{message_id}_{index}"),
+            "type": "reasoning",
+            "summary": [{"type": "summary_text", "text": summary_text}],
+        });
+        if let Some(signature) = &thought.signature
+            && let Some(object) = reasoning.as_object_mut()
+        {
+            object.insert("encrypted_content".to_string(), json!(signature));
+        }
+        output.push(reasoning);
+    }
     if let Some(text) = text.filter(|value| !value.is_empty()) {
         output.push(json!({
             "id": message_id,
@@ -733,6 +770,40 @@ mod tests {
             ThoughtSummaryBlock::SummaryText {
                 text: "thinking...".to_string()
             }
+        );
+    }
+
+    #[gtest]
+    fn test_responses_output_items_emits_reasoning_with_encrypted_content() {
+        // Non-streaming parity with the streaming fix: Thought blocks in the
+        // inference content must surface as reasoning output items carrying
+        // `encrypted_content` so clients can replay them on the next
+        // agent-loop step (DeepSeek rejects tool-call replays without it).
+        let items = responses_output_items(
+            "msg_test",
+            Some("answer"),
+            &[],
+            &[ExtraContentBlock::Thought {
+                insert_index: None,
+                thought: Thought {
+                    text: Some("thinking step".to_string()),
+                    signature: Some("enc-payload".to_string()),
+                    summary: None,
+                    provider_type: None,
+                    extra_data: None,
+                },
+            }],
+        );
+
+        assert_eq!(items.len(), 2, "expected reasoning then message items");
+        assert_eq!(
+            items[0],
+            json!({
+                "id": "rs_msg_test_0",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "thinking step"}],
+                "encrypted_content": "enc-payload",
+            })
         );
     }
 
