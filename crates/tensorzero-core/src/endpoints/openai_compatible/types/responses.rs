@@ -14,17 +14,18 @@ use crate::cache::CacheParamsOptions;
 use crate::config::Namespace;
 use crate::endpoints::inference::{InferenceCredentials, InferenceParams, InferenceResponse};
 use crate::endpoints::openai_compatible::types::chat_completions::{
-    JsonSchemaInfo, OpenAICompatibleAssistantMessage, OpenAICompatibleMessage,
+    ExtraContentBlock, JsonSchemaInfo, OpenAICompatibleAssistantMessage, OpenAICompatibleMessage,
     OpenAICompatibleParams, OpenAICompatibleResponseFormat, OpenAICompatibleStreamOptions,
     OpenAICompatibleSystemMessage, OpenAICompatibleUserMessage, process_chat_content,
 };
 use crate::endpoints::openai_compatible::types::tool::{
-    ChatCompletionToolChoiceOption, OpenAICompatibleFunctionTool, OpenAICompatibleTool,
-    OpenAICompatibleToolCall,
+    ChatCompletionToolChoiceOption, OpenAICompatibleFunctionCall, OpenAICompatibleFunctionTool,
+    OpenAICompatibleTool, OpenAICompatibleToolCall, OpenAICompatibleToolMessage,
 };
 use crate::error::{Error, ErrorDetails};
 use crate::inference::types::chat_completion_inference_params::ServiceTier;
 use crate::inference::types::current_timestamp;
+use crate::inference::types::{Thought, ThoughtSummaryBlock};
 use crate::tool::OpenAICustomTool;
 
 /// Tool definition accepted by the OpenAI Responses API adapter.
@@ -299,6 +300,22 @@ fn parse_responses_input_item(item: Value) -> Result<OpenAICompatibleMessage, Er
             message: "`input` array items must be strings or objects".to_string(),
         })
     })?;
+
+    // Role-less Responses items (tool round-trips, replayed reasoning, references).
+    // These used to fall through to the role match below and become empty user
+    // messages, silently discarding tool calls and results from agent loops.
+    match obj.get("type").and_then(Value::as_str).unwrap_or("") {
+        "function_call" => return parse_responses_function_call(obj),
+        "function_call_output" => return parse_responses_function_call_output(obj),
+        "reasoning" => return Ok(parse_responses_reasoning(obj)),
+        "item_reference" => {
+            return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                message: "`item_reference` input items point at server-side state that this gateway does not keep. Re-send the full item contents instead (OpenAI clients: set `store: false` so items are inlined)".to_string(),
+            }));
+        }
+        _ => {}
+    }
+
     let role = obj
         .get("role")
         .and_then(Value::as_str)
@@ -318,6 +335,99 @@ fn parse_responses_input_item(item: Value) -> Result<OpenAICompatibleMessage, Er
         )),
         _ => Ok(user_message(content)),
     }
+}
+
+/// `{"type": "function_call", "call_id": ..., "name": ..., "arguments": ...}` —
+/// an assistant tool call from a previous turn.
+fn parse_responses_function_call(
+    obj: &serde_json::Map<String, Value>,
+) -> Result<OpenAICompatibleMessage, Error> {
+    let call_id = obj
+        .get("call_id")
+        .or_else(|| obj.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                message: "`function_call` input item is missing `call_id`".to_string(),
+            })
+        })?;
+    let name = obj.get("name").and_then(Value::as_str).ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+            message: "`function_call` input item is missing `name`".to_string(),
+        })
+    })?;
+    let arguments = obj.get("arguments").and_then(Value::as_str).unwrap_or("{}");
+    Ok(OpenAICompatibleMessage::Assistant(
+        OpenAICompatibleAssistantMessage {
+            content: None,
+            tool_calls: Some(vec![OpenAICompatibleToolCall {
+                id: call_id.to_string(),
+                r#type: "function".to_string(),
+                function: OpenAICompatibleFunctionCall {
+                    name: name.to_string(),
+                    arguments: arguments.to_string(),
+                },
+            }]),
+            tensorzero_extra_content: None,
+        },
+    ))
+}
+
+/// `{"type": "function_call_output", "call_id": ..., "output": ...}` — a tool
+/// result. The chat-completions layer coalesces consecutive `Tool` messages
+/// into one user message and resolves the tool name from the matching
+/// `function_call` item, so callers must send the call before its output.
+fn parse_responses_function_call_output(
+    obj: &serde_json::Map<String, Value>,
+) -> Result<OpenAICompatibleMessage, Error> {
+    let call_id = obj.get("call_id").and_then(Value::as_str).ok_or_else(|| {
+        Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+            message: "`function_call_output` input item is missing `call_id`".to_string(),
+        })
+    })?;
+    let output = obj.get("output").cloned().unwrap_or(Value::Null);
+    Ok(OpenAICompatibleMessage::Tool(OpenAICompatibleToolMessage {
+        content: Some(output),
+        tool_call_id: call_id.to_string(),
+    }))
+}
+
+/// `{"type": "reasoning", "encrypted_content": ..., "summary": [...]}` —
+/// replayed reasoning from a previous turn. Preserved as a `Thought` block
+/// (encrypted payload in `signature`) so providers that accept reasoning
+/// items receive it back verbatim; the reasoning text itself never reaches
+/// the model as plain content.
+fn parse_responses_reasoning(obj: &serde_json::Map<String, Value>) -> OpenAICompatibleMessage {
+    let summary = obj.get("summary").and_then(Value::as_array).map(|parts| {
+        parts
+            .iter()
+            .filter_map(|part| {
+                part.get("text").and_then(Value::as_str).map(|text| {
+                    ThoughtSummaryBlock::SummaryText {
+                        text: text.to_string(),
+                    }
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+    let thought = Thought {
+        text: None,
+        signature: obj
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        summary,
+        provider_type: None,
+        extra_data: None,
+    };
+    OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
+        content: None,
+        tool_calls: None,
+        tensorzero_extra_content: Some(vec![ExtraContentBlock::Thought {
+            insert_index: None,
+            thought,
+        }]),
+    })
 }
 
 fn normalize_responses_content(content: Value) -> Value {
@@ -511,6 +621,120 @@ mod tests {
     fn test_empty_input_errors() {
         let err = responses_input_to_messages(json!([]), None).unwrap_err();
         assert!(err.to_string().contains("`input` must not be empty"));
+    }
+
+    #[gtest]
+    fn test_function_call_and_output_items_round_trip() {
+        // Regression test: role-less `function_call` / `function_call_output`
+        // items used to be degraded to empty user messages, so providers never
+        // saw the tool calls or results of previous agent-loop steps.
+        let messages = responses_input_to_messages(
+            json!([
+                {"type": "message", "role": "user", "content": "What happened today?"},
+                {"type": "function_call", "call_id": "call_00", "name": "memoryUse", "arguments": "{\"q\":\"today\"}"},
+                {"type": "function_call_output", "call_id": "call_00", "output": "[{\"memory\":\"...\"}]"},
+            ]),
+            None,
+        )
+        .expect("tool round-trip input should parse");
+
+        assert_eq!(
+            messages.len(),
+            3,
+            "expected user, assistant tool call, and tool result messages"
+        );
+        let OpenAICompatibleMessage::Assistant(assistant) = &messages[1] else {
+            panic!("function_call item must map to an assistant message");
+        };
+        assert!(assistant.content.is_none());
+        let tool_calls = assistant.tool_calls.as_deref().unwrap_or_default();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call_00");
+        assert_eq!(tool_calls[0].function.name, "memoryUse");
+        assert_eq!(tool_calls[0].function.arguments, "{\"q\":\"today\"}");
+
+        // The tool result lands in a `Tool` message the chat-completions layer
+        // coalesces into a user ToolResult block.
+        let messages = responses_input_to_messages(
+            json!([
+                {"type": "function_call", "call_id": "call_00", "name": "memoryUse", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call_00", "output": "result text"},
+            ]),
+            None,
+        )
+        .expect("tool result input should parse");
+        let Some(OpenAICompatibleMessage::Tool(tool_message)) = messages.last() else {
+            panic!("function_call_output item must map to a tool message");
+        };
+        assert_eq!(tool_message.tool_call_id, "call_00");
+        assert_eq!(tool_message.content, Some(json!("result text")));
+    }
+
+    #[gtest]
+    fn test_reasoning_item_maps_to_thought_block() {
+        // Regression test: replayed `reasoning` items used to become empty user
+        // messages. They must be preserved as a Thought block so providers that
+        // accept reasoning items get the encrypted payload back verbatim.
+        let messages = responses_input_to_messages(
+            json!([
+                {"type": "reasoning", "id": "rs_1", "encrypted_content": "enc-payload", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+                {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Answer"}]},
+            ]),
+            None,
+        )
+        .expect("reasoning replay input should parse");
+
+        assert_eq!(
+            messages.len(),
+            2,
+            "expected one reasoning and one assistant message"
+        );
+        let OpenAICompatibleMessage::Assistant(assistant) = &messages[0] else {
+            panic!("reasoning item must map to an assistant message");
+        };
+        assert!(assistant.content.is_none());
+        assert!(assistant.tool_calls.is_none());
+        let extra = assistant
+            .tensorzero_extra_content
+            .as_deref()
+            .unwrap_or_default();
+        assert_eq!(extra.len(), 1);
+        let ExtraContentBlock::Thought {
+            insert_index,
+            thought,
+        } = &extra[0]
+        else {
+            panic!("reasoning item must map to a Thought extra content block");
+        };
+        assert!(insert_index.is_none());
+        assert_eq!(thought.signature.as_deref(), Some("enc-payload"));
+        let summary = thought.summary.as_deref().unwrap_or_default();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(
+            summary[0],
+            ThoughtSummaryBlock::SummaryText {
+                text: "thinking...".to_string()
+            }
+        );
+    }
+
+    #[gtest]
+    fn test_item_reference_input_errors() {
+        // Regression test: `item_reference` items point at server-side state the
+        // gateway does not keep. They must fail fast instead of silently
+        // degrading to empty user messages.
+        let err = responses_input_to_messages(
+            json!([
+                {"type": "message", "role": "user", "content": "Hi"},
+                {"type": "item_reference", "id": "msg_123"},
+            ]),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("`item_reference` input items point at server-side state")
+        );
     }
 
     #[gtest]

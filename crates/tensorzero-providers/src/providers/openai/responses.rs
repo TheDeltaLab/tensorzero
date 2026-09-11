@@ -1596,8 +1596,14 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
                 )
             });
 
-            // The incomplete_details field indicates if response was cut short
-            let finish_reason = if response.get("incomplete_details").is_some() {
+            // The incomplete_details field indicates if response was cut short.
+            // Some providers (e.g. DeepSeek) always include the field with a
+            // `null` value on successful completion, so only a non-null value
+            // means the response was truncated.
+            let finish_reason = if response
+                .get("incomplete_details")
+                .is_some_and(|v| !v.is_null())
+            {
                 Some(FinishReason::Length)
             } else {
                 Some(FinishReason::Stop)
@@ -2677,6 +2683,94 @@ mod tests {
             "expected raw_usage to include provider raw_usage entries"
         );
         assert_eq!(result.finish_reason, Some(FinishReason::Stop));
+    }
+
+    #[test]
+    fn test_response_completed_with_null_incomplete_details_finishes_stop() {
+        // DeepSeek includes `"incomplete_details": null` on successful
+        // completion; the field being present must not be read as truncation.
+        let usage_json = serde_json::json!({
+            "input_tokens": 15,
+            "output_tokens": 25
+        });
+        let response_json = serde_json::json!({
+            "id": "resp_123",
+            "status": "completed",
+            "incomplete_details": null,
+            "usage": usage_json
+        });
+
+        let event = OpenAIResponsesStreamEvent::ResponseCompleted {
+            response: response_json,
+        };
+
+        let mut tool_id = None;
+        let mut tool_name = None;
+
+        let result = openai_responses_to_tensorzero_chunk(
+            "raw_json".to_string(),
+            event,
+            Duration::from_millis(100),
+            &mut tool_id,
+            &mut tool_name,
+            false,
+            "test_model",
+            "test_provider",
+            "",
+            Uuid::now_v7(),
+            PROVIDER_TYPE,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            result.finish_reason,
+            Some(FinishReason::Stop),
+            "null incomplete_details on a completed response must not map to Length"
+        );
+    }
+
+    #[test]
+    fn test_response_completed_with_incomplete_details_object_finishes_length() {
+        let usage_json = serde_json::json!({
+            "input_tokens": 15,
+            "output_tokens": 25
+        });
+        let response_json = serde_json::json!({
+            "id": "resp_123",
+            "status": "incomplete",
+            "incomplete_details": { "reason": "max_output_tokens" },
+            "usage": usage_json
+        });
+
+        let event = OpenAIResponsesStreamEvent::ResponseCompleted {
+            response: response_json,
+        };
+
+        let mut tool_id = None;
+        let mut tool_name = None;
+
+        let result = openai_responses_to_tensorzero_chunk(
+            "raw_json".to_string(),
+            event,
+            Duration::from_millis(100),
+            &mut tool_id,
+            &mut tool_name,
+            false,
+            "test_model",
+            "test_provider",
+            "",
+            Uuid::now_v7(),
+            PROVIDER_TYPE,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            result.finish_reason,
+            Some(FinishReason::Length),
+            "a non-null incomplete_details object must still map to Length"
+        );
     }
 
     #[test]
