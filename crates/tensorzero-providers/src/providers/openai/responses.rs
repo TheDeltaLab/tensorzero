@@ -825,8 +825,17 @@ pub enum OpenAIResponsesInputMessageContent<'a> {
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct OpenAIResponsesReasoning<'a> {
-    encrypted_content: Cow<'a, str>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    encrypted_content: Option<Cow<'a, str>>,
+    #[serde(skip_serializing_if = "Option::is_none", borrow)]
+    content: Option<Vec<OpenAIResponsesReasoningText<'a>>>,
     summary: Vec<OpenAIResponsesReasoningSummary<'a>>,
+}
+
+#[derive(Clone, Deserialize, Serialize, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OpenAIResponsesReasoningText<'a> {
+    ReasoningText { text: Cow<'a, str> },
 }
 
 impl Serialize for OpenAIResponsesInputMessageContent<'_> {
@@ -1074,10 +1083,21 @@ pub fn tensorzero_to_openai_responses_assistant_message<'a>(
                 }));
             }
             Cow::Borrowed(ContentBlock::Thought(thought)) => {
-                if let Some(encrypted_content) = &thought.signature {
+                // DeepSeek's thinking mode requires replayed reasoning to carry
+                // the reasoning text in `content` alongside the encrypted
+                // payload; an encrypted-only item is rejected with
+                // "The `reasoning_text` in the thinking mode must be passed
+                // back to the API." Emit whichever fields the inbound item had
+                // (see `parse_responses_reasoning`).
+                if thought.signature.is_some() || thought.text.is_some() {
                     output.push(OpenAIResponsesInput::Known(
                         OpenAIResponsesInputInner::Reasoning(OpenAIResponsesReasoning {
-                            encrypted_content: Cow::Owned(encrypted_content.clone()),
+                            encrypted_content: thought.signature.as_deref().map(Cow::Borrowed),
+                            content: thought.text.as_deref().map(|text| {
+                                vec![OpenAIResponsesReasoningText::ReasoningText {
+                                    text: Cow::Borrowed(text),
+                                }]
+                            }),
                             summary: thought
                                 .summary
                                 .as_ref()
@@ -1099,10 +1119,16 @@ pub fn tensorzero_to_openai_responses_assistant_message<'a>(
                 }
             }
             Cow::Owned(ContentBlock::Thought(thought)) => {
-                if let Some(encrypted_content) = thought.signature {
+                // See the Borrowed arm for why `content` is emitted.
+                if thought.signature.is_some() || thought.text.is_some() {
                     output.push(OpenAIResponsesInput::Known(
                         OpenAIResponsesInputInner::Reasoning(OpenAIResponsesReasoning {
-                            encrypted_content: Cow::Owned(encrypted_content),
+                            encrypted_content: thought.signature.map(Cow::Owned),
+                            content: thought.text.map(|text| {
+                                vec![OpenAIResponsesReasoningText::ReasoningText {
+                                    text: Cow::Owned(text),
+                                }]
+                            }),
                             summary: thought
                                 .summary
                                 .map(|summary| {
@@ -1827,6 +1853,40 @@ mod tests {
 
     use tensorzero_inference_types::{ModelInferenceRequest, RequestMessage};
     use tensorzero_types::{FunctionType, Role};
+
+    #[gtest]
+    fn test_assistant_thought_emits_reasoning_content() {
+        // DeepSeek's thinking mode requires replayed reasoning to carry the
+        // reasoning text in `content`; encrypted-only items are rejected when
+        // the request also has tool calls. A replayed Thought (from
+        // `parse_responses_reasoning`) must therefore round-trip its text.
+        let blocks = vec![ContentBlock::Thought(Thought {
+            text: Some("thinking step".to_string()),
+            signature: Some("enc-payload".to_string()),
+            summary: Some(vec![ThoughtSummaryBlock::SummaryText {
+                text: "thinking...".to_string(),
+            }]),
+            provider_type: None,
+            extra_data: None,
+        })];
+        let items =
+            tensorzero_to_openai_responses_assistant_message(Cow::Borrowed(&blocks), PROVIDER_TYPE)
+                .expect("thought block should serialize");
+
+        // Compare the serialized wire shape (Value equality — key order is
+        // irrelevant) so the test also pins how the item lands on the wire.
+        let wire = serde_json::to_value(&items).expect("items should serialize");
+        assert_eq!(
+            wire,
+            serde_json::json!([{
+                "type": "reasoning",
+                "encrypted_content": "enc-payload",
+                "content": [{ "type": "reasoning_text", "text": "thinking step" }],
+                "summary": [{ "type": "summary_text", "text": "thinking..." }]
+            }]),
+            "replayed reasoning must carry both the encrypted payload and the reasoning text"
+        );
+    }
 
     #[test]
     fn test_deserialize_response_created() {
