@@ -293,6 +293,9 @@ export class TensorZeroClient extends BaseTensorZeroClient {
 
   async getSynapseAnalysis(options: {
     range: string;
+    /// Absolute RFC 3339 window; takes precedence over `range` on the server.
+    from?: string;
+    to?: string;
     kind: string;
     apiKey?: string;
     model?: string;
@@ -303,6 +306,12 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       range: options.range,
       kind: options.kind,
     });
+    if (options.from) {
+      params.set("from", options.from);
+    }
+    if (options.to) {
+      params.set("to", options.to);
+    }
     if (options.apiKey?.trim()) {
       params.set("api_key", options.apiKey.trim());
     }

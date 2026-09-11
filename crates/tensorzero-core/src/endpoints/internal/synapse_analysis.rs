@@ -60,6 +60,13 @@ pub enum AnalysisKind {
 pub struct AnalysisQuery {
     #[serde(default = "default_range")]
     pub range: String,
+    /// Absolute window start (RFC 3339). When set, `to` must be set too and
+    /// the pair takes precedence over the `range` preset.
+    #[serde(default)]
+    pub from: Option<DateTime<Utc>>,
+    /// Absolute window end (RFC 3339), exclusive.
+    #[serde(default)]
+    pub to: Option<DateTime<Utc>>,
     #[serde(default = "default_kind")]
     pub kind: String,
     #[serde(default)]
@@ -224,7 +231,7 @@ struct SeriesRow {
 }
 
 struct AnalysisParams {
-    range: AnalysisRange,
+    granularity: TimeGranularity,
     kind: AnalysisKind,
     from: DateTime<Utc>,
     to: DateTime<Utc>,
@@ -259,20 +266,43 @@ impl AnalysisRange {
             Self::ThirtyDays => Duration::days(30),
         }
     }
+}
 
-    fn trunc_unit(self) -> &'static str {
-        match self {
-            Self::FifteenMinutes | Self::OneHour => "minute",
-            Self::TwentyFourHours => "hour",
-            Self::SevenDays | Self::ThirtyDays => "day",
+/// Timeseries bucket granularity for the selected window. Derived from the
+/// window length so preset and custom ranges share one rule; the thresholds
+/// reproduce the legacy per-preset mapping (15m/1h -> minute, 24h -> hour,
+/// 7d/30d -> day).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimeGranularity {
+    Minute,
+    Hour,
+    Day,
+}
+
+impl TimeGranularity {
+    fn for_window(duration: Duration) -> Self {
+        if duration <= Duration::hours(6) {
+            Self::Minute
+        } else if duration <= Duration::hours(72) {
+            Self::Hour
+        } else {
+            Self::Day
         }
     }
 
-    pub fn format_bucket(self, ts: DateTime<Utc>) -> String {
+    fn trunc_unit(self) -> &'static str {
         match self {
-            Self::FifteenMinutes | Self::OneHour => ts.format("%Y-%m-%dT%H:%M:00Z").to_string(),
-            Self::TwentyFourHours => ts.format("%Y-%m-%dT%H:00:00Z").to_string(),
-            Self::SevenDays | Self::ThirtyDays => ts.format("%Y-%m-%d").to_string(),
+            Self::Minute => "minute",
+            Self::Hour => "hour",
+            Self::Day => "day",
+        }
+    }
+
+    fn format_bucket(self, ts: DateTime<Utc>) -> String {
+        match self {
+            Self::Minute => ts.format("%Y-%m-%dT%H:%M:00Z").to_string(),
+            Self::Hour => ts.format("%Y-%m-%dT%H:00:00Z").to_string(),
+            Self::Day => ts.format("%Y-%m-%d").to_string(),
         }
     }
 }
@@ -574,7 +604,7 @@ async fn fetch_series(
     pool: &sqlx::PgPool,
     params: &AnalysisParams,
 ) -> Result<Vec<SeriesRow>, Error> {
-    let trunc = params.range.trunc_unit();
+    let trunc = params.granularity.trunc_unit();
     let tps_expr = "(mi.output_tokens::FLOAT8 * 1000.0) \
          / NULLIF((mi.response_time_ms - COALESCE(mi.ttft_ms, 0)), 0)::FLOAT8";
     let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(format!(
@@ -621,12 +651,31 @@ pub async fn analysis_handler(
     State(app_state): AppState,
     Query(query): Query<AnalysisQuery>,
 ) -> Result<Json<AnalysisResponse>, Error> {
-    let range = AnalysisRange::parse(&query.range)?;
     let kind = AnalysisKind::parse(&query.kind)?;
-    let to = Utc::now();
-    let from = to - range.duration();
+    let (from, to) = match (query.from, query.to) {
+        (Some(from), Some(to)) => {
+            if to <= from {
+                return Err(Error::new(ErrorDetails::InvalidRequest {
+                    message: "Invalid custom range: `to` must be after `from`".to_string(),
+                }));
+            }
+            (from, to)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(Error::new(ErrorDetails::InvalidRequest {
+                message: "Invalid custom range: `from` and `to` must be provided together"
+                    .to_string(),
+            }));
+        }
+        (None, None) => {
+            let range = AnalysisRange::parse(&query.range)?;
+            let to = Utc::now();
+            let from = to - range.duration();
+            (from, to)
+        }
+    };
     let params = AnalysisParams {
-        range,
+        granularity: TimeGranularity::for_window(to - from),
         kind,
         from,
         to,
@@ -691,7 +740,7 @@ pub async fn analysis_handler(
     let mut ttft_over_time = Vec::new();
     let mut output_tps_over_time = Vec::new();
     for row in series {
-        let date = range.format_bucket(row.bucket);
+        let date = params.granularity.format_bucket(row.bucket);
         requests_over_time.push(AnalysisCountPoint {
             date: date.clone(),
             count: row.requests,
@@ -770,6 +819,16 @@ mod tests {
     use chrono::TimeZone;
     use googletest::prelude::*;
 
+    /// Legacy per-preset granularity, kept explicit so the duration-derived
+    /// rule in `TimeGranularity::for_window` cannot silently drift from it.
+    fn range_expected_granularity(range: AnalysisRange) -> TimeGranularity {
+        match range {
+            AnalysisRange::FifteenMinutes | AnalysisRange::OneHour => TimeGranularity::Minute,
+            AnalysisRange::TwentyFourHours => TimeGranularity::Hour,
+            AnalysisRange::SevenDays | AnalysisRange::ThirtyDays => TimeGranularity::Day,
+        }
+    }
+
     #[gtest]
     fn input_cache_hit_rate_is_cache_read_over_input() {
         expect_eq!(input_cache_hit_rate_pct(0, 0), 0.0);
@@ -806,14 +865,43 @@ mod tests {
             .single()
             .expect("timestamp");
         expect_eq!(
-            AnalysisRange::FifteenMinutes.format_bucket(ts),
+            TimeGranularity::Minute.format_bucket(ts),
             "2026-08-21T05:07:00Z"
         );
         expect_eq!(
-            AnalysisRange::TwentyFourHours.format_bucket(ts),
+            TimeGranularity::Hour.format_bucket(ts),
             "2026-08-21T05:00:00Z"
         );
-        expect_eq!(AnalysisRange::SevenDays.format_bucket(ts), "2026-08-21");
+        expect_eq!(TimeGranularity::Day.format_bucket(ts), "2026-08-21");
+    }
+
+    #[gtest]
+    fn granularity_matches_presets_and_boundaries() {
+        use TimeGranularity::{Day, Hour, Minute};
+        // The duration rule must reproduce the legacy per-preset mapping.
+        for range in [
+            AnalysisRange::FifteenMinutes,
+            AnalysisRange::OneHour,
+            AnalysisRange::TwentyFourHours,
+            AnalysisRange::SevenDays,
+            AnalysisRange::ThirtyDays,
+        ] {
+            expect_eq!(
+                TimeGranularity::for_window(range.duration()),
+                range_expected_granularity(range)
+            );
+        }
+        expect_eq!(TimeGranularity::for_window(Duration::hours(6)), Minute);
+        expect_eq!(
+            TimeGranularity::for_window(Duration::hours(6) + Duration::seconds(1)),
+            Hour
+        );
+        expect_eq!(TimeGranularity::for_window(Duration::hours(72)), Hour);
+        expect_eq!(
+            TimeGranularity::for_window(Duration::hours(72) + Duration::seconds(1)),
+            Day
+        );
+        expect_eq!(TimeGranularity::for_window(Duration::days(365)), Day);
     }
 
     #[gtest]

@@ -2,11 +2,18 @@
 export const ANALYSIS_RANGES = ["15m", "1h", "24h", "7d", "30d"] as const;
 export type AnalysisRange = (typeof ANALYSIS_RANGES)[number];
 
+/// `custom` activates an absolute `[from, to)` window carried in the
+/// `from`/`to` ISO query params.
+export type AnalysisRangeSelection = AnalysisRange | "custom";
+
 export const ANALYSIS_KINDS = ["chat", "embedding"] as const;
 export type AnalysisKind = (typeof ANALYSIS_KINDS)[number];
 
 export type AnalysisQueryValues = {
-  range: AnalysisRange;
+  range: AnalysisRangeSelection;
+  /// ISO strings, only meaningful when `range === "custom"`.
+  from: string;
+  to: string;
   kind: AnalysisKind;
   apiKey: string;
   model: string;
@@ -16,6 +23,8 @@ export type AnalysisQueryValues = {
 
 export const DEFAULT_ANALYSIS_QUERY: AnalysisQueryValues = {
   range: "24h",
+  from: "",
+  to: "",
   kind: "chat",
   apiKey: "",
   model: "",
@@ -92,16 +101,41 @@ export type AnalysisResponse = {
   cost_by_tag: AnalysisCostByTag[];
 };
 
+function parseCustomRange(
+  params: URLSearchParams,
+): { from: string; to: string } | null {
+  const fromRaw = params.get("from");
+  const toRaw = params.get("to");
+  if (!fromRaw || !toRaw) {
+    return null;
+  }
+  const fromDate = new Date(fromRaw);
+  const toDate = new Date(toRaw);
+  if (
+    Number.isNaN(fromDate.getTime()) ||
+    Number.isNaN(toDate.getTime()) ||
+    fromDate.getTime() >= toDate.getTime()
+  ) {
+    return null;
+  }
+  return { from: fromDate.toISOString(), to: toDate.toISOString() };
+}
+
 export function parseAnalysisQuery(
   params: URLSearchParams,
 ): AnalysisQueryValues {
   const rangeRaw = params.get("range") ?? DEFAULT_ANALYSIS_QUERY.range;
   const kindRaw = params.get("kind") ?? DEFAULT_ANALYSIS_QUERY.kind;
   const cacheMiss = params.get("cache_miss_only");
+  const custom = rangeRaw === "custom" ? parseCustomRange(params) : null;
   return {
-    range: ANALYSIS_RANGES.includes(rangeRaw as AnalysisRange)
-      ? (rangeRaw as AnalysisRange)
-      : DEFAULT_ANALYSIS_QUERY.range,
+    range: custom
+      ? "custom"
+      : ANALYSIS_RANGES.includes(rangeRaw as AnalysisRange)
+        ? (rangeRaw as AnalysisRange)
+        : DEFAULT_ANALYSIS_QUERY.range,
+    from: custom?.from ?? "",
+    to: custom?.to ?? "",
     kind: ANALYSIS_KINDS.includes(kindRaw as AnalysisKind)
       ? (kindRaw as AnalysisKind)
       : DEFAULT_ANALYSIS_QUERY.kind,
@@ -116,7 +150,11 @@ export function analysisSearchParams(
   query: AnalysisQueryValues,
 ): URLSearchParams {
   const params = new URLSearchParams();
-  if (query.range !== DEFAULT_ANALYSIS_QUERY.range) {
+  if (query.range === "custom") {
+    params.set("range", "custom");
+    params.set("from", query.from);
+    params.set("to", query.to);
+  } else if (query.range !== DEFAULT_ANALYSIS_QUERY.range) {
     params.set("range", query.range);
   }
   if (query.kind !== DEFAULT_ANALYSIS_QUERY.kind) {
@@ -137,8 +175,10 @@ export function analysisSearchParams(
   return params;
 }
 
-export function rangeDescription(range: AnalysisRange): string {
+export function rangeDescription(range: AnalysisRangeSelection): string {
   switch (range) {
+    case "custom":
+      return "Custom range";
     case "15m":
       return "Last 15 minutes";
     case "1h":
@@ -150,6 +190,23 @@ export function rangeDescription(range: AnalysisRange): string {
     case "30d":
       return "Last 30 days";
   }
+}
+
+export function customRangeDescription(from: string, to: string): string {
+  const fromDate = new Date(from);
+  const toDate = new Date(to);
+  if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+    return "Custom range";
+  }
+  const format = (date: Date) =>
+    date.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  return `${format(fromDate)} – ${format(toDate)}`;
 }
 
 export function formatInputCacheHitDescription(
@@ -170,15 +227,16 @@ export function formatBucketLabel(dateStr: string): string {
   if (Number.isNaN(date.getTime())) {
     return dateStr;
   }
-  if (dateStr.length === 20 && dateStr.includes(":00Z")) {
+  if (dateStr.includes("T")) {
+    // Time-shaped buckets (minute/hour granularity) include the date so
+    // multi-day custom ranges stay unambiguous across days.
     return date.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
       hour: "numeric",
       minute: "2-digit",
       hour12: true,
     });
-  }
-  if (dateStr.includes("T")) {
-    return date.toLocaleString("en-US", { hour: "numeric", hour12: true });
   }
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }

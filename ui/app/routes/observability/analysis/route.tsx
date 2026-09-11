@@ -28,6 +28,7 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { StatCard } from "~/components/analysis/StatCard";
+import { CustomRangePicker } from "~/components/analysis/CustomRangePicker";
 import {
   CostByTagBarChart,
   CostByTagPieChart,
@@ -47,13 +48,13 @@ import {
   ANALYSIS_RANGES,
   analysisModelsForKind,
   analysisSearchParams,
+  customRangeDescription,
   formatCompactCount,
   formatInputCacheHitDescription,
   parseAnalysisQuery,
   rangeDescription,
   type AnalysisKind,
   type AnalysisQueryValues,
-  type AnalysisRange,
   type AnalysisResponse,
 } from "./analysisQuery";
 import {
@@ -73,6 +74,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   const analysisPromise = client
     .getSynapseAnalysis({
       range: query.range,
+      from: query.range === "custom" ? query.from : undefined,
+      to: query.range === "custom" ? query.to : undefined,
       kind: query.kind,
       apiKey: query.apiKey,
       model: query.model,
@@ -160,11 +163,17 @@ function AnalysisFilters({
             type="button"
             size="sm"
             variant={query.range === range ? "default" : "outline"}
-            onClick={() => go({ ...query, range })}
+            onClick={() => go({ ...query, range, from: "", to: "" })}
           >
             {range}
           </Button>
         ))}
+        <CustomRangePicker
+          active={query.range === "custom"}
+          from={query.from}
+          to={query.to}
+          onApply={(from, to) => go({ ...query, range: "custom", from, to })}
+        />
       </div>
       <Card>
         <CardContent className="flex flex-col gap-4 pt-6 lg:flex-row lg:items-end lg:justify-between">
@@ -267,7 +276,10 @@ function AnalysisBody({
   query: AnalysisQueryValues;
   data: AnalysisResponse;
 }) {
-  const range: AnalysisRange = query.range;
+  const rangeText =
+    query.range === "custom"
+      ? customRangeDescription(query.from, query.to)
+      : rangeDescription(query.range);
   const cacheMiss = query.cacheMissOnly;
   const costs = Object.entries(data.total_cost_by_currency).sort(
     ([left], [right]) => left.localeCompare(right),
@@ -312,7 +324,7 @@ function AnalysisBody({
           title="Total Requests"
           value={formatCompactCount(data.total_requests)}
           icon={Activity}
-          description={rangeDescription(range)}
+          description={rangeText}
         />
         <StatCard
           title="Success Rate"
