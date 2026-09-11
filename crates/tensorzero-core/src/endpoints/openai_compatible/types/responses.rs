@@ -392,12 +392,25 @@ fn parse_responses_function_call_output(
     }))
 }
 
-/// `{"type": "reasoning", "encrypted_content": ..., "summary": [...]}` —
-/// replayed reasoning from a previous turn. Preserved as a `Thought` block
-/// (encrypted payload in `signature`) so providers that accept reasoning
-/// items receive it back verbatim; the reasoning text itself never reaches
-/// the model as plain content.
+/// `{"type": "reasoning", "content": [...], "encrypted_content": ..., "summary": [...]}` —
+/// replayed reasoning from a previous turn. Preserved as a `Thought` block so
+/// providers that accept reasoning items receive it back verbatim: the
+/// reasoning text in `content` goes to `thought.text`, the encrypted payload
+/// to `thought.signature`. DeepSeek's thinking mode requires the text — an
+/// encrypted-only replay is rejected whenever the request also carries tool
+/// call items.
 fn parse_responses_reasoning(obj: &serde_json::Map<String, Value>) -> OpenAICompatibleMessage {
+    let text = obj
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("")
+        })
+        .filter(|text| !text.is_empty());
     let summary = obj.get("summary").and_then(Value::as_array).map(|parts| {
         parts
             .iter()
@@ -411,7 +424,7 @@ fn parse_responses_reasoning(obj: &serde_json::Map<String, Value>) -> OpenAIComp
             .collect::<Vec<_>>()
     });
     let thought = Thought {
-        text: None,
+        text,
         signature: obj
             .get("encrypted_content")
             .and_then(Value::as_str)
@@ -677,7 +690,7 @@ mod tests {
         // accept reasoning items get the encrypted payload back verbatim.
         let messages = responses_input_to_messages(
             json!([
-                {"type": "reasoning", "id": "rs_1", "encrypted_content": "enc-payload", "summary": [{"type": "summary_text", "text": "thinking..."}]},
+                {"type": "reasoning", "id": "rs_1", "content": [{"type": "reasoning_text", "text": "thinking step"}], "encrypted_content": "enc-payload", "summary": [{"type": "summary_text", "text": "thinking..."}]},
                 {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Answer"}]},
             ]),
             None,
@@ -708,6 +721,11 @@ mod tests {
         };
         assert!(insert_index.is_none());
         assert_eq!(thought.signature.as_deref(), Some("enc-payload"));
+        assert_eq!(
+            thought.text.as_deref(),
+            Some("thinking step"),
+            "reasoning_text content must be preserved for DeepSeek thinking-mode replay"
+        );
         let summary = thought.summary.as_deref().unwrap_or_default();
         assert_eq!(summary.len(), 1);
         assert_eq!(
