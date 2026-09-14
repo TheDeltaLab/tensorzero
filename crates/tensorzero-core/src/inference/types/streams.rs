@@ -20,6 +20,7 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::stream::Peekable;
 use indexmap::{IndexMap, IndexSet};
+use serde_json::json;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
@@ -122,6 +123,17 @@ impl InferenceResultChunk {
         }
     }
 
+    /// Delta-AI fork: drop the raw provider chunk JSON from a buffered copy.
+    /// Storage builds a merged view of the stream, so buffered real provider
+    /// chunks no longer need to keep their raw envelope alive until the stream
+    /// completes (cost computation retains its own copy).
+    pub fn clear_raw_chunk(&mut self) {
+        match self {
+            InferenceResultChunk::Chat(chunk) => chunk.raw_chunk = String::new(),
+            InferenceResultChunk::Json(chunk) => chunk.raw_chunk = String::new(),
+        }
+    }
+
     pub fn finish_reason(&self) -> Option<&FinishReason> {
         match self {
             InferenceResultChunk::Chat(chunk) => chunk.finish_reason.as_ref(),
@@ -197,7 +209,7 @@ impl From<ProviderInferenceResponseChunk> for JsonInferenceResultChunk {
 }
 
 pub struct CollectChunksArgs {
-    pub value: Vec<InferenceResultChunk>,
+    pub value: StreamCollector,
     pub inference_id: Uuid,
     pub episode_id: Uuid,
     pub function: Arc<FunctionConfig>,
@@ -231,93 +243,76 @@ pub struct CollectChunksArgs {
     pub finish_reason: Option<FinishReason>,
 }
 
-pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, Error> {
-    let CollectChunksArgs {
-        value,
-        inference_id,
-        episode_id,
-        function,
-        model_name,
-        model_provider_name,
-        provider_type,
-        raw_request,
-        raw_response,
-        inference_params,
-        system,
-        input_messages,
-        function_name,
-        variant_name,
-        dynamic_output_schema,
-        templates,
-        tool_config,
-        cached,
-        fetch_and_encode_input_files_before_inference,
-        extra_body,
-        extra_headers,
-        model_inference_id,
-        model_inference_usage,
-        finish_reason,
-    } = args;
+/// Delta-AI fork: incremental aggregation of a streamed inference, following
+/// the Synapse design: the first real provider chunk pins the TTFT, and every
+/// subsequent chunk is folded immediately into the aggregated state instead of
+/// being buffered until the stream completes.
+///
+/// The fold semantics are identical to the up-front fold `collect_chunks`
+/// previously performed over a buffered chunk list.
+#[derive(Debug, Default)]
+pub struct StreamCollector {
+    /// Content blocks being assembled, keyed by (block type, chunk id) in
+    /// first-occurrence order.
+    blocks: IndexMap<(ContentBlockOutputType, String), ContentBlockOutput>,
+    /// Thought summary id bookkeeping (id -> insertion-order index set).
+    thought_summaries: IndexMap<String, IndexSet<String>>,
+    /// Provider-reported usage payloads collected from real provider chunks.
+    raw_usage: Option<Vec<RawUsageEntry>>,
+    /// Latency of the first real provider chunk (TTFT).
+    provider_ttft: Option<Duration>,
+    /// Latency of the last real provider chunk (response time).
+    provider_response_time: Option<Duration>,
+    /// Number of real provider chunks (excludes artificial chunks).
+    provider_chunk_count: usize,
+}
 
-    // NOTE: We will eventually need this to be per-inference-response-type and sensitive to the type of variant and function being called.
-    // We preserve the order of chunks in the stream when combining them into `ContentBlockOutput`, except when
-    // the same id is used by non-adjacent blocks.
-    // For example, the following chunks:
-    // `[TextChunk(id=0, content="Hello ""), ThoughtChunk(id=0, content=Something), TextChunk(id=0, content=World)]``
-    // will be collected into the content block list: `[Text("Hello World"), Thought("Something"))]`
-    //
-    // All chunks with the same type and id (in this case, TextChunk id=0) are combined into a single content
-    // block at the first occurrence of that type and id.
-    // We use an 'IndexMap' to preserve the insertion order, so that newly-seen type/id combinations
-    // are not reordered.
-    let mut blocks: IndexMap<(ContentBlockOutputType, String), ContentBlockOutput> =
-        IndexMap::new();
-    // If the variant gave us an explicit 'raw_response', use that.
-    // Otherwise, concatenate the raw_chunk from each chunk.
-    let raw_response = raw_response.unwrap_or_else(|| {
-        value
-            .iter()
-            .map(InferenceResultChunk::raw_chunk)
-            .filter(|s| !s.is_empty()) // remove artificial chunks (e.g. our final chunk with usage and finish reason)
-            .collect::<Vec<&str>>()
-            .join("\n")
-    });
-    // Collect raw_usage entries from chunks (relay or provider streaming)
-    let mut raw_usage: Option<Vec<RawUsageEntry>> = None;
+impl StreamCollector {
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    // Extract provider-level TTFT from the first real chunk (with provider_latency set).
-    // This is used for ModelInference timing.
-    let provider_ttft = value.iter().find_map(|chunk| chunk.provider_latency());
-
-    // Extract provider-level response_time from the last real chunk (with provider_latency set).
-    // This is used for ModelInference timing.
-    let provider_response_time = value
-        .iter()
-        .rev()
-        .find_map(|chunk| chunk.provider_latency());
-
-    // Maps a chunk id to a map of summary ids to summary texts
-    // This is used to build up a thought summary list for each thought,
-    // which is used to construct the final 'summary' field on Thought.
-    let mut thought_summaries: IndexMap<String, IndexSet<String>> = IndexMap::new();
-
-    for chunk in value {
-        // Only collect raw_usage from real provider chunks (not artificial chunks).
-        // Artificial chunks have provider_latency: None.
-        if chunk.provider_latency().is_some()
-            && let Some(chunk_raw_usage) = chunk.raw_usage()
-        {
-            raw_usage
-                .get_or_insert_with(Vec::new)
-                .extend(chunk_raw_usage.iter().cloned());
+    /// Eagerly folds an already-buffered chunk list (tests and buffer-at-once
+    /// callers).
+    pub fn from_chunks(chunks: impl IntoIterator<Item = InferenceResultChunk>) -> Self {
+        let mut collector = Self::new();
+        for chunk in chunks {
+            collector.push(chunk);
         }
+        collector
+    }
+
+    /// Folds one chunk into the aggregated stream state. Takes ownership of
+    /// the chunk so delta strings move into the assembled content blocks
+    /// instead of being retained per chunk.
+    pub fn push(&mut self, chunk: InferenceResultChunk) {
+        // Only collect usage/timing from real provider chunks (not artificial
+        // chunks). Artificial chunks have provider_latency: None.
+        if let Some(latency) = chunk.provider_latency() {
+            self.provider_chunk_count += 1;
+            // First real chunk pins the TTFT; the last one wins for response time.
+            if self.provider_ttft.is_none() {
+                self.provider_ttft = Some(latency);
+            }
+            self.provider_response_time = Some(latency);
+            if let Some(chunk_raw_usage) = chunk.raw_usage() {
+                self.raw_usage
+                    .get_or_insert_with(Vec::new)
+                    .extend(chunk_raw_usage.iter().cloned());
+            }
+        }
+        let Self {
+            blocks,
+            thought_summaries,
+            ..
+        } = self;
         match chunk {
             InferenceResultChunk::Chat(chunk) => {
                 for content in chunk.content {
                     match content {
                         ContentBlockChunk::Text(text) => {
                             handle_textual_content_block(
-                                &mut blocks,
+                                blocks,
                                 (ContentBlockOutputType::Text, text.id),
                                 text.text,
                                 Into::into,
@@ -348,7 +343,7 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
                             // to a thought.
                             if let Some(text) = text {
                                 handle_textual_content_block(
-                                    &mut blocks,
+                                    blocks,
                                     (ContentBlockOutputType::Thought, id.clone()),
                                     text,
                                     |text| {
@@ -369,7 +364,7 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
                             }
                             if let Some(signature) = signature {
                                 handle_textual_content_block(
-                                    &mut blocks,
+                                    blocks,
                                     (ContentBlockOutputType::Thought, id.clone()),
                                     signature,
                                     |signature| {
@@ -418,7 +413,7 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
                                 let (index, _) = summary_set.insert_full(summary_id.clone());
 
                                 handle_textual_content_block(
-                                    &mut blocks,
+                                    blocks,
                                     (ContentBlockOutputType::Thought, id),
                                     summary_text,
                                     |summary_text| {
@@ -654,6 +649,59 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
             }
         }
     }
+}
+
+pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, Error> {
+    let CollectChunksArgs {
+        value,
+        inference_id,
+        episode_id,
+        function,
+        model_name,
+        model_provider_name,
+        provider_type,
+        raw_request,
+        raw_response,
+        inference_params,
+        system,
+        input_messages,
+        function_name,
+        variant_name,
+        dynamic_output_schema,
+        templates,
+        tool_config,
+        cached,
+        fetch_and_encode_input_files_before_inference,
+        extra_body,
+        extra_headers,
+        model_inference_id,
+        model_inference_usage,
+        finish_reason,
+    } = args;
+
+    // NOTE: We will eventually need this to be per-inference-response-type and sensitive to the type of variant and function being called.
+    // We preserve the order of chunks in the stream when combining them into `ContentBlockOutput`, except when
+    // the same id is used by non-adjacent blocks.
+    // For example, the following chunks:
+    // `[TextChunk(id=0, content="Hello ""), ThoughtChunk(id=0, content=Something), TextChunk(id=0, content=World)]``
+    // will be collected into the content block list: `[Text("Hello World"), Thought("Something"))]`
+    //
+    // All chunks with the same type and id (in this case, TextChunk id=0) are combined into a single content
+    // block at the first occurrence of that type and id.
+    // We use an 'IndexMap' to preserve the insertion order, so that newly-seen type/id combinations
+    // are not reordered.
+    // Delta-AI fork: chunks are folded incrementally by `StreamCollector::push`
+    // as they arrive (see `create_stream`) instead of being buffered in a Vec
+    // until the stream completes; `StreamCollector::from_chunks` preserves the
+    // buffer-at-once behavior for direct callers and tests.
+    let StreamCollector {
+        blocks,
+        raw_usage,
+        provider_ttft,
+        provider_response_time,
+        provider_chunk_count,
+        ..
+    } = value;
     // For ModelInference, use provider-level timing (excludes TensorZero overhead).
     // We should always have at least one real provider chunk with provider_latency set.
     let provider_ttft = provider_ttft.ok_or_else(|| {
@@ -672,6 +720,19 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
         response_time: provider_response_time,
     };
     let content_blocks: Vec<_> = blocks.into_values().collect();
+    // Delta-AI fork: if the variant gave us an explicit 'raw_response', use that.
+    // Otherwise, store a compact merged view of the stream instead of the raw
+    // provider chunk envelopes (concatenated NDJSON). Thinking-model streams
+    // average ~180+ chunk envelopes per response whose repeated JSON
+    // scaffolding was >99% of stored bytes.
+    let raw_response = raw_response.unwrap_or_else(|| {
+        build_merged_stream_raw_response(
+            provider_chunk_count,
+            &content_blocks,
+            &model_inference_usage,
+            finish_reason,
+        )
+    });
     let model_response = ProviderInferenceResponse::new(ProviderInferenceResponseArgs {
         id: model_inference_id,
         output: content_blocks.clone(),
@@ -716,6 +777,30 @@ pub async fn collect_chunks(args: CollectChunksArgs) -> Result<InferenceResult, 
             Some(original_response),
         )
         .await
+}
+
+/// Delta-AI fork: compact replacement for the concatenated raw chunk stream.
+///
+/// The stored `raw_response` for streamed model inferences used to be every
+/// provider chunk envelope joined with newlines. For thinking models this
+/// averaged 180+ envelopes per response whose repeated JSON scaffolding
+/// (id/object/created/model/choices wrappers) made up >99% of the stored
+/// bytes. This merged view keeps the concatenated content, usage, and finish
+/// reason instead.
+fn build_merged_stream_raw_response(
+    provider_chunk_count: usize,
+    content_blocks: &[ContentBlockOutput],
+    usage: &Usage,
+    finish_reason: Option<FinishReason>,
+) -> String {
+    json!({
+        "tensorzero::merged_stream": true,
+        "provider_chunks": provider_chunk_count,
+        "content_blocks": content_blocks,
+        "usage": usage,
+        "finish_reason": finish_reason,
+    })
+    .to_string()
 }
 
 fn tool_call_chunk_to_tool_call(tool_call: ToolCallChunk) -> ToolCall {
@@ -959,7 +1044,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id: Uuid::now_v7(),
             episode_id: Uuid::now_v7(),
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -1035,7 +1120,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -1092,6 +1177,18 @@ mod tests {
             model_provider_name
         );
         assert_eq!(model_inference_result.raw_request, raw_request);
+        // Delta-AI fork: streamed `raw_response` is a compact merged view, not
+        // the concatenated provider chunk envelopes.
+        let merged_raw = &model_inference_result.raw_response;
+        let merged: serde_json::Value = serde_json::from_str(merged_raw)
+            .expect("Merged raw_response should be a single valid JSON object");
+        assert_eq!(merged["tensorzero::merged_stream"], true);
+        assert_eq!(merged["provider_chunks"], 2);
+        assert!(merged_raw.contains("Hello, world!"));
+        assert!(
+            !merged_raw.contains("{\"message\": \"Hello"),
+            "Raw chunk envelope should not be stored verbatim: {merged_raw}"
+        );
         // Test Case 3: a JSON string that passes validation and also include usage in each chunk
         let inference_id = Uuid::now_v7();
         let output_schema = serde_json::json!({
@@ -1171,7 +1268,7 @@ mod tests {
             }),
         ];
         let collect_chunks_args = CollectChunksArgs {
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             system: None,
             inference_id,
             episode_id,
@@ -1283,7 +1380,7 @@ mod tests {
             }),
         ];
         let collect_chunks_args = CollectChunksArgs {
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             inference_id,
             episode_id,
             system: None,
@@ -1394,7 +1491,7 @@ mod tests {
             }),
         ];
         let collect_chunks_args = CollectChunksArgs {
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             inference_id,
             episode_id,
             system: None,
@@ -1546,7 +1643,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             system: None,
             input_messages: vec![],
             function: json_function_config.clone(),
@@ -1700,7 +1797,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             system: None,
             input_messages: vec![],
             function: json_function_config.clone(),
@@ -1909,7 +2006,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks,
+            value: StreamCollector::from_chunks(chunks),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -2066,7 +2163,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks_case1,
+            value: StreamCollector::from_chunks(chunks_case1),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -2165,7 +2262,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks_case2,
+            value: StreamCollector::from_chunks(chunks_case2),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -2255,7 +2352,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks_case3,
+            value: StreamCollector::from_chunks(chunks_case3),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -2349,7 +2446,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks_case4,
+            value: StreamCollector::from_chunks(chunks_case4),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -2425,7 +2522,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks_case5,
+            value: StreamCollector::from_chunks(chunks_case5),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),
@@ -2557,7 +2654,7 @@ mod tests {
         let collect_chunks_args = CollectChunksArgs {
             inference_id,
             episode_id,
-            value: chunks_case6,
+            value: StreamCollector::from_chunks(chunks_case6),
             system: None,
             input_messages: vec![],
             function: function_config.clone(),

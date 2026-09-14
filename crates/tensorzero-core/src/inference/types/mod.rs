@@ -125,7 +125,7 @@ pub use stored_input::{
 };
 pub use streams::{
     ChatInferenceResultChunk, CollectChunksArgs, InferenceResultChunk, InferenceResultStream,
-    JsonInferenceResultChunk, collect_chunks, stream_with_deadline,
+    JsonInferenceResultChunk, StreamCollector, collect_chunks, stream_with_deadline,
 };
 pub use usage::{ApiType, RawResponseEntry, RawUsageEntry, Usage};
 
