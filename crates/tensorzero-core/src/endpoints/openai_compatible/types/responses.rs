@@ -183,6 +183,14 @@ pub struct OpenAICompatibleResponsesParams {
     pub text: Option<OpenAICompatibleResponsesText>,
     pub reasoning: Option<OpenAICompatibleResponsesReasoning>,
     pub service_tier: Option<ServiceTier>,
+    /// Accepted for Codex-style clients and intentionally ignored (see the
+    /// matching fields on `OpenAICompatibleParams` for rationale).
+    #[serde(default)]
+    pub store: Option<bool>,
+    /// Accepted for Codex-style clients and intentionally ignored (see the
+    /// matching fields on `OpenAICompatibleParams` for rationale).
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
     #[serde(rename = "tensorzero::dryrun")]
     pub tensorzero_dryrun: Option<bool>,
     #[serde(rename = "tensorzero::episode_id")]
@@ -1071,6 +1079,35 @@ mod tests {
             .expect("into_chat_params should succeed");
         expect_that!(chat_params.reasoning_effort.as_deref(), some(eq("high")));
         expect_that!(chat_params.service_tier, some(eq(&ServiceTier::Priority)));
+    }
+
+    #[gtest]
+    fn test_codex_store_and_include_are_consumed_not_warned() {
+        // Codex-style clients send `store: false` and `include:
+        // ["reasoning.encrypted_content"]` on every request. Both are declared
+        // fields, so they must not land in `unknown_fields` (they used to
+        // trigger an "Ignoring unknown fields" warn per request) and must not
+        // be forwarded upstream.
+        let body = json!({
+            "model": "gpt-5",
+            "input": "hi",
+            "store": false,
+            "include": ["reasoning.encrypted_content"]
+        });
+        let params: OpenAICompatibleResponsesParams =
+            serde_json::from_value(body).expect("body should deserialize");
+        expect_that!(params.unknown_fields.contains_key("store"), eq(false));
+        expect_that!(params.unknown_fields.contains_key("include"), eq(false));
+        expect_that!(params.store, some(eq(false)));
+        assert_eq!(
+            params.include,
+            Some(vec!["reasoning.encrypted_content".to_string()])
+        );
+
+        let chat_params = params
+            .into_chat_params()
+            .expect("into_chat_params should succeed");
+        expect_that!(chat_params.unknown_fields.is_empty(), eq(true));
     }
 
     #[gtest]

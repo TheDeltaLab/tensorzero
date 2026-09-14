@@ -70,6 +70,11 @@ pub struct OpenAIResponsesRequest<'a> {
     reasoning: Option<OpenAIResponsesReasoningConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
     service_tier: Option<ServiceTier>,
+    /// Always `false`: the gateway persists inference data itself, so there is
+    /// no reason to retain outputs on OpenAI's side (`previous_response_id` is
+    /// not supported by the gateway either). `extra_body` can still override
+    /// this for models that genuinely need server-side storage.
+    store: bool,
     stream: bool,
 }
 
@@ -654,6 +659,7 @@ impl<'a> OpenAIResponsesRequest<'a> {
             reasoning: None,    // handled below
             service_tier: None, // handled below
             stream: request.stream,
+            store: false,
         };
         apply_inference_params(&mut openai_responses_request, &request.inference_params_v2);
         Ok(openai_responses_request)
@@ -3526,6 +3532,14 @@ mod tests {
         )
         .await
         .expect("Failed to create OpenAI responses request");
+
+        // `store` is always false on the wire: the gateway persists inference
+        // data itself, so OpenAI-side storage is never wanted by default.
+        assert!(!openai_responses_request.store);
+        assert_eq!(
+            serde_json::to_value(&openai_responses_request).unwrap()["store"],
+            serde_json::json!(false)
+        );
 
         // Verify that reasoning_effort is applied correctly
         assert!(openai_responses_request.reasoning.is_some());
