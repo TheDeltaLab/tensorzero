@@ -1,6 +1,8 @@
 [workspace]
 members = [
+    "async-inference",
     "config-applier",
+    "durable-tools-spawn",
     "gateway",
     "googletest-matchers",
     "minijinja-utils",
@@ -132,6 +134,7 @@ serde_arrow = { version = "0.14", features = ["arrow-58"] }
 blake3 = "1.8.5"
 moka = { version = "0.12.15", features = ["sync"] }
 durable = { git = "https://github.com/tensorzero/durable", rev = "b5f2664bc12e154a3ed00281c1a14a8c7406eae1" }
+durable-tools-spawn = { path = "durable-tools-spawn" }
 tensorzero-core = { path = "tensorzero-core" }
 tensorzero-http = { path = "tensorzero-http", features = ["ts-rs"] }
 regex = "1.12.2"

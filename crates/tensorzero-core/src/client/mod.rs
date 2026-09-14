@@ -46,9 +46,11 @@ pub use crate::inference::types::{
     ContentBlockChunk, Input, InputMessage, InputMessageContent, Role, System, Unknown,
 };
 
+pub mod async_inference;
 pub mod client_inference_params;
 pub mod input_handling;
 
+pub use async_inference::{AsyncTaskEventStream, AsyncTaskStreamEvent, AsyncTaskWaitOptions};
 
 pub enum ClientMode {
     HTTPGateway(HTTPGateway),

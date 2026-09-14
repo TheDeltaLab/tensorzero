@@ -6,6 +6,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+# Internal crates
+async-inference = { path = "../async-inference" }
 tensorzero-core = { path = "../tensorzero-core" }
 axum = { workspace = true }
 tracing = { version = "0.1.43", features = ["log", "release_max_level_debug"] }

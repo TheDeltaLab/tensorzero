@@ -19,6 +19,9 @@ use tokio::signal;
 use tokio_stream::wrappers::IntervalStream;
 use tracing::Level;
 
+use async_inference::{
+    AsyncInferenceState, AsyncInferenceWorkerConfig, WorkerOptions, spawn_async_inference_worker,
+};
 use tensorzero_auth::constants::{DEFAULT_ORGANIZATION, DEFAULT_WORKSPACE};
 use tensorzero_core::config::{Config, ConfigFileGlob, unwritten::UnwrittenConfig};
 use tensorzero_core::db::clickhouse::migration_manager::manual_run_clickhouse_migrations;
@@ -597,6 +600,10 @@ async fn run() -> Result<(), ExitCode> {
 
     validate_postgres_extensions_for_postgres_primary(&gateway_handle).await?;
 
+    // Start async inference worker if `[gateway.async_inference]` is enabled
+    // (Delta-AI fork: restored after the #60 strip)
+    spawn_async_inference_worker_if_configured(&gateway_handle).await?;
+
     // Create a new observability_enabled_pretty string for the log message below
     let postgres_enabled_pretty =
         get_postgres_status_string(&gateway_handle.app_state.postgres_connection_info());
@@ -926,6 +933,82 @@ pub async fn shutdown_signal() {
             tracing::info!("Received SIGHUP signal");
         }
     };
+}
+
+/// Spawn the async inference worker if `[gateway.async_inference]` is enabled.
+///
+/// The worker executes tasks from the durable queue shared with the submit
+/// endpoints. Async inference requires Postgres (durable task queue) and
+/// Valkey (per-task SSE event streams); enabled config without either is a
+/// startup error.
+async fn spawn_async_inference_worker_if_configured(
+    gateway_handle: &gateway::GatewayHandle,
+) -> Result<(), ExitCode> {
+    let async_config = gateway_handle
+        .app_state
+        .config()
+        .load()
+        .gateway
+        .async_inference
+        .clone();
+    if !async_config.enabled {
+        return Ok(());
+    }
+
+    let pool = match gateway_handle.app_state.postgres_connection_info() {
+        PostgresConnectionInfo::Enabled { pool, .. } => pool,
+        PostgresConnectionInfo::Disabled => {
+            tracing::error!(
+                "`gateway.async_inference.enabled` is set, but Postgres is not enabled. \
+                 Async inference requires Postgres for the durable task queue."
+            );
+            return Err(ExitCode::FAILURE);
+        }
+        #[cfg(test)]
+        #[expect(unreachable_patterns)]
+        _ => return Err(ExitCode::FAILURE),
+    };
+
+    let valkey = match gateway_handle
+        .app_state
+        .valkey_connection_info()
+        .get_connection()
+    {
+        Some(connection) => connection.clone(),
+        None => {
+            tracing::error!(
+                "`gateway.async_inference.enabled` is set, but Valkey is not configured. \
+                 Async inference requires Valkey for task event streams."
+            );
+            return Err(ExitCode::FAILURE);
+        }
+    };
+
+    let state = AsyncInferenceState {
+        app_state: gateway_handle.app_state.clone(),
+        valkey,
+        stream_ttl: Duration::from_secs(async_config.stream_ttl_seconds),
+    };
+    let worker_options = WorkerOptions {
+        poll_interval: Duration::from_millis(500),
+        concurrency: async_config.concurrency,
+        ..Default::default()
+    };
+    let config = AsyncInferenceWorkerConfig {
+        pool,
+        queue_name: async_config.queue_name,
+        state,
+        worker_options,
+    };
+
+    spawn_async_inference_worker(
+        &gateway_handle.app_state.deferred_tasks,
+        gateway_handle.app_state.shutdown_token.clone(),
+        config,
+    )
+    .await
+    .log_err_pretty("Failed to spawn async inference worker")?;
+    Ok(())
 }
 
 /// ┌──────────────────────────────────────────────────────────────────────────┐

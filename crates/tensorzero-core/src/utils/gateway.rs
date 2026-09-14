@@ -49,6 +49,7 @@ use crate::error::{DelayedError, Error, ErrorDetails};
 use crate::howdy::{get_deployment_id, setup_howdy};
 use crate::http::TensorzeroHttpClient;
 use crate::rate_limiting::{RateLimitingConfig, RateLimitingManager};
+use durable_tools_spawn::SpawnClient;
 
 #[cfg(test)]
 use crate::db::clickhouse::ClickHouseClient;
@@ -240,6 +241,9 @@ pub struct AppStateData {
     pub auth_cache: Option<Cache<String, AuthResult>>,
     /// Optional cache for historical config snapshots loaded from ClickHouse
     pub config_snapshot_cache: Option<Cache<SnapshotHash, Arc<Config>>>,
+    /// Optional durable task spawning client for the async inference API,
+    /// targeting the `gateway.async_inference.queue_name` queue.
+    pub async_inference_spawn_client: Option<Arc<SpawnClient>>,
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     /// Token pool manager for rate limiting pre-borrowing
@@ -272,6 +276,9 @@ pub struct SwappableAppStateData {
     pub auth_cache: Option<Cache<String, AuthResult>>,
     /// Optional cache for historical config snapshots loaded from ClickHouse
     pub config_snapshot_cache: Option<Cache<SnapshotHash, Arc<Config>>>,
+    /// Optional durable task spawning client for the async inference API,
+    /// targeting the `gateway.async_inference.queue_name` queue.
+    pub async_inference_spawn_client: Option<Arc<SpawnClient>>,
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     pub shutdown_token: CancellationToken,
@@ -406,6 +413,7 @@ impl SwappableAppStateData {
             deferred_tasks: self.deferred_tasks.clone(),
             auth_cache: self.auth_cache.clone(),
             config_snapshot_cache: self.config_snapshot_cache.clone(),
+            async_inference_spawn_client: self.async_inference_spawn_client.clone(),
             deployment_id: self.deployment_id.clone(),
             rate_limiting_manager: live_state.rate_limiting_manager.clone(),
             shutdown_token: self.shutdown_token.clone(),
@@ -600,6 +608,7 @@ impl GatewayHandle {
                 deferred_tasks,
                 auth_cache,
                 config_snapshot_cache: None,
+                async_inference_spawn_client: None,
                 deployment_id: None,
                 shutdown_token: cancel_token,
                 config_in_database: false,
@@ -701,7 +710,6 @@ impl GatewayHandle {
                 .build(),
         );
 
-
         if config.gateway.auth.enabled
             && matches!(postgres_connection_info, PostgresConnectionInfo::Disabled)
         {
@@ -724,6 +732,28 @@ impl GatewayHandle {
             rate_limiting_manager,
         }));
         let deferred_tasks = TaskTracker::new();
+        let async_inference_spawn_client = if !config.gateway.async_inference.enabled {
+            None
+        } else if let Some(pool) = postgres_connection_info.get_pool() {
+            match SpawnClient::builder()
+                .pool(pool.clone())
+                .queue_name(&config.gateway.async_inference.queue_name)
+                .build()
+                .await
+            {
+                Ok(client) => Some(Arc::new(client)),
+                Err(e) => {
+                    tracing::warn!("Failed to create async inference `SpawnClient`: {e}");
+                    None
+                }
+            }
+        } else {
+            tracing::warn!(
+                "`gateway.async_inference.enabled` is set but Postgres is not enabled; \
+                 async inference endpoints will return an error"
+            );
+            None
+        };
         Ok(Self {
             app_state: SwappableAppStateData {
                 live_state,
@@ -736,6 +766,7 @@ impl GatewayHandle {
                 deferred_tasks,
                 auth_cache,
                 config_snapshot_cache,
+                async_inference_spawn_client,
                 deployment_id,
                 shutdown_token: cancel_token,
                 config_in_database,
@@ -776,6 +807,7 @@ impl SwappableAppStateData {
             deferred_tasks: TaskTracker::new(),
             auth_cache: None,
             config_snapshot_cache: None,
+            async_inference_spawn_client: None,
             deployment_id: None,
             shutdown_token: CancellationToken::new(),
             config_in_database: self.config_in_database,
@@ -866,6 +898,7 @@ impl AppStateData {
             postgres_connection_info,
             auth_cache: None,
             config_snapshot_cache: None,
+            async_inference_spawn_client: None,
             deployment_id: None,
             rate_limiting_manager,
             shutdown_token,
