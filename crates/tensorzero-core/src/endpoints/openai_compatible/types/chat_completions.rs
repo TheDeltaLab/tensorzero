@@ -132,6 +132,17 @@ pub struct OpenAICompatibleParams {
     pub service_tier: Option<ServiceTier>,
     pub verbosity: Option<String>,
     pub n: Option<u32>,
+    /// Accepted for OpenAI SDK / Codex-style clients and intentionally ignored:
+    /// the gateway is stateless with respect to OpenAI sessions
+    /// (`previous_response_id` is not supported), and it forwards a fixed
+    /// `store: false` to OpenAI upstream (see `OpenAIRequest`).
+    #[serde(default)]
+    pub store: Option<bool>,
+    /// Accepted for OpenAI SDK / Codex-style clients and intentionally ignored:
+    /// `encrypted_content` reasoning items are emitted on the Responses output
+    /// path regardless of this parameter, so nothing needs forwarding upstream.
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
     #[serde(rename = "tensorzero::variant_name")]
     pub tensorzero_variant_name: Option<String>,
     #[serde(rename = "tensorzero::dryrun")]
@@ -946,6 +957,29 @@ mod tests {
     use crate::endpoints::openai_compatible::types::tool::OpenAICompatibleFunctionCall;
     use crate::inference::types::Usage;
     use crate::tool::{InferenceResponseToolCall, ToolCallWrapper};
+
+    #[test]
+    fn test_store_and_include_are_consumed_not_warned() {
+        // Codex-style clients send `store: false` and `include:
+        // ["reasoning.encrypted_content"]` on every request. Both are declared
+        // fields, so they must not land in `unknown_fields` (they used to
+        // trigger an "Ignoring unknown fields" warn per request).
+        let body = json!({
+            "model": "tensorzero::function_name::test_function",
+            "messages": [{"role": "user", "content": "hi"}],
+            "store": false,
+            "include": ["reasoning.encrypted_content"]
+        });
+        let params: OpenAICompatibleParams =
+            serde_json::from_value(body).expect("body should deserialize");
+        assert!(!params.unknown_fields.contains_key("store"));
+        assert!(!params.unknown_fields.contains_key("include"));
+        assert_eq!(params.store, Some(false));
+        assert_eq!(
+            params.include,
+            Some(vec!["reasoning.encrypted_content".to_string()])
+        );
+    }
 
     #[test]
     fn test_try_from_openai_compatible_params() {

@@ -2834,6 +2834,11 @@ struct OpenAIRequest<'a> {
     service_tier: Option<ServiceTier>,
     #[serde(skip_serializing_if = "Option::is_none")]
     verbosity: Option<String>,
+    /// Always `false`: the gateway persists inference data itself, so there is
+    /// no reason to retain outputs on OpenAI's side (`previous_response_id` is
+    /// not supported by the gateway either). `extra_body` can still override
+    /// this for models that genuinely need server-side storage.
+    store: bool,
 }
 
 impl<'a> OpenAIRequest<'a> {
@@ -2905,6 +2910,7 @@ impl<'a> OpenAIRequest<'a> {
             reasoning_effort: None, // handled below
             service_tier: None,     // handled below
             verbosity: None,        // handled below
+            store: false,
         };
 
         apply_inference_params(&mut openai_request, &request.inference_params_v2);
@@ -4024,6 +4030,13 @@ mod tests {
         assert!(openai_request.tools.is_none());
         assert_eq!(openai_request.tool_choice, None);
         assert!(openai_request.parallel_tool_calls.is_none());
+        // `store` is always false on the wire: the gateway persists inference
+        // data itself, so OpenAI-side storage is never wanted by default.
+        assert!(!openai_request.store);
+        assert_eq!(
+            serde_json::to_value(&openai_request).unwrap()["store"],
+            serde_json::json!(false)
+        );
 
         // Test request with tools and JSON mode
         let request_with_tools = ModelInferenceRequest {
