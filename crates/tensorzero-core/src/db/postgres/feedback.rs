@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Feedback queries for Postgres.
 //!
 //! This module implements both read and write operations for feedback tables in Postgres.

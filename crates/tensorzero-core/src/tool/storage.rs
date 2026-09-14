@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Database storage types for tool configuration.
 //!
 //! This module contains types for persisting tool configuration to the database:

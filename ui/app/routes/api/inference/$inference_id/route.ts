@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { data, type LoaderFunctionArgs } from "react-router";
 import { pollForFeedbackItem } from "~/utils/clickhouse/feedback";
 import { resolveModelInferences } from "~/utils/resolve.server";

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /// A pre-computed bundle of TypeScript type declarations.
 ///
 /// Contains all declarations needed to fully define a type and its transitive dependencies,

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Delegating database connection that wraps both ClickHouse and Postgres.
 //!
 //! This module provides a database implementation that delegates operations

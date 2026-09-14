@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /**
  * Configuration loader for TensorZero UI.
  *

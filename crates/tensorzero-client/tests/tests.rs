@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![cfg(feature = "e2e_tests")]
 #![expect(clippy::unwrap_used, clippy::missing_panics_doc)]
 

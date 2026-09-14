@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Tool types and configuration for TensorZero.
 //!
 //! This module provides the core types for working with tools in TensorZero:

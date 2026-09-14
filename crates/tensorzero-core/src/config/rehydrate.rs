@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Converts stored config types (from `tensorzero-stored-config`) back into
 //! `Uninitialized*` types that the existing `load()` pipeline can consume.
 //!

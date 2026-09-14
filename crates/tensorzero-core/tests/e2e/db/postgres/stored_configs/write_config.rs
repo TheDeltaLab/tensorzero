@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for writing whole `UninitializedConfig`s to Postgres (config-in-db).
 
 use std::collections::HashMap;

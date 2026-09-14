@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tensorzero_core::config::UninitializedVariantInfo;

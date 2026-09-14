@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import * as React from "react";
 import { useFetcher, type FetcherFormProps } from "react-router";
 import type { SubmitTarget, FetcherSubmitOptions } from "react-router";

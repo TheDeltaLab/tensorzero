@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { describe, expect, it } from "vitest";
 import { buildGatewayUrl } from "./gateway-url";
 

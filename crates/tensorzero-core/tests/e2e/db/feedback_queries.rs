@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![expect(clippy::print_stdout)]
 //! Shared test logic for FeedbackQueries implementations (ClickHouse and Postgres).
 //!

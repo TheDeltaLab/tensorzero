@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { test, expect } from "@playwright/test";
 import {
   installClipboardMock,

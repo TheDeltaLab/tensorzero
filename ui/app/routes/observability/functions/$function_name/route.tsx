@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Route } from "./+types/route";
 import { data, useLocation } from "react-router";
 import { SnapshotBanner } from "~/components/layout/SnapshotBanner";

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for writing function configs to Postgres (config-in-db).
 
 use std::collections::{BTreeMap, HashMap};

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { useConfig } from "~/context/config";
 import MetricSelector from "../metric/MetricSelector";
 import { useState } from "react";

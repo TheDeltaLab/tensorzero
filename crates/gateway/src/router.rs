@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Router construction and middleware for the TensorZero Gateway.
 //!
 //! This module builds the final Axum router with all layers (auth, tracing, metrics)

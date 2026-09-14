@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Built-in TensorZero functions
 //!
 //! This module defines built-in functions that are automatically available

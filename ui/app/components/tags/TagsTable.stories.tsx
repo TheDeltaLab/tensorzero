@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { TagsTable } from "./TagsTable";

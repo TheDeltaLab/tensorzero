@@ -110,3 +110,29 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `crates/Cargo.lock` — Workspace lockfile updated for `opentelemetry-appender-tracing` (Delta-AI fork).
 - `docs/operations/export-opentelemetry-logs.mdx` — Documented `gateway.export.otlp.logs` OTLP logs export (Delta-AI fork).
 - `docs/docs.json` — Registered the `operations/export-opentelemetry-logs` nav entry (Delta-AI fork).
+
+- `.github/workflows/client-tests.yml` — Removed the Python PyO3 client pytest steps (Python SDK stripped from the fork).
+- `.github/workflows/dispatch-autopilot-e2e.yml` — Deleted workflow (autopilot removed from the fork).
+- `.github/workflows/optimization-test-cron.yml` — Deleted workflow (optimization removed from the fork).
+- `.github/workflows/slash-command-autopilot-e2e.yml` — Deleted workflow (autopilot removed from the fork).
+- `.github/workflows/python-client-build.yml` — Deleted workflow (Python SDK stripped from the fork).
+- `crates/.cargo/config.toml` — Removed cargo aliases referencing the deleted evaluations/optimizers/autopilot/durable-tools crates and python load-test packages (Delta-AI fork).
+- `crates/tensorzero-client/Cargo.toml` — Dropped the evaluations and tensorzero-optimizers dependencies (Delta-AI fork).
+- `crates/tensorzero-error/Cargo.toml` — Removed the optional autopilot-client feature (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/client_tests/` — Relocated client smoke-test configs (previously in the deleted tensorzero-client tests) for ClickHouse/Postgres observability startup checks (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/config/tensorzero.toml` — Removed [evaluations]/[optimizers] sections and per-function experimentation/evaluators sections from the sample config (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/config/tensorzero.test.toml` — Removed [evaluations] section from the test fixture (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions*.toml` — Removed evaluator/experimentation sections from the e2e configs (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.misc.toml` — Batch-writes e2e config retained; evaluations/optimization sections removed (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.models.toml` — Retained model fixtures after the evals/optimization strip (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/client_tests/templates/system_template.minijinja` — Client smoke-test template (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/client_tests/templates/user_template.minijinja` — Client smoke-test template (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/client_tests/test_config.toml` — Client smoke-test config for the ClickHouse observability startup check (Delta-AI fork).
+- `crates/tensorzero-core/fixtures/client_tests/test_config_postgres.toml` — Client smoke-test config for the Postgres observability startup check (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.basic_test.toml` — Removed evaluator/experimentation sections from the e2e config (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.dynamic_json.toml` — Removed evaluator sections from the e2e config (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.extract_entities.toml` — Removed evaluator sections from the e2e config (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.json_success.toml` — Removed evaluator sections from the e2e config (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.toml` — Removed evaluator/experimentation sections from the e2e config (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.weather_helper.toml` — Removed evaluator/experimentation sections from the e2e config (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.write_haiku.toml` — Removed evaluator sections from the e2e config (Delta-AI fork).

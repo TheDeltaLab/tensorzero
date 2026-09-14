@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { StatusCodes as HttpStatusCode } from "http-status-codes";
 import { isRouteErrorResponse } from "react-router";
 import { z } from "zod";

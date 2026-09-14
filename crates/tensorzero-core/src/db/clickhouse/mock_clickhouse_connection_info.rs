@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /// A test-only struct that implements all mock ClickHouse queries. This allows us to use a single struct in tests that need to mock multiple traits.
 use async_trait::async_trait;
 use uuid::Uuid;

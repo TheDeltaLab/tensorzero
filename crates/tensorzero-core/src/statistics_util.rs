@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Statistical utility functions.
 
 /// Computes the mean of a slice of data.

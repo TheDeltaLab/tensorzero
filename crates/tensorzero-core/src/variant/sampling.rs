@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Deterministic variant sampling for multi-variant functions.
 //!
 //! Sampling is done in-memory using a SHA-256 hash of `(function_name, episode_id)`,
