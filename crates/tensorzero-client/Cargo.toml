@@ -12,7 +12,6 @@ required-features = ["e2e_tests"]
 
 [dependencies]
 async-trait = { workspace = true }
-evaluations = { path = "../evaluations", default-features = false }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -20,7 +19,6 @@ uuid = { workspace = true }
 tokio-stream = { workspace = true }
 tensorzero-core = { path = "../tensorzero-core" }
 tensorzero-inference-types = { path = "../tensorzero-inference-types" }
-tensorzero-optimizers = { path = "../tensorzero-optimizers" }
 url = { workspace = true }
 pyo3 = { workspace = true, optional = true }
 tracing = { workspace = true }

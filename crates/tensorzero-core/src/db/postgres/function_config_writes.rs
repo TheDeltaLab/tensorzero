@@ -1,20 +1,13 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use sqlx::{FromRow, Postgres, Transaction};
 use tensorzero_stored_config::{
     STORED_FUNCTION_CONFIG_SCHEMA_REVISION, STORED_VARIANT_CONFIG_SCHEMA_REVISION,
-    StoredAdaptiveExperimentationAlgorithm, StoredAdaptiveExperimentationConfig,
     StoredBestOfNVariantConfig, StoredChatCompletionVariantConfig, StoredChatFunctionConfig,
-    StoredDiclVariantConfig, StoredEvaluatorConfig, StoredExactMatchConfig,
-    StoredExperimentationConfig, StoredExperimentationConfigWithNamespaces, StoredFileRef,
-    StoredFunctionConfig, StoredInputWrappers, StoredJsonFunctionConfig,
-    StoredLLMJudgeBestOfNVariantConfig, StoredLLMJudgeChainOfThoughtVariantConfig,
-    StoredLLMJudgeChatCompletionVariantConfig, StoredLLMJudgeConfig,
-    StoredLLMJudgeDiclVariantConfig, StoredLLMJudgeIncludeConfig, StoredLLMJudgeInputFormat,
-    StoredLLMJudgeMixtureOfNVariantConfig, StoredLLMJudgeOptimize, StoredLLMJudgeOutputType,
-    StoredLLMJudgeVariantConfig, StoredLLMJudgeVariantInfo, StoredMixtureOfNVariantConfig,
-    StoredRegexConfig, StoredRetryConfig, StoredStaticExperimentationConfig, StoredTimeoutsConfig,
-    StoredToolChoice, StoredToolUseConfig, StoredTypescriptJudgeConfig, StoredVariantConfig,
+    StoredDiclVariantConfig, StoredFileRef, StoredFunctionConfig, StoredInputWrappers,
+    StoredJsonFunctionConfig, StoredMixtureOfNVariantConfig,
+    StoredRetryConfig, StoredTimeoutsConfig, StoredToolChoice, StoredVariantConfig,
     StoredVariantRef, StoredVariantVersionConfig,
 };
 use uuid::Uuid;
@@ -24,18 +17,6 @@ use crate::config::{
     UninitializedVariantInfo, path::ResolvedTomlPathData,
 };
 use crate::error::{Error, ErrorDetails, IMPOSSIBLE_ERROR_MESSAGE};
-use crate::evaluations::{
-    LLMJudgeInputFormat, LLMJudgeOptimize, LLMJudgeOutputType, ToolUseConfig,
-    UninitializedEvaluatorConfig, UninitializedLLMJudgeBestOfNVariantConfig,
-    UninitializedLLMJudgeChatCompletionVariantConfig, UninitializedLLMJudgeConfig,
-    UninitializedLLMJudgeDiclVariantConfig, UninitializedLLMJudgeMixtureOfNVariantConfig,
-    UninitializedLLMJudgeVariantConfig, UninitializedLLMJudgeVariantInfo,
-};
-use crate::experimentation::{
-    AdaptiveExperimentationAlgorithm, StaticExperimentationConfig,
-    UninitializedExperimentationConfig, UninitializedExperimentationConfigWithNamespaces,
-    track_and_stop::UninitializedTrackAndStopExperimentationConfig,
-};
 use crate::utils::retries::RetryConfig;
 use crate::variant::chat_completion::{
     UninitializedChatCompletionConfig, UninitializedInputWrappers,
@@ -511,9 +492,6 @@ fn collect_files(
             for variant in config.variants.values() {
                 collect_variant_files(&mut templates, &variant.inner)?;
             }
-            for evaluator in config.evaluators.values() {
-                collect_evaluator_files(&mut templates, evaluator)?;
-            }
         }
         UninitializedFunctionConfig::Json(config) => {
             collect_function_common_files(
@@ -528,9 +506,6 @@ fn collect_files(
             }
             for variant in config.variants.values() {
                 collect_variant_files(&mut templates, &variant.inner)?;
-            }
-            for evaluator in config.evaluators.values() {
-                collect_evaluator_files(&mut templates, evaluator)?;
             }
         }
     }
@@ -621,44 +596,6 @@ fn collect_chat_completion_files(
     Ok(())
 }
 
-fn collect_evaluator_files(
-    templates: &mut BTreeMap<String, CollectedFile>,
-    config: &UninitializedEvaluatorConfig,
-) -> Result<(), Error> {
-    if let UninitializedEvaluatorConfig::LLMJudge(config) = config {
-        for variant in config.variants.values() {
-            collect_llm_judge_files(templates, &variant.inner)?;
-        }
-    }
-    Ok(())
-}
-
-fn collect_llm_judge_files(
-    templates: &mut BTreeMap<String, CollectedFile>,
-    config: &UninitializedLLMJudgeVariantConfig,
-) -> Result<(), Error> {
-    match config {
-        UninitializedLLMJudgeVariantConfig::ChatCompletion(config) => {
-            add_file(templates, &config.system_instructions)
-        }
-        UninitializedLLMJudgeVariantConfig::BestOfNSampling(config) => {
-            add_file(templates, &config.evaluator.system_instructions)
-        }
-        UninitializedLLMJudgeVariantConfig::MixtureOfNSampling(config) => {
-            add_file(templates, &config.fuser.system_instructions)
-        }
-        UninitializedLLMJudgeVariantConfig::Dicl(config) => {
-            if let Some(system_instructions) = &config.system_instructions {
-                add_file(templates, system_instructions)?;
-            }
-            Ok(())
-        }
-        UninitializedLLMJudgeVariantConfig::ChainOfThought(config) => {
-            add_file(templates, &config.inner.system_instructions)
-        }
-    }
-}
-
 fn convert_function_config(
     config: &UninitializedFunctionConfig,
     file_version_ids: &HashMap<String, Uuid>,
@@ -691,11 +628,6 @@ fn convert_function_config(
                 tool_choice: Some(StoredToolChoice::from(&config.tool_choice)),
                 parallel_tool_calls: config.parallel_tool_calls,
                 description: config.description.clone(),
-                experimentation: config
-                    .experimentation
-                    .as_ref()
-                    .map(StoredExperimentationConfigWithNamespaces::from),
-                evaluators: Some(convert_evaluators(&config.evaluators, file_version_ids)?),
             }))
         }
         UninitializedFunctionConfig::Json(config) => {
@@ -726,11 +658,6 @@ fn convert_function_config(
                     .map(|path| file_ref_for(path, file_version_ids))
                     .transpose()?,
                 description: config.description.clone(),
-                experimentation: config
-                    .experimentation
-                    .as_ref()
-                    .map(StoredExperimentationConfigWithNamespaces::from),
-                evaluators: Some(convert_evaluators(&config.evaluators, file_version_ids)?),
             }))
         }
     }
@@ -955,359 +882,29 @@ fn convert_dicl_variant(
     })
 }
 
-#[expect(deprecated)]
-pub(crate) fn convert_evaluators(
-    evaluators: &HashMap<String, UninitializedEvaluatorConfig>,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<BTreeMap<String, StoredEvaluatorConfig>, Error> {
-    let mut stored = BTreeMap::new();
-    for (name, evaluator) in evaluators {
-        stored.insert(
-            name.clone(),
-            match evaluator {
-                UninitializedEvaluatorConfig::ExactMatch(config) => {
-                    StoredEvaluatorConfig::ExactMatch(StoredExactMatchConfig {
-                        cutoff: config.cutoff,
-                    })
-                }
-                UninitializedEvaluatorConfig::LLMJudge(config) => StoredEvaluatorConfig::LLMJudge(
-                    convert_llm_judge_config(config, file_version_ids)?,
-                ),
-                UninitializedEvaluatorConfig::ToolUse(config) => {
-                    StoredEvaluatorConfig::ToolUse(StoredToolUseConfig::from(config))
-                }
-                UninitializedEvaluatorConfig::Regex(config) => {
-                    StoredEvaluatorConfig::Regex(StoredRegexConfig {
-                        must_match: config.must_match.clone(),
-                        must_not_match: config.must_not_match.clone(),
-                    })
-                }
-                UninitializedEvaluatorConfig::TypescriptJudge(config) => {
-                    StoredEvaluatorConfig::Typescript(StoredTypescriptJudgeConfig {
-                        typescript_code: config.typescript_file.data().to_string(),
-                        output_type: config.output_type.into(),
-                        optimize: config.optimize.into(),
-                    })
-                }
-            },
-        );
-    }
-    Ok(stored)
-}
-
-fn convert_llm_judge_config(
-    config: &UninitializedLLMJudgeConfig,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<StoredLLMJudgeConfig, Error> {
-    let mut variants = BTreeMap::new();
-    for (name, variant) in &config.variants {
-        variants.insert(
-            name.clone(),
-            convert_llm_judge_variant_info(variant, file_version_ids)?,
-        );
-    }
-
-    Ok(StoredLLMJudgeConfig {
-        input_format: config
-            .input_format
-            .as_ref()
-            .map(|f| StoredLLMJudgeInputFormat::from(f.clone())),
-        variants: Some(variants),
-        output_type: config.output_type.into(),
-        optimize: config.optimize.into(),
-        #[expect(deprecated)]
-        cutoff: config.cutoff,
-        include: config
-            .include
-            .as_ref()
-            .map(|inc| StoredLLMJudgeIncludeConfig {
-                reference_output: inc.reference_output,
-            }),
-        description: config.description.clone(),
+fn postgres_query_error(context: &str, error: impl std::fmt::Display) -> Error {
+    Error::new(ErrorDetails::PostgresQuery {
+        message: format!("{context}: {error}"),
     })
 }
 
-fn convert_llm_judge_variant_info(
-    config: &UninitializedLLMJudgeVariantInfo,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<StoredLLMJudgeVariantInfo, Error> {
-    Ok(StoredLLMJudgeVariantInfo {
-        variant: match &config.inner {
-            UninitializedLLMJudgeVariantConfig::ChatCompletion(config) => {
-                StoredLLMJudgeVariantConfig::ChatCompletion(
-                    convert_llm_judge_chat_completion_variant(config, file_version_ids)?,
-                )
-            }
-            UninitializedLLMJudgeVariantConfig::BestOfNSampling(config) => {
-                StoredLLMJudgeVariantConfig::BestOfNSampling(convert_llm_judge_best_of_n_variant(
-                    config,
-                    file_version_ids,
-                )?)
-            }
-            UninitializedLLMJudgeVariantConfig::MixtureOfNSampling(config) => {
-                StoredLLMJudgeVariantConfig::MixtureOfNSampling(
-                    convert_llm_judge_mixture_of_n_variant(config, file_version_ids)?,
-                )
-            }
-            UninitializedLLMJudgeVariantConfig::Dicl(config) => StoredLLMJudgeVariantConfig::Dicl(
-                convert_llm_judge_dicl_variant(config, file_version_ids)?,
-            ),
-            UninitializedLLMJudgeVariantConfig::ChainOfThought(config) => {
-                StoredLLMJudgeVariantConfig::ChainOfThought(
-                    StoredLLMJudgeChainOfThoughtVariantConfig {
-                        inner: convert_llm_judge_chat_completion_variant(
-                            &config.inner,
-                            file_version_ids,
-                        )?,
-                    },
-                )
-            }
-        },
-        timeouts: config.timeouts.as_ref().map(StoredTimeoutsConfig::from),
+fn stored_function_type(config: &UninitializedFunctionConfig) -> &'static str {
+    match config {
+        UninitializedFunctionConfig::Chat(_) => "chat",
+        UninitializedFunctionConfig::Json(_) => "json",
+    }
+}
+
+fn serialization_error(context: &str, error: impl std::fmt::Display) -> Error {
+    Error::new(ErrorDetails::Serialization {
+        message: format!("{context}: {error}"),
     })
 }
 
-fn convert_llm_judge_chat_completion_variant(
-    config: &UninitializedLLMJudgeChatCompletionVariantConfig,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<StoredLLMJudgeChatCompletionVariantConfig, Error> {
-    Ok(StoredLLMJudgeChatCompletionVariantConfig {
-        active: config.active,
-        model: config.model.clone(),
-        system_instructions: file_ref_for(&config.system_instructions, file_version_ids)?,
-        temperature: config.temperature,
-        top_p: config.top_p,
-        max_tokens: config.max_tokens,
-        presence_penalty: config.presence_penalty,
-        frequency_penalty: config.frequency_penalty,
-        seed: config.seed,
-        json_mode: config.json_mode,
-        stop_sequences: config.stop_sequences.clone(),
-        reasoning_effort: config.reasoning_effort.clone(),
-        service_tier: config.service_tier.clone(),
-        thinking_budget_tokens: config.thinking_budget_tokens,
-        verbosity: config.verbosity.clone(),
-        retries: Some(StoredRetryConfig::from(config.retries)),
-        extra_body: config.extra_body.as_ref().map(StoredExtraBodyConfig::from),
-        extra_headers: config
-            .extra_headers
-            .as_ref()
-            .map(StoredExtraHeadersConfig::from),
+fn missing_file_error(file_path: &str) -> Error {
+    Error::new(ErrorDetails::Config {
+        message: format!("Missing stored file version ID for file path `{file_path}`."),
     })
-}
-
-#[expect(deprecated)]
-fn convert_llm_judge_best_of_n_variant(
-    config: &UninitializedLLMJudgeBestOfNVariantConfig,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<StoredLLMJudgeBestOfNVariantConfig, Error> {
-    Ok(StoredLLMJudgeBestOfNVariantConfig {
-        active: config.active,
-        timeout_s: config.timeout_s,
-        candidates: Some(config.candidates.clone()),
-        evaluator: convert_llm_judge_chat_completion_variant(&config.evaluator, file_version_ids)?,
-    })
-}
-
-#[expect(deprecated)]
-fn convert_llm_judge_mixture_of_n_variant(
-    config: &UninitializedLLMJudgeMixtureOfNVariantConfig,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<StoredLLMJudgeMixtureOfNVariantConfig, Error> {
-    Ok(StoredLLMJudgeMixtureOfNVariantConfig {
-        active: config.active,
-        timeout_s: config.timeout_s,
-        candidates: Some(config.candidates.clone()),
-        fuser: convert_llm_judge_chat_completion_variant(&config.fuser, file_version_ids)?,
-    })
-}
-
-fn convert_llm_judge_dicl_variant(
-    config: &UninitializedLLMJudgeDiclVariantConfig,
-    file_version_ids: &HashMap<String, Uuid>,
-) -> Result<StoredLLMJudgeDiclVariantConfig, Error> {
-    Ok(StoredLLMJudgeDiclVariantConfig {
-        active: config.active,
-        embedding_model: config.embedding_model.clone(),
-        k: config.k,
-        model: config.model.clone(),
-        system_instructions: config
-            .system_instructions
-            .as_ref()
-            .map(|path| file_ref_for(path, file_version_ids))
-            .transpose()?,
-        temperature: config.temperature,
-        top_p: config.top_p,
-        presence_penalty: config.presence_penalty,
-        frequency_penalty: config.frequency_penalty,
-        max_tokens: config.max_tokens,
-        seed: config.seed,
-        json_mode: config.json_mode,
-        stop_sequences: config.stop_sequences.clone(),
-        extra_body: config.extra_body.as_ref().map(StoredExtraBodyConfig::from),
-        retries: Some(StoredRetryConfig::from(config.retries)),
-        extra_headers: config
-            .extra_headers
-            .as_ref()
-            .map(StoredExtraHeadersConfig::from),
-    })
-}
-
-impl From<&UninitializedExperimentationConfigWithNamespaces>
-    for StoredExperimentationConfigWithNamespaces
-{
-    fn from(config: &UninitializedExperimentationConfigWithNamespaces) -> Self {
-        let namespaces = config
-            .namespaces
-            .iter()
-            .map(|(namespace, namespace_config)| {
-                (
-                    namespace.clone(),
-                    StoredExperimentationConfig::from(namespace_config),
-                )
-            })
-            .collect();
-
-        StoredExperimentationConfigWithNamespaces {
-            base: StoredExperimentationConfig::from(&config.base),
-            namespaces: Some(namespaces),
-        }
-    }
-}
-
-impl From<&UninitializedExperimentationConfig> for StoredExperimentationConfig {
-    fn from(config: &UninitializedExperimentationConfig) -> Self {
-        match config {
-            UninitializedExperimentationConfig::Static(config) => Self::Static(config.into()),
-            UninitializedExperimentationConfig::Adaptive(config) => {
-                Self::Adaptive(convert_track_and_stop(
-                    config.algorithm.as_ref().map(|alg| match alg {
-                        AdaptiveExperimentationAlgorithm::TrackAndStop => {
-                            StoredAdaptiveExperimentationAlgorithm::TrackAndStop
-                        }
-                    }),
-                    &config.inner,
-                ))
-            }
-            UninitializedExperimentationConfig::Uniform(config) => {
-                Self::Static(StoredStaticExperimentationConfig {
-                    candidate_variants: config.candidate_variants.as_ref().map(|variants| {
-                        variants
-                            .iter()
-                            .map(|variant| (variant.clone(), 1.0))
-                            .collect::<BTreeMap<_, _>>()
-                    }),
-                    fallback_variants: config.fallback_variants.clone(),
-                })
-            }
-            UninitializedExperimentationConfig::StaticWeights(config) => {
-                Self::Static(StoredStaticExperimentationConfig {
-                    candidate_variants: Some(
-                        config
-                            .candidate_variants
-                            .iter()
-                            .map(|(k, v)| (k.clone(), *v))
-                            .collect::<BTreeMap<_, _>>(),
-                    ),
-                    fallback_variants: Some(config.fallback_variants.clone()),
-                })
-            }
-            UninitializedExperimentationConfig::TrackAndStop(config) => {
-                Self::Adaptive(convert_track_and_stop(
-                    Some(StoredAdaptiveExperimentationAlgorithm::TrackAndStop),
-                    config,
-                ))
-            }
-        }
-    }
-}
-
-impl From<&StaticExperimentationConfig> for StoredStaticExperimentationConfig {
-    fn from(config: &StaticExperimentationConfig) -> Self {
-        Self {
-            candidate_variants: Some(
-                config
-                    .candidate_variants
-                    .inner()
-                    .iter()
-                    .map(|(variant, weight)| (variant.clone(), *weight))
-                    .collect(),
-            ),
-            fallback_variants: Some(config.fallback_variants.clone()),
-        }
-    }
-}
-
-fn convert_track_and_stop(
-    algorithm: Option<StoredAdaptiveExperimentationAlgorithm>,
-    config: &UninitializedTrackAndStopExperimentationConfig,
-) -> StoredAdaptiveExperimentationConfig {
-    StoredAdaptiveExperimentationConfig {
-        algorithm,
-        metric: config.metric.clone(),
-        candidate_variants: Some(config.candidate_variants.clone()),
-        fallback_variants: Some(config.fallback_variants.clone()),
-        min_samples_per_variant: Some(config.min_samples_per_variant),
-        delta: Some(config.delta),
-        epsilon: Some(config.epsilon),
-        update_period_s: Some(config.update_period_s),
-        min_prob: config.min_prob,
-        max_samples_per_variant: config.max_samples_per_variant,
-    }
-}
-
-impl From<&ToolUseConfig> for StoredToolUseConfig {
-    fn from(config: &ToolUseConfig) -> Self {
-        match config {
-            ToolUseConfig::None => Self::None,
-            ToolUseConfig::NoneOf { tools } => Self::NoneOf {
-                tools: tools.clone(),
-            },
-            ToolUseConfig::Any => Self::Any,
-            ToolUseConfig::AnyOf { tools } => Self::AnyOf {
-                tools: tools.clone(),
-            },
-            ToolUseConfig::AllOf { tools } => Self::AllOf {
-                tools: tools.clone(),
-            },
-        }
-    }
-}
-
-impl From<LLMJudgeInputFormat> for StoredLLMJudgeInputFormat {
-    fn from(value: LLMJudgeInputFormat) -> Self {
-        match value {
-            LLMJudgeInputFormat::Serialized => Self::Serialized,
-            LLMJudgeInputFormat::Messages => Self::Messages,
-        }
-    }
-}
-
-impl From<LLMJudgeOutputType> for StoredLLMJudgeOutputType {
-    fn from(value: LLMJudgeOutputType) -> Self {
-        match value {
-            LLMJudgeOutputType::Float => Self::Float,
-            LLMJudgeOutputType::Boolean => Self::Boolean,
-        }
-    }
-}
-
-impl From<LLMJudgeOptimize> for StoredLLMJudgeOptimize {
-    fn from(value: LLMJudgeOptimize) -> Self {
-        match value {
-            LLMJudgeOptimize::Min => Self::Min,
-            LLMJudgeOptimize::Max => Self::Max,
-        }
-    }
-}
-
-impl From<RetryConfig> for StoredRetryConfig {
-    fn from(config: RetryConfig) -> Self {
-        Self {
-            num_retries: config.num_retries as u32,
-            max_delay_s: config.max_delay_s,
-        }
-    }
 }
 
 fn validate_variant_version_config_refs(
@@ -1393,7 +990,6 @@ fn validate_function_config_refs(
                 config.user_schema.as_ref(),
                 config.assistant_schema.as_ref(),
                 config.schemas.as_ref(),
-                config.evaluators.as_ref(),
                 &ctx,
             )?;
         }
@@ -1404,7 +1000,6 @@ fn validate_function_config_refs(
                 config.user_schema.as_ref(),
                 config.assistant_schema.as_ref(),
                 config.schemas.as_ref(),
-                config.evaluators.as_ref(),
                 &ctx,
             )?;
             if let Some(output_schema) = &config.output_schema {
@@ -1421,7 +1016,6 @@ fn validate_common_function_refs(
     user_schema: Option<&StoredFileRef>,
     assistant_schema: Option<&StoredFileRef>,
     schemas: Option<&BTreeMap<String, StoredFileRef>>,
-    evaluators: Option<&BTreeMap<String, StoredEvaluatorConfig>>,
     ctx: &RefValidationContext<'_>,
 ) -> Result<(), Error> {
     if let Some(variants) = variants {
@@ -1441,51 +1035,6 @@ fn validate_common_function_refs(
     if let Some(schemas) = schemas {
         for prompt_ref in schemas.values() {
             validate_file_ref(prompt_ref, ctx.valid_file_ids)?;
-        }
-    }
-    if let Some(evaluators) = evaluators {
-        for evaluator in evaluators.values() {
-            validate_evaluator_refs(evaluator, ctx.valid_file_ids)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_evaluator_refs(
-    config: &StoredEvaluatorConfig,
-    valid_file_ids: &HashSet<Uuid>,
-) -> Result<(), Error> {
-    if let StoredEvaluatorConfig::LLMJudge(config) = config
-        && let Some(variants) = &config.variants
-    {
-        for variant in variants.values() {
-            validate_llm_judge_variant_refs(variant, valid_file_ids)?;
-        }
-    }
-    Ok(())
-}
-
-fn validate_llm_judge_variant_refs(
-    config: &StoredLLMJudgeVariantInfo,
-    valid_file_ids: &HashSet<Uuid>,
-) -> Result<(), Error> {
-    match &config.variant {
-        StoredLLMJudgeVariantConfig::ChatCompletion(config) => {
-            validate_file_ref(&config.system_instructions, valid_file_ids)?;
-        }
-        StoredLLMJudgeVariantConfig::BestOfNSampling(config) => {
-            validate_file_ref(&config.evaluator.system_instructions, valid_file_ids)?;
-        }
-        StoredLLMJudgeVariantConfig::MixtureOfNSampling(config) => {
-            validate_file_ref(&config.fuser.system_instructions, valid_file_ids)?;
-        }
-        StoredLLMJudgeVariantConfig::Dicl(config) => {
-            if let Some(system_instructions) = &config.system_instructions {
-                validate_file_ref(system_instructions, valid_file_ids)?;
-            }
-        }
-        StoredLLMJudgeVariantConfig::ChainOfThought(config) => {
-            validate_file_ref(&config.inner.system_instructions, valid_file_ids)?;
         }
     }
     Ok(())
@@ -1533,63 +1082,11 @@ fn stored_variant_type(config: &UninitializedVariantInfo) -> &'static str {
     }
 }
 
-fn stored_function_type(config: &UninitializedFunctionConfig) -> &'static str {
-    match config {
-        UninitializedFunctionConfig::Chat(_) => "chat",
-        UninitializedFunctionConfig::Json(_) => "json",
-    }
-}
-
-fn postgres_query_error(context: &str, error: impl std::fmt::Display) -> Error {
-    Error::new(ErrorDetails::PostgresQuery {
-        message: format!("{context}: {error}"),
-    })
-}
-
-fn serialization_error(context: &str, error: impl std::fmt::Display) -> Error {
-    Error::new(ErrorDetails::Serialization {
-        message: format!("{context}: {error}"),
-    })
-}
-
-fn missing_file_error(file_path: &str) -> Error {
-    Error::new(ErrorDetails::Config {
-        message: format!("Missing stored file version ID for file path `{file_path}`."),
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::{BTreeMap, HashSet};
-
-    use super::*;
-
-    #[test]
-    fn validate_function_config_refs_rejects_unknown_variant() {
-        let config = StoredFunctionConfig::Chat(StoredChatFunctionConfig {
-            variants: Some(BTreeMap::from([(
-                "chat".to_string(),
-                StoredVariantRef {
-                    variant_version_id: Uuid::now_v7(),
-                },
-            )])),
-            system_schema: None,
-            user_schema: None,
-            assistant_schema: None,
-            schemas: Some(BTreeMap::new()),
-            tools: Some(vec![]),
-            tool_choice: Some(StoredToolChoice::Auto),
-            parallel_tool_calls: None,
-            description: None,
-            experimentation: None,
-            evaluators: Some(BTreeMap::new()),
-        });
-        let error = validate_function_config_refs(&config, &HashSet::new(), &HashSet::new())
-            .expect_err("unknown variant refs should fail");
-        assert!(
-            error
-                .to_string()
-                .contains("Stored function config references unknown variant version")
-        );
+impl From<RetryConfig> for StoredRetryConfig {
+    fn from(config: RetryConfig) -> Self {
+        Self {
+            num_retries: config.num_retries as u32,
+            max_delay_s: config.max_delay_s,
+        }
     }
 }

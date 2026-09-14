@@ -5,7 +5,6 @@ const items = [
   { href: "/playground", label: "Chat" },
   { href: "/playground/embeddings", label: "Embeddings" },
   { href: "/playground/rerank", label: "Rerank" },
-  { href: "/playground/functions", label: "Functions" },
 ] as const;
 
 export function PlaygroundNav({ current }: { current: string }) {

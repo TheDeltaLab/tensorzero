@@ -6,10 +6,6 @@ schemas.system.path = "../../../fixtures/config/functions/basic_test/system_sche
 user_schema = "../../../fixtures/config/functions/json_success/user_schema.json"
 output_schema = "../../../fixtures/config/functions/basic_test/output_schema.json"
 
-[functions.json_success.experimentation]
-type = "static"
-candidate_variants = { "test" = 1.0 }
-
 [functions.json_success.variants.test]
 type = "chat_completion"
 model = "json"

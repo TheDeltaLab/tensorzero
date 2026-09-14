@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { StatusCodes as HttpStatusCode } from "http-status-codes";
 import { isRouteErrorResponse } from "react-router";
 import { z } from "zod";
@@ -440,16 +441,6 @@ export class TensorZeroServerError extends Error {
   static InvalidDiclConfig = class InvalidDiclConfig extends TensorZeroServerError {
     constructor(message: string) {
       super(message, { status: HttpStatusCode.INTERNAL_SERVER_ERROR });
-    }
-  };
-  static InvalidDatasetName = class InvalidDatasetName extends TensorZeroServerError {
-    constructor(message: string) {
-      super(message, { status: HttpStatusCode.BAD_REQUEST });
-    }
-  };
-  static InvalidWorkflowEvaluationRun = class InvalidWorkflowEvaluationRun extends TensorZeroServerError {
-    constructor(message: string) {
-      super(message, { status: HttpStatusCode.BAD_REQUEST });
     }
   };
   static InvalidFunctionVariants = class InvalidFunctionVariants extends TensorZeroServerError {

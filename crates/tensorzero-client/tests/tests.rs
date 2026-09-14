@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 #![cfg(feature = "e2e_tests")]
 #![expect(clippy::unwrap_used, clippy::missing_panics_doc)]
 
@@ -12,7 +13,6 @@ use tensorzero_core::db::clickhouse::test_helpers::CLICKHOUSE_URL;
 use tensorzero_core::inference::types::StoredInput;
 
 mod test_configs;
-mod test_datasets;
 mod test_episodes;
 mod test_stored_inferences;
 

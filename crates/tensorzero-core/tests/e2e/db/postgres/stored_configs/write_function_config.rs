@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! E2E tests for writing function configs to Postgres (config-in-db).
 
 use std::collections::{BTreeMap, HashMap};
@@ -18,20 +19,6 @@ use tensorzero_core::config::{NonStreamingTimeouts, StreamingTimeouts, TimeoutsC
 use tensorzero_core::db::postgres::PostgresConnectionInfo;
 use tensorzero_core::db::postgres::function_config_writes::WriteFunctionConfigParams;
 use tensorzero_core::db::postgres::stored_config_queries::load_config_from_db;
-use tensorzero_core::evaluations::{
-    ExactMatchConfig, LLMJudgeIncludeConfig, LLMJudgeInputFormat, LLMJudgeOptimize,
-    LLMJudgeOutputType, UninitializedEvaluatorConfig,
-    UninitializedLLMJudgeChatCompletionVariantConfig, UninitializedLLMJudgeConfig,
-    UninitializedLLMJudgeDiclVariantConfig, UninitializedLLMJudgeVariantConfig,
-    UninitializedLLMJudgeVariantInfo,
-};
-use tensorzero_core::experimentation::adaptive_experimentation::{
-    AdaptiveExperimentationAlgorithm, UninitializedAdaptiveExperimentationConfig,
-};
-use tensorzero_core::experimentation::{
-    StaticExperimentationConfig, UninitializedExperimentationConfig,
-    UninitializedExperimentationConfigWithNamespaces,
-};
 use tensorzero_core::inference::types::extra_body::{
     ExtraBodyConfig, ExtraBodyReplacement, ExtraBodyReplacementKind,
 };
@@ -51,7 +38,7 @@ use tensorzero_core::variant::mixture_of_n::{
     UninitializedFuserConfig, UninitializedMixtureOfNConfig,
 };
 use tensorzero_stored_config::{
-    StoredEvaluatorConfig, StoredFunctionConfig, StoredVariantConfig, StoredVariantVersionConfig,
+    StoredFunctionConfig, StoredVariantConfig, StoredVariantVersionConfig,
 };
 
 fn fake_template(key: &str, body: &str) -> ResolvedTomlPathData {
@@ -73,22 +60,6 @@ fn sample_input_wrappers() -> tensorzero_core::variant::chat_completion::Uniniti
             "__tensorzero_remapped_path": "functions.test.variants.chat.input_wrappers.system",
             "__data": "<<{{ system }}>>"
         }
-    }))
-}
-
-fn sample_track_and_stop_config()
--> tensorzero_core::experimentation::track_and_stop::UninitializedTrackAndStopExperimentationConfig
-{
-    deserialize_from_json(serde_json::json!({
-        "metric": "quality",
-        "candidate_variants": ["chat", "cot"],
-        "fallback_variants": ["dicl"],
-        "min_samples_per_variant": 12,
-        "delta": 0.1,
-        "epsilon": 0.01,
-        "update_period_s": 60,
-        "min_prob": 0.02,
-        "max_samples_per_variant": 1000
     }))
 }
 
@@ -298,116 +269,6 @@ fn sample_json_function() -> UninitializedFunctionConfig {
             "{\"type\":\"object\",\"additionalProperties\":false}",
         )),
         description: Some("JSON test function".to_string()),
-        experimentation: Some(UninitializedExperimentationConfigWithNamespaces {
-            base: UninitializedExperimentationConfig::Static(StaticExperimentationConfig {
-                candidate_variants: tensorzero_core::experimentation::WeightedVariants::from_map(
-                    BTreeMap::from([("chat".to_string(), 0.7), ("best".to_string(), 0.3)]),
-                ),
-                fallback_variants: vec!["dicl".to_string()],
-            }),
-            namespaces: HashMap::from([(
-                "beta".to_string(),
-                UninitializedExperimentationConfig::Adaptive(
-                    UninitializedAdaptiveExperimentationConfig {
-                        algorithm: Some(AdaptiveExperimentationAlgorithm::TrackAndStop),
-                        inner: sample_track_and_stop_config(),
-                    },
-                ),
-            )]),
-        }),
-        evaluators: HashMap::from([
-            (
-                "exact".to_string(),
-                UninitializedEvaluatorConfig::ExactMatch(ExactMatchConfig { cutoff: Some(0.9) }),
-            ),
-            (
-                "judge".to_string(),
-                UninitializedEvaluatorConfig::LLMJudge(UninitializedLLMJudgeConfig {
-                    input_format: Some(LLMJudgeInputFormat::Serialized),
-                    variants: HashMap::from([
-                        (
-                            "judge_chat".to_string(),
-                            UninitializedLLMJudgeVariantInfo {
-                                inner: UninitializedLLMJudgeVariantConfig::ChatCompletion(
-                                    UninitializedLLMJudgeChatCompletionVariantConfig {
-                                        active: Some(true),
-                                        model: Arc::<str>::from("openai::gpt-5-mini"),
-                                        system_instructions: fake_template(
-                                            "functions.test.evaluators.judge.variants.judge_chat.system_instructions",
-                                            "Judge system",
-                                        ),
-                                        temperature: Some(0.2),
-                                        top_p: Some(0.7),
-                                        max_tokens: Some(128),
-                                        presence_penalty: Some(0.1),
-                                        frequency_penalty: Some(0.2),
-                                        seed: Some(9),
-                                        json_mode: JsonMode::Strict,
-                                        stop_sequences: Some(vec!["END".to_string()]),
-                                        reasoning_effort: Some("high".to_string()),
-                                        service_tier: Some(ServiceTier::Default),
-                                        thinking_budget_tokens: Some(32),
-                                        verbosity: Some("high".to_string()),
-                                        retries: RetryConfig {
-                                            num_retries: 3,
-                                            max_delay_s: 4.0,
-                                        },
-                                        extra_body: Some(sample_extra_body()),
-                                        extra_headers: Some(sample_extra_headers()),
-                                    },
-                                ),
-                                timeouts: None,
-                            },
-                        ),
-                        (
-                            "judge_dicl".to_string(),
-                            UninitializedLLMJudgeVariantInfo {
-                                inner: UninitializedLLMJudgeVariantConfig::Dicl(
-                                    UninitializedLLMJudgeDiclVariantConfig {
-                                        active: Some(false),
-                                        embedding_model: "openai::text-embedding-3-large"
-                                            .to_string(),
-                                        k: 3,
-                                        model: "openai::gpt-5-mini".to_string(),
-                                        system_instructions: Some(fake_template(
-                                            "functions.test.evaluators.judge.variants.judge_dicl.system_instructions",
-                                            "Judge DICL system",
-                                        )),
-                                        temperature: Some(0.4),
-                                        top_p: Some(0.8),
-                                        presence_penalty: Some(0.1),
-                                        frequency_penalty: Some(0.2),
-                                        max_tokens: Some(64),
-                                        seed: Some(7),
-                                        json_mode: Some(JsonMode::On),
-                                        stop_sequences: Some(vec!["STOP".to_string()]),
-                                        extra_body: Some(sample_extra_body()),
-                                        retries: RetryConfig {
-                                            num_retries: 1,
-                                            max_delay_s: 2.5,
-                                        },
-                                        extra_headers: Some(sample_extra_headers()),
-                                    },
-                                ),
-                                timeouts: Some(TimeoutsConfig {
-                                    non_streaming: Some(NonStreamingTimeouts {
-                                        total_ms: Some(3000),
-                                    }),
-                                    streaming: Some(StreamingTimeouts::default()),
-                                }),
-                            },
-                        ),
-                    ]),
-                    output_type: LLMJudgeOutputType::Boolean,
-                    optimize: LLMJudgeOptimize::Max,
-                    include: Some(LLMJudgeIncludeConfig {
-                        reference_output: true,
-                    }),
-                    cutoff: Some(0.75),
-                    description: Some("Judge config".to_string()),
-                }),
-            ),
-        ]),
     })
 }
 
@@ -468,27 +329,6 @@ async fn write_function_config_persists_expected_rows(pool: PgPool) {
             .map(|schema| schema.file_path.as_str()),
         some(eq("functions.test.output_schema"))
     );
-    assert_that!(
-        stored_function.evaluators.as_ref().map(BTreeMap::len),
-        some(eq(2))
-    );
-    let judge = match stored_function
-        .evaluators
-        .as_ref()
-        .and_then(|evaluators| evaluators.get("judge"))
-    {
-        Some(StoredEvaluatorConfig::LLMJudge(judge)) => judge,
-        _ => panic!("expected stored LLM judge config"),
-    };
-    assert_that!(judge.variants.as_ref().map(BTreeMap::len), some(eq(2)));
-    assert_that!(
-        judge
-            .include
-            .as_ref()
-            .map(|include| include.reference_output),
-        some(eq(true))
-    );
-
     let chat_variant_id = *result
         .variant_version_ids
         .get("chat")
@@ -601,7 +441,7 @@ async fn write_function_config_compare_and_swap(pool: PgPool) {
     );
 }
 
-/// Write a function with 2 variants, then add a third variant and update experimentation.
+/// Write a function with 2 variants, then add a third variant.
 /// The two original variants should be reused (same IDs via content-hash dedup),
 /// while a new variant and a new function version are created.
 #[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
@@ -637,8 +477,6 @@ async fn write_function_config_reuses_unchanged_variants(pool: PgPool) {
         schemas: UninitializedSchemas::default(),
         output_schema: None,
         description: Some("reuse test v1".to_string()),
-        experimentation: None,
-        evaluators: HashMap::new(),
     });
 
     let result_v1 = postgres
@@ -662,7 +500,7 @@ async fn write_function_config_reuses_unchanged_variants(pool: PgPool) {
         .get("b")
         .expect("variant b should be written");
 
-    // Add a third variant and set up experimentation referencing all three.
+    // Add a third variant.
     let variant_c = UninitializedVariantInfo {
         inner: UninitializedVariantConfig::ChatCompletion(sample_chat_completion(fake_template(
             "functions.reuse.variants.c.system_template",
@@ -684,20 +522,7 @@ async fn write_function_config_reuses_unchanged_variants(pool: PgPool) {
         schemas: UninitializedSchemas::default(),
         output_schema: None,
         description: Some("reuse test v2".to_string()),
-        experimentation: Some(UninitializedExperimentationConfigWithNamespaces {
-            base: UninitializedExperimentationConfig::Static(StaticExperimentationConfig {
-                candidate_variants: tensorzero_core::experimentation::WeightedVariants::from_map(
-                    BTreeMap::from([
-                        ("a".to_string(), 0.4),
-                        ("b".to_string(), 0.3),
-                        ("c".to_string(), 0.3),
-                    ]),
-                ),
-                fallback_variants: vec!["a".to_string()],
-            }),
-            namespaces: HashMap::new(),
-        }),
-        evaluators: HashMap::new(),
+
     });
 
     let result_v2 = postgres

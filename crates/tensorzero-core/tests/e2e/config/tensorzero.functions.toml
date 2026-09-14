@@ -127,10 +127,6 @@ input_wrappers.user = "../../../fixtures/config/functions/basic_test_template_no
 [functions.basic_test_no_system_schema]
 type = "chat"
 
-[functions.basic_test_no_system_schema.experimentation]
-type = "static"
-candidate_variants = { "test" = 1.0 }
-
 [functions.basic_test_no_system_schema.variants.test]
 type = "chat_completion"
 model = "test"
@@ -139,10 +135,6 @@ max_tokens = 100
 [functions.model_fallback_test]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.model_fallback_test.experimentation]
-type = "static"
-candidate_variants = { "test" = 1.0 }
 
 [functions.model_fallback_test.variants.test]
 type = "chat_completion"
@@ -155,10 +147,6 @@ type = "json"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 output_schema = "../../../fixtures/config/functions/basic_test/output_schema.json"
 
-[functions.json_fail.experimentation]
-type = "static"
-candidate_variants = { "test" = 1.0 }
-
 [functions.json_fail.variants.test]
 type = "chat_completion"
 model = "test"
@@ -170,10 +158,6 @@ json_mode = "strict"
 type = "json"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 output_schema = "../../../fixtures/config/functions/basic_test/output_schema.json"
-
-[functions.json_success_no_input_schema.experimentation]
-type = "static"
-candidate_variants = { "test" = 1.0 }
 
 [functions.json_success_no_input_schema.variants.test]
 type = "chat_completion"
@@ -196,15 +180,10 @@ user_template = "../../../fixtures/config/functions/judge_answer/gpt-4.1-mini/us
 retries = { num_retries = 4, max_delay_s = 10 }
 json_mode = "strict"
 
-
 [functions.variant_failover]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 user_schema = "../../../fixtures/config/functions/variant_failover/user_schema.json"
-
-[functions.variant_failover.experimentation]
-type = "static"
-candidate_variants = { "good" = 0.5, "error" = 0.5 }
 
 [functions.variant_failover.variants.good]
 type = "chat_completion"
@@ -224,11 +203,6 @@ max_tokens = 100
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 user_schema = "../../../fixtures/config/functions/variant_failover/user_schema.json"
-
-[functions.variant_failover_zero_weight.experimentation]
-type = "static"
-candidate_variants = { "first_error" = 0.5, "second_error" = 0.5 }
-fallback_variants = ["no_weight"]
 
 [functions.variant_failover_zero_weight.variants.first_error]
 type = "chat_completion"
@@ -261,10 +235,6 @@ max_tokens = 100
 [functions.prometheus_test1]
 type = "chat"
 
-[functions.prometheus_test1.experimentation]
-type = "static"
-candidate_variants = { "variant" = 1.0 }
-
 [functions.prometheus_test1.variants.variant]
 type = "chat_completion"
 model = "test"
@@ -272,10 +242,6 @@ max_tokens = 100
 
 [functions.prometheus_test2]
 type = "chat"
-
-[functions.prometheus_test2.experimentation]
-type = "static"
-candidate_variants = { "variant" = 1.0 }
 
 [functions.prometheus_test2.variants.variant]
 type = "chat_completion"
@@ -285,10 +251,6 @@ max_tokens = 100
 [functions.prometheus_test3]
 type = "chat"
 
-[functions.prometheus_test3.experimentation]
-type = "static"
-candidate_variants = { "variant" = 1.0 }
-
 [functions.prometheus_test3.variants.variant]
 type = "chat_completion"
 model = "test"
@@ -296,10 +258,6 @@ max_tokens = 100
 
 [functions.prometheus_test4]
 type = "chat"
-
-[functions.prometheus_test4.experimentation]
-type = "static"
-candidate_variants = { "variant" = 1.0 }
 
 [functions.prometheus_test4.variants.variant]
 type = "chat_completion"
@@ -330,10 +288,6 @@ system_schema = "../../../fixtures/config/functions/weather_helper_parallel/syst
 tools = ["get_temperature", "get_humidity"]
 tool_choice = "auto"
 # We use an inference-time parameter to set `parallel_tool_calls = true` for the test
-
-[functions.weather_helper_parallel.experimentation]
-type = "static"
-candidate_variants = { "openai" = 1.0, "gpt-5-mini" = 1.0, "openai-responses" = 1.0, "openai-o1" = 1.0, "openrouter" = 1.0, "anthropic" = 1.0, "groq" = 1.0, "aws-bedrock" = 1.0, "together-tool" = 1.0, "vllm" = 1.0, "gcp-vertex-haiku" = 1.0 }
 
 [functions.weather_helper_parallel.variants.openai]
 type = "chat_completion"
@@ -415,10 +369,6 @@ model = "test"
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.best_of_n.experimentation]
-type = "static"
-candidate_variants = { "best_of_n_variant" = 1.0, "flaky_best_of_n_variant" = 1.0 }
-
 [functions.best_of_n.variants.variant0]
 type = "chat_completion"
 model = "test"
@@ -478,10 +428,6 @@ type = "json"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 output_schema = "../../../fixtures/config/functions/best_of_n_json/output_schema.json"
 
-[functions.best_of_n_json.experimentation]
-type = "static"
-candidate_variants = { "best_of_n_variant" = 1.0, "best_of_n_variant_implicit_tool" = 1.0 }
-
 [functions.best_of_n_json.variants.variant0]
 type = "chat_completion"
 model = "test"
@@ -523,10 +469,6 @@ type = "json"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 output_schema = "../../../fixtures/config/functions/best_of_n_json/output_schema.json"
 
-[functions.best_of_n_json_repeated.experimentation]
-type = "static"
-candidate_variants = { "best_of_n_variant" = 1.0 }
-
 [functions.best_of_n_json_repeated.variants.variant0]
 type = "chat_completion"
 model = "dummy::random_answer"
@@ -552,10 +494,6 @@ json_mode = "strict"
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.mixture_of_n_single_candidate.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n_variant" = 1.0 }
-
 [functions.mixture_of_n_single_candidate.variants.variant0]
 type = "chat_completion"
 model = "test"
@@ -572,10 +510,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 [functions.mixture_of_n]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.mixture_of_n.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n_variant" = 1.0, "mixture_of_n_variant_bad_fuser" = 1.0 }
 
 [functions.mixture_of_n.variants.variant0]
 type = "chat_completion"
@@ -607,10 +541,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.mixture_of_n_extra_body.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n_variant" = 1.0 }
-
 [functions.mixture_of_n_extra_body.variants.mixture_of_n_variant]
 type = "experimental_mixture_of_n"
 candidates = ["variant0", "variant1"]
@@ -634,10 +564,6 @@ extra_body = [{ pointer = "/temperature", value = 0.123 }]
 type = "json"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 output_schema = "../../../fixtures/config/functions/mixture_of_n_json/output_schema.json"
-
-[functions.mixture_of_n_json.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n_variant" = 1.0 }
 
 [functions.mixture_of_n_json.variants.variant0]
 type = "chat_completion"
@@ -675,10 +601,6 @@ system_template = "../../../fixtures/config/functions/multi_hop_rag_agent/baseli
 type = "json"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.mixture_of_n_json_repeated.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n_variant" = 1.0 }
-
 [functions.mixture_of_n_json_repeated.variants.variant0]
 type = "chat_completion"
 model = "dummy::random_answer"
@@ -700,14 +622,9 @@ model = "json"
 system_template = "../../../fixtures/config/functions/basic_test/prompt/system_template.minijinja"
 json_mode = "strict"
 
-
 [functions.generate_secret]
 type = "json"
 output_schema = "../../../fixtures/config/functions/generate_secret/output_schema.json"
-
-[functions.generate_secret.experimentation]
-type = "static"
-candidate_variants = { "baseline" = 1.0 }
 
 [functions.generate_secret.variants.baseline]
 type = "chat_completion"
@@ -721,10 +638,6 @@ temperature = 1.5
 type = "json"
 output_schema = "../../../fixtures/config/functions/ask_question/output_schema.json"
 system_schema = "../../../fixtures/config/functions/ask_question/system_schema.json"
-
-[functions.ask_question.experimentation]
-type = "static"
-candidate_variants = { "baseline" = 1.0 }
 
 [functions.ask_question.variants.baseline]
 type = "chat_completion"
@@ -750,10 +663,6 @@ retries = { num_retries = 4, max_delay_s = 10 }
 [functions.answer_question]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/answer_question/system_schema.json"
-
-[functions.answer_question.experimentation]
-type = "static"
-candidate_variants = { "baseline" = 1.0 }
 
 [functions.answer_question.variants.baseline]
 type = "chat_completion"
@@ -803,11 +712,6 @@ retries = { num_retries = 4, max_delay_s = 10 }
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.raw_response_variant_fallback.experimentation]
-type = "static"
-candidate_variants = ["error_variant"]
-fallback_variants = ["good_variant"]
-
 [functions.raw_response_variant_fallback.variants.error_variant]
 type = "chat_completion"
 model = "error_with_raw_response"
@@ -824,11 +728,6 @@ max_tokens = 100
 [functions.raw_response_variant_both_fail]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.raw_response_variant_both_fail.experimentation]
-type = "static"
-candidate_variants = ["error_variant_1"]
-fallback_variants = ["error_variant_2"]
 
 [functions.raw_response_variant_both_fail.variants.error_variant_1]
 type = "chat_completion"
@@ -849,11 +748,6 @@ max_tokens = 100
 [functions.raw_response_combined_fallback]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.raw_response_combined_fallback.experimentation]
-type = "static"
-candidate_variants = ["error_variant_multi_provider"]
-fallback_variants = ["good_variant_with_fallback"]
 
 [functions.raw_response_combined_fallback.variants.error_variant_multi_provider]
 type = "chat_completion"
@@ -918,11 +812,6 @@ retries = { num_retries = 3, max_delay_s = 0.01 }
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.raw_response_variant_fallback_mid_stream_error.experimentation]
-type = "static"
-candidate_variants = ["error_variant"]
-fallback_variants = ["mid_stream_error_variant"]
-
 [functions.raw_response_variant_fallback_mid_stream_error.variants.error_variant]
 type = "chat_completion"
 model = "error_with_raw_response"
@@ -941,10 +830,6 @@ max_tokens = 100
 [functions.best_of_n_raw_response_partial_fail]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.best_of_n_raw_response_partial_fail.experimentation]
-type = "static"
-candidate_variants = { "best_of_n" = 1.0 }
 
 [functions.best_of_n_raw_response_partial_fail.variants.error_candidate]
 type = "chat_completion"
@@ -972,10 +857,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.best_of_n_raw_response_all_fail.experimentation]
-type = "static"
-candidate_variants = { "best_of_n" = 1.0 }
-
 [functions.best_of_n_raw_response_all_fail.variants.error_candidate_1]
 type = "chat_completion"
 model = "error_with_raw_response"
@@ -1001,10 +882,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 [functions.best_of_n_raw_response_evaluator_fail]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.best_of_n_raw_response_evaluator_fail.experimentation]
-type = "static"
-candidate_variants = { "best_of_n" = 1.0 }
 
 [functions.best_of_n_raw_response_evaluator_fail.variants.good_candidate_1]
 type = "chat_completion"
@@ -1033,10 +910,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.mixture_of_n_raw_response_partial_fail.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n" = 1.0 }
-
 [functions.mixture_of_n_raw_response_partial_fail.variants.error_candidate]
 type = "chat_completion"
 model = "error_with_raw_response"
@@ -1063,10 +936,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
 
-[functions.mixture_of_n_raw_response_all_fail.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n" = 1.0 }
-
 [functions.mixture_of_n_raw_response_all_fail.variants.error_candidate_1]
 type = "chat_completion"
 model = "error_with_raw_response"
@@ -1092,10 +961,6 @@ system_template = "../../../fixtures/config/functions/basic_test/prompt/system_t
 [functions.mixture_of_n_raw_response_fuser_fail]
 type = "chat"
 system_schema = "../../../fixtures/config/functions/basic_test/system_schema.json"
-
-[functions.mixture_of_n_raw_response_fuser_fail.experimentation]
-type = "static"
-candidate_variants = { "mixture_of_n" = 1.0 }
 
 [functions.mixture_of_n_raw_response_fuser_fail.variants.good_candidate_1]
 type = "chat_completion"

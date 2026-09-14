@@ -1,9 +1,10 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use tensorzero_types::ToolChoice;
 
-use crate::{StoredEvaluatorConfig, StoredFileRef, StoredVariantRef};
+use crate::{StoredFileRef, StoredVariantRef};
 
 pub const STORED_FUNCTION_CONFIG_SCHEMA_REVISION: i32 = 1;
 
@@ -28,8 +29,6 @@ pub struct StoredChatFunctionConfig {
     pub tool_choice: Option<StoredToolChoice>,
     pub parallel_tool_calls: Option<bool>,
     pub description: Option<String>,
-    pub experimentation: Option<StoredExperimentationConfigWithNamespaces>,
-    pub evaluators: Option<BTreeMap<String, StoredEvaluatorConfig>>,
 }
 
 #[serde_with::skip_serializing_none]
@@ -42,8 +41,6 @@ pub struct StoredJsonFunctionConfig {
     pub schemas: Option<BTreeMap<String, StoredFileRef>>,
     pub output_schema: Option<StoredFileRef>,
     pub description: Option<String>,
-    pub experimentation: Option<StoredExperimentationConfigWithNamespaces>,
-    pub evaluators: Option<BTreeMap<String, StoredEvaluatorConfig>>,
 }
 
 // --- ToolChoice ---

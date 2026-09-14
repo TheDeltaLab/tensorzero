@@ -16,7 +16,6 @@ use crate::{
     db::ConfigQueries,
     embeddings::{EmbeddingModelConfig, UninitializedEmbeddingModelConfig},
     error::{Error, ErrorDetails},
-    evaluations::EvaluationConfig,
     function::FunctionConfig,
     model::{ModelConfig, UninitializedModelConfig},
     model_alias::{ModelAlias, ModelAliasTable},
@@ -53,7 +52,6 @@ pub struct UiConfig {
     pub functions: HashMap<String, Arc<FunctionConfig>>,
     pub metrics: HashMap<String, MetricConfig>,
     pub tools: HashMap<String, Arc<StaticToolConfig>>,
-    pub evaluations: HashMap<String, Arc<EvaluationConfig>>,
     pub model_names: Vec<String>,
     pub embedding_model_names: Vec<String>,
     /// Configured chat model name => routing provider names (no credentials).
@@ -218,11 +216,6 @@ impl UiConfig {
                 .iter()
                 .map(|(k, v)| (k.clone(), Arc::clone(v)))
                 .collect(),
-            evaluations: config
-                .evaluations
-                .iter()
-                .map(|(k, v)| (k.clone(), Arc::clone(v)))
-                .collect(),
             model_names: config.models.table.keys().map(|s| s.to_string()).collect(),
             embedding_model_names: sorted_names(config.embedding_models.table.keys()),
             model_providers: ui_providers_from_chat_models(&config.models.table),
@@ -238,7 +231,7 @@ impl UiConfig {
 
     /// Creates a `UiConfig` from a historical config snapshot.
     ///
-    /// This initializes only the parts needed by the UI (functions, tools, evaluations,
+    /// This initializes only the parts needed by the UI (functions, tools,
     /// metrics, model names), skipping heavy initialization like model credentials, HTTP
     /// clients, gateway config, object store, and rate limiting.
     ///
@@ -261,26 +254,19 @@ impl UiConfig {
             functions,
             metrics,
             tools,
-            evaluations,
             gateway: _,
             clickhouse: _,
             postgres: _,
             rate_limiting: _,
             object_storage: _,
             provider_types: _,
-            optimizers: _,
-            autopilot: _,
         } = uninit_config;
 
         // Load functions (sync, no FS/network — file data embedded in ResolvedTomlPathData)
         let mut all_functions = HashMap::new();
-        let mut all_metrics = metrics.unwrap_or_default();
+        let all_metrics = metrics.unwrap_or_default();
         for (name, func) in functions.unwrap_or_default() {
             let loaded = func.load(&name, &all_metrics)?;
-            for (fn_name, fn_config) in loaded.evaluator_functions {
-                all_functions.insert(fn_name, Arc::new(fn_config));
-            }
-            all_metrics.extend(loaded.evaluator_metrics);
             all_functions.insert(name, Arc::new(loaded.function_config));
         }
 
@@ -290,16 +276,6 @@ impl UiConfig {
             .into_iter()
             .map(|(name, tool)| tool.load(name.clone()).map(|c| (name, Arc::new(c))))
             .collect::<Result<_, _>>()?;
-
-        // Load evaluations (sync, needs loaded functions)
-        // Also collects generated evaluation functions and metrics
-        let mut loaded_evaluations = HashMap::new();
-        for (name, eval_config) in evaluations.unwrap_or_default() {
-            let (eval, eval_functions, eval_metrics) = eval_config.load(&all_functions, &name)?;
-            loaded_evaluations.insert(name, Arc::new(EvaluationConfig::Inference(eval)));
-            all_functions.extend(eval_functions);
-            all_metrics.extend(eval_metrics);
-        }
 
         // Model names — just keys, no initialization (only inference models, matching from_config)
         let uninit_models = models.unwrap_or_default();
@@ -315,7 +291,6 @@ impl UiConfig {
             functions: all_functions,
             metrics: all_metrics,
             tools: loaded_tools,
-            evaluations: loaded_evaluations,
             model_names,
             embedding_model_names,
             model_providers,
@@ -382,9 +357,7 @@ mod tests {
             tool_choice: Default::default(),
             parallel_tool_calls: None,
             description: Some("Test function".to_string()),
-            experimentation: Default::default(),
             all_explicit_templates_names: Default::default(),
-            evaluators: HashMap::new(),
         });
 
         let metric_config = MetricConfig {
@@ -427,7 +400,6 @@ mod tests {
         assert!(ui_config.embedding_model_providers.is_empty());
         assert!(ui_config.model_aliases.is_empty());
         assert!(ui_config.tools.is_empty());
-        assert!(ui_config.evaluations.is_empty());
         assert!(!ui_config.config_hash.is_empty());
         assert!(!ui_config.auth_enabled);
     }
@@ -451,9 +423,7 @@ mod tests {
             tool_choice: Default::default(),
             parallel_tool_calls: None,
             description: Some("My function".to_string()),
-            experimentation: Default::default(),
             all_explicit_templates_names: Default::default(),
-            evaluators: HashMap::new(),
         });
 
         // Create a metric config

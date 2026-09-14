@@ -12,8 +12,6 @@ import { getTotalInferenceUsage } from "~/utils/clickhouse/helpers";
 import { Skeleton } from "~/components/ui/skeleton";
 import { ActionBarAsyncError } from "~/components/ui/error/ErrorContentPrimitives";
 import { ActionBar } from "~/components/layout/ActionBar";
-import { AddToDatasetButton } from "~/components/dataset/AddToDatasetButton";
-import { AskAutopilotButton } from "~/components/autopilot/AskAutopilotButton";
 import { CopyMessagesButton } from "~/components/inference/CopyMessagesButton";
 import { TryWithVariantAction } from "./TryWithVariantAction";
 import { HumanFeedbackAction } from "./HumanFeedbackAction";
@@ -28,7 +26,6 @@ interface InferenceActionBarProps {
   inference: StoredInference;
   protectionPromise: Promise<InferenceProtectionEntry | undefined>;
   usedVariantsPromise: Promise<string[]>;
-  hasDemonstrationPromise: Promise<boolean>;
   inputPromise: Promise<Input | undefined>;
   modelInferencesPromise: Promise<ModelInferencesData>;
   onFeedbackAdded: (redirectUrl?: string) => void;
@@ -39,7 +36,6 @@ export function InferenceActionBar({
   inference,
   protectionPromise,
   usedVariantsPromise,
-  hasDemonstrationPromise,
   inputPromise,
   modelInferencesPromise,
   onFeedbackAdded,
@@ -60,13 +56,6 @@ export function InferenceActionBar({
           onFeedbackAdded={onFeedbackAdded}
         />
       )}
-      {!standalone && (
-        <AddToDatasetButtonStreaming
-          key={`dataset-${locationKey}`}
-          inference={inference}
-          hasDemonstrationPromise={hasDemonstrationPromise}
-        />
-      )}
       <HumanFeedbackAction
         key={`human-${locationKey}`}
         inference={inference}
@@ -76,9 +65,6 @@ export function InferenceActionBar({
         key={`protect-${locationKey}`}
         inference={inference}
         protectionPromise={protectionPromise}
-      />
-      <AskAutopilotButton
-        message={`Inference ID: ${inference.inference_id}\n\n`}
       />
       {!standalone && (
         <CopyMessagesButtonStreaming
@@ -105,33 +91,6 @@ function ProtectInferenceActionStreaming({
           <ProtectInferenceAction
             inferenceId={inference.inference_id}
             protection={protection}
-          />
-        )}
-      </Await>
-    </Suspense>
-  );
-}
-
-function AddToDatasetButtonStreaming({
-  inference,
-  hasDemonstrationPromise,
-}: {
-  inference: StoredInference;
-  hasDemonstrationPromise: Promise<boolean>;
-}) {
-  return (
-    <Suspense fallback={<Skeleton className="h-8 w-36" />}>
-      <Await
-        resolve={hasDemonstrationPromise}
-        errorElement={<ActionBarAsyncError />}
-      >
-        {(hasDemonstration) => (
-          <AddToDatasetButton
-            inferenceId={inference.inference_id}
-            functionName={inference.function_name}
-            variantName={inference.variant_name}
-            episodeId={inference.episode_id}
-            hasDemonstration={hasDemonstration}
           />
         )}
       </Await>

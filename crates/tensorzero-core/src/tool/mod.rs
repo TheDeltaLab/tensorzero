@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Tool types and configuration for TensorZero.
 //!
 //! This module provides the core types for working with tools in TensorZero:
@@ -23,7 +24,7 @@ pub use config::{
 pub use params::{BatchDynamicToolParams, BatchDynamicToolParamsWithSize};
 pub use storage::{
     LegacyToolCallConfigDatabaseInsert, ToolCallConfigDatabaseInsert,
-    apply_dynamic_tool_params_update_to_tool_call_config, deserialize_optional_tool_info,
+    deserialize_optional_tool_info,
 };
 pub use tensorzero_inference_types::{
     AllowedTools, AllowedToolsChoice, FunctionToolDef, OpenAICustomTool, OpenAICustomToolFormat,

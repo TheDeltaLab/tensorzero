@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -5,7 +6,6 @@ use futures::future::join_all;
 use tokio::sync::Semaphore;
 
 use crate::config::Config;
-use crate::endpoints::workflow_evaluation_run::validate_variant_pins;
 use crate::error::{Error, ErrorDetails};
 use crate::stored_inference::{RenderedSample, StoredSample, render_stored_sample};
 
@@ -17,7 +17,16 @@ pub async fn render_samples<T: StoredSample>(
     variants: HashMap<String, String>,
     concurrency: Option<usize>,
 ) -> Result<Vec<RenderedSample>, Error> {
-    validate_variant_pins(&variants, &config)?;
+    for (function_name, variant_name) in &variants {
+        let function_config = config.get_function(function_name)?;
+        function_config.variants().get(variant_name).ok_or_else(|| {
+            crate::error::Error::new(crate::error::ErrorDetails::InvalidRequest {
+                message: format!(
+                    "Variant {variant_name} for function {function_name} not found.",
+                ),
+            })
+        })?;
+    }
 
     let concurrency = concurrency.unwrap_or(DEFAULT_CONCURRENCY);
     if concurrency == 0 {

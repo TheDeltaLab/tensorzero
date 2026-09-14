@@ -11,7 +11,6 @@ use axum::routing::MethodRouter;
 use std::convert::Infallible;
 
 pub mod batch_inference;
-pub mod datasets;
 pub mod embeddings;
 pub mod episodes;
 pub mod fallback;
@@ -27,9 +26,6 @@ pub(crate) mod standalone_inference;
 pub mod status;
 pub mod stored_inferences;
 pub mod ui;
-pub mod variant_probabilities;
-pub mod workflow_evaluation_run;
-pub mod workflow_evaluations;
 
 /// Helper struct to hold the data needed for a call to `Router.route`
 /// We use this to pass the route names to middleware before they register the routes

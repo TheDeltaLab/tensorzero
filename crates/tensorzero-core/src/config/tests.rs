@@ -128,137 +128,6 @@ async fn test_config_from_toml_table_valid() {
     let provider = embedding_model.providers.get("openai").unwrap();
     assert!(matches!(provider.inner, EmbeddingProviderConfig::OpenAI(_)));
 
-    // Check that the function for the LLM Judge evaluation is added to the functions table
-    let function = config
-        .functions
-        .get("tensorzero::llm_judge::evaluation1::llm_judge_bool")
-        .unwrap();
-    match &**function {
-        FunctionConfig::Json(json_config) => {
-            assert_eq!(json_config.variants.len(), 7);
-            match &json_config.variants["anthropic_promptA"].inner {
-                VariantConfig::ChatCompletion(chat_config) => {
-                    assert_eq!(
-                        chat_config.model(),
-                        &Arc::<str>::from("anthropic::claude-sonnet-4-5")
-                    );
-                    assert_eq!(chat_config.weight(), Some(1.0));
-                    assert_eq!(
-                        chat_config
-                            .templates()
-                            .get_implicit_system_template()
-                            .unwrap()
-                            .template,
-                        PathWithContents {
-                            // We don't use a real path for programmatically generated templates
-                            // Instead we use this handle and then the same in minijinja
-                            path: ResolvedTomlPathData::new_for_tests(
-                                PathBuf::from(
-                                    "tensorzero::llm_judge::evaluation1::llm_judge_bool::anthropic_promptA::system"
-                                ),
-                                Some(
-                                    "Return True if there is NSFW content in this generation.\n\n"
-                                        .to_string()
-                                )
-                            ),
-                            contents:
-                                "Return True if there is NSFW content in this generation.\n\n"
-                                    .to_string(),
-                        }
-                    );
-                    assert_eq!(chat_config.json_mode(), Some(&JsonMode::Tool));
-                }
-                _ => panic!("Expected a chat completion variant"),
-            }
-            match &json_config.variants["best_of_3"].inner {
-                VariantConfig::BestOfNSampling(best_of_n_config) => {
-                    assert_eq!(best_of_n_config.candidates().len(), 3);
-                    assert_eq!(
-                        best_of_n_config.evaluator().inner.model().as_ref(),
-                        "openai::gpt-4o-mini"
-                    );
-                    assert_eq!(
-                        best_of_n_config.evaluator().inner.json_mode(),
-                        Some(&JsonMode::Strict)
-                    );
-                    assert_eq!(best_of_n_config.evaluator().inner.temperature(), Some(0.3));
-                }
-                _ => panic!("Expected a best of n sampling variant"),
-            }
-            match &json_config.variants["mixture_of_3"].inner {
-                VariantConfig::MixtureOfN(mixture_of_n_config) => {
-                    assert_eq!(mixture_of_n_config.candidates().len(), 3);
-                    assert_eq!(
-                        mixture_of_n_config.fuser().inner.model().as_ref(),
-                        "openai::gpt-4o-mini"
-                    );
-                    assert_eq!(
-                        mixture_of_n_config.fuser().inner.json_mode(),
-                        Some(&JsonMode::Strict)
-                    );
-                    assert_eq!(mixture_of_n_config.fuser().inner.temperature(), Some(0.3));
-                }
-                _ => panic!("Expected a mixture of n sampling variant"),
-            }
-            match &json_config.variants["dicl"].inner {
-                VariantConfig::Dicl(dicl_config) => {
-                    assert_eq!(
-                        dicl_config.system_instructions(),
-                        crate::variant::dicl::default_system_instructions()
-                    );
-                    assert_eq!(
-                        dicl_config.embedding_model().as_ref(),
-                        "text-embedding-3-small"
-                    );
-                    assert_eq!(dicl_config.k(), 3);
-                    assert_eq!(dicl_config.model().as_ref(), "openai::gpt-4o-mini");
-                }
-                _ => panic!("Expected a Dicl variant"),
-            }
-            match &json_config.variants["dicl_custom_system"].inner {
-                VariantConfig::Dicl(dicl_config) => {
-                    assert_eq!(
-                        dicl_config.system_instructions(),
-                        "Return True if there is NSFW content in this generation.\n\n"
-                    );
-                    assert_eq!(
-                        dicl_config.embedding_model().as_ref(),
-                        "text-embedding-3-small"
-                    );
-                    assert_eq!(dicl_config.k(), 3);
-                    assert_eq!(dicl_config.model().as_ref(), "openai::gpt-4o-mini");
-                }
-                _ => panic!("Expected a Dicl variant"),
-            }
-        }
-        FunctionConfig::Chat(_) => panic!("Expected a JSON function"),
-    }
-    // Check that the metric for the LLM Judge evaluator is added to the metrics table
-    let metric = config
-        .metrics
-        .get("tensorzero::evaluation_name::evaluation1::evaluator_name::llm_judge_bool")
-        .unwrap();
-    assert_eq!(metric.r#type, MetricConfigType::Boolean);
-    assert_eq!(metric.optimize, MetricConfigOptimize::Min);
-    assert_eq!(metric.level, MetricConfigLevel::Inference);
-
-    // Check that the metric for the exact match evaluation is added to the metrics table
-    let metric = config
-        .metrics
-        .get("tensorzero::evaluation_name::evaluation1::evaluator_name::em_evaluator")
-        .unwrap();
-    assert_eq!(metric.r#type, MetricConfigType::Boolean);
-    assert_eq!(metric.optimize, MetricConfigOptimize::Max);
-    assert_eq!(metric.level, MetricConfigLevel::Inference);
-
-    // Check that the metric for the LLM Judge float evaluation is added to the metrics table
-    let metric = config
-        .metrics
-        .get("tensorzero::evaluation_name::evaluation1::evaluator_name::llm_judge_float")
-        .unwrap();
-    assert_eq!(metric.r#type, MetricConfigType::Float);
-    assert_eq!(metric.optimize, MetricConfigOptimize::Min);
-    assert_eq!(metric.level, MetricConfigLevel::Inference);
 
     // Check that there are 2 tools and both have name "get_temperature"
     assert_eq!(config.tools.len(), 2);
@@ -456,26 +325,6 @@ async fn test_config_from_toml_table_missing_credentials() {
                     .to_string()
             })
         );
-}
-
-/// Ensure that the config parsing fails when referencing a nonexistent function
-#[tokio::test]
-async fn test_config_from_toml_table_nonexistent_function() {
-    let mut config = get_sample_valid_config();
-    config
-        .remove("functions")
-        .expect("Failed to remove `[functions]` section");
-
-    let result = Box::pin(Config::load_unwritten_config(ConfigInput::Fresh(config))).await;
-    assert_eq!(
-        result.unwrap_err(),
-        ErrorDetails::Config {
-            message:
-                "Function `generate_draft` not found (referenced in `[evaluations.evaluation1]`)"
-                    .to_string()
-        }
-        .into()
-    );
 }
 
 /// Ensure that the config parsing fails when the `[variants]` section is missing
@@ -1080,49 +929,7 @@ async fn test_config_validate_variant_template_nonexistent() {
 }
 
 /// Ensure that the config validation fails when an evaluation points at a nonexistent function
-#[tokio::test]
-async fn test_config_validate_evaluation_function_nonexistent() {
-    let mut config = get_sample_valid_config();
-    config["evaluations"]["evaluation1"]["function_name"] = "nonexistent_function".into();
-
-    let result = Box::pin(Config::load_unwritten_config(ConfigInput::Fresh(config))).await;
-
-    assert_eq!(
-            result.unwrap_err(),
-            ErrorDetails::Config {
-                message:
-                    "Function `nonexistent_function` not found (referenced in `[evaluations.evaluation1]`)"
-                        .to_string()
-            }
-            .into()
-        );
-}
-
 /// Ensure that the config validation fails when an evaluation name contains `::`
-#[tokio::test]
-async fn test_config_validate_evaluation_name_contains_double_colon() {
-    let mut config = get_sample_valid_config();
-    let evaluation1 = config["evaluations"]["evaluation1"].clone();
-    config
-        .get_mut("evaluations")
-        .unwrap()
-        .as_table_mut()
-        .unwrap()
-        .insert("bad::evaluation".to_string(), evaluation1);
-
-    let result = Box::pin(Config::load_unwritten_config(ConfigInput::Fresh(config))).await;
-
-    assert_eq!(
-            result.unwrap_err(),
-            ErrorDetails::Config {
-                message:
-                    "evaluation names cannot contain \"::\" (referenced in `[evaluations.bad::evaluation]`)"
-                        .to_string()
-            }
-            .into()
-        );
-}
-
 /// Ensure that the config validation fails when a function has a tool that does not exist in the tools section
 #[tokio::test]
 async fn test_config_validate_function_nonexistent_tool() {
@@ -1462,83 +1269,8 @@ async fn test_get_all_templates() {
         .to_string()
     );
 
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::anthropic_promptA::system")
-            .unwrap(),
-        "Return True if there is NSFW content in this generation.\n\n".to_string(),
-    );
-
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_float::anthropic_promptA::system")
-            .unwrap(),
-        "Return a number between 0 and 1 where 1 is very NSFW and 0 is the least NSFW content.\n\n"
-            .to_string(),
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::anthropic_promptA::user")
-            .unwrap(),
-        include_str!("../evaluations/llm_judge_user_template.minijinja").to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_float::anthropic_promptA::user")
-            .unwrap(),
-        include_str!("../evaluations/llm_judge_user_template.minijinja").to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::llama_promptA::system")
-            .unwrap(),
-        "Return True if there is NSFW content in this generation.\n\n".to_string(),
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::llama_promptA::user")
-            .unwrap(),
-        include_str!("../evaluations/llm_judge_user_template.minijinja").to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::openai_promptA::system")
-            .unwrap(),
-        "Return True if there is NSFW content in this generation.\n\n".to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::openai_promptA::user")
-            .unwrap(),
-        include_str!("../evaluations/llm_judge_user_template.minijinja").to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::best_of_3::system")
-            .unwrap(),
-        "Return True if there is NSFW content in this generation.\n\n".to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::best_of_3::user")
-            .unwrap(),
-        include_str!("../evaluations/llm_judge_user_template.minijinja").to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::mixture_of_3::system")
-            .unwrap(),
-        "Return True if there is NSFW content in this generation.\n\n".to_string()
-    );
-    assert_eq!(
-        *templates
-            .get("tensorzero::llm_judge::evaluation1::llm_judge_bool::mixture_of_3::user")
-            .unwrap(),
-        include_str!("../evaluations/llm_judge_user_template.minijinja").to_string()
-    );
-
     // Check the total number of templates
-    assert_eq!(templates.len(), 22);
+    assert_eq!(templates.len(), 10);
 }
 
 #[tokio::test]
@@ -3568,35 +3300,6 @@ async fn test_deprecated_template_filesystem_access_enabled() {
 
 /// Test that the deprecated GEPA `evaluation_name` option is still accepted
 /// and emits a deprecation warning.
-#[tokio::test]
-async fn test_deprecated_gepa_evaluation_name_warns() {
-    let logs_contain = crate::utils::testing::capture_logs();
-    let tempfile = NamedTempFile::new().unwrap();
-    write!(
-        &tempfile,
-        r#"
-            [optimizers.test_gepa]
-            type = "gepa"
-            function_name = "basic_test"
-            evaluation_name = "test_evaluation"
-            analysis_model = "openai::gpt-4.1-mini"
-            mutation_model = "openai::gpt-4.1-mini"
-        "#
-    )
-    .unwrap();
-
-    let _config = Config::load_from_path_optional_verify_credentials(
-        &ConfigFileGlob::new_from_path(tempfile.path()).unwrap(),
-        false,
-    )
-    .await
-    .unwrap();
-
-    assert!(logs_contain(
-        "The `evaluation_name` field on GEPA optimizers is deprecated"
-    ));
-}
-
 #[tokio::test]
 async fn test_nested_skip_credential_validation() {
     assert!(!skip_credential_validation());

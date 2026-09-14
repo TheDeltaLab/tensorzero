@@ -70,15 +70,17 @@ test.describe("Error Boundaries", () => {
       ).toBeVisible();
     });
 
-    test("should show error for non-existent dataset", async ({ page }) => {
-      await page.goto("/datasets/this-dataset-does-not-exist-xyz");
+    test("should show error for non-existent episode", async ({ page }) => {
+      await page.goto(
+        "/observability/episodes/0196368f-0000-7000-8000-000000000000",
+      );
 
       // Should show an error (caught by layout boundary)
       await expect(page.getByRole("heading", { name: "Error" })).toBeVisible();
 
       // Sidebar should remain functional
       await expect(
-        page.getByRole("link", { name: "Datasets" }).first(),
+        page.getByRole("link", { name: "Episodes" }).first(),
       ).toBeVisible();
     });
 

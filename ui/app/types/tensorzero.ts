@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /**
  * Re-export `@tensorzero/tensorzero-node` types through a local module so UI
  * code can import them without forcing Vite/Storybook to bundle the native
@@ -12,11 +13,3 @@
  * GOOD: `import type { StoredInput } from "~/types/tensorzero";`
  */
 export type * from "@tensorzero/tensorzero-node";
-
-/**
- * Response for the autopilot status endpoint.
- * Indicates whether autopilot is configured on the gateway.
- */
-export interface AutopilotStatusResponse {
-  enabled: boolean;
-}

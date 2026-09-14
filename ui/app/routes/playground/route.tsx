@@ -1,10 +1,5 @@
 // Modified by Delta-AI under Apache 2.0
-import {
-  redirect,
-  type ActionFunctionArgs,
-  type LoaderFunctionArgs,
-  type RouteHandle,
-} from "react-router";
+import { type ActionFunctionArgs, type RouteHandle } from "react-router";
 import { PageHeader, PageLayout } from "~/components/layout/PageLayout";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import { logger } from "~/utils/logger";
@@ -19,18 +14,6 @@ import {
 export const handle: RouteHandle = {
   crumb: () => ["Playground"],
 };
-
-export async function loader({ request }: LoaderFunctionArgs) {
-  const url = new URL(request.url);
-  if (
-    url.searchParams.has("functionName") ||
-    url.searchParams.has("datasetName") ||
-    url.searchParams.has("variants")
-  ) {
-    throw redirect(`/playground/functions${url.search}`);
-  }
-  return null;
-}
 
 export async function action({
   request,

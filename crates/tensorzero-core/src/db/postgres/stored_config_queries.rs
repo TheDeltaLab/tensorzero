@@ -1,25 +1,25 @@
 // Modified by Delta-AI under Apache 2.0
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};
 use tensorzero_stored_config::schema_dispatch::{
-    deserialize_autopilot_config, deserialize_clickhouse_config,
-    deserialize_embedding_model_config, deserialize_evaluation_config, deserialize_function_config,
+    deserialize_clickhouse_config,
+    deserialize_embedding_model_config, deserialize_function_config,
     deserialize_gateway_config, deserialize_metric_config, deserialize_model_config,
-    deserialize_optimizer_config, deserialize_postgres_config, deserialize_provider_types_config,
+    deserialize_postgres_config, deserialize_provider_types_config,
     deserialize_rate_limiting_config, deserialize_storage_kind, deserialize_tool_config,
     deserialize_variant_config,
 };
 use tensorzero_stored_config::{
-    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, StoredEvaluationConfig, StoredEvaluatorConfig,
-    StoredFile, StoredFileRef, StoredFunctionConfig, StoredLLMJudgeConfig,
-    StoredLLMJudgeVariantConfig, StoredModelAlias, StoredToolConfig, StoredVariantConfig,
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION,
+    StoredFile, StoredFileRef, StoredFunctionConfig,
+    StoredModelAlias, StoredToolConfig, StoredVariantConfig,
     StoredVariantVersionConfig,
 };
 use uuid::Uuid;
 
-use crate::config::rehydrate::{FileMap, rehydrate_evaluation, rehydrate_function, rehydrate_tool};
+use crate::config::rehydrate::{FileMap, rehydrate_function, rehydrate_tool};
 use crate::config::{
     ConfigLoadingError, UninitializedConfig, UninitializedModelAlias,
     UninitializedModelAliasTarget, validate_user_config_names,
@@ -297,55 +297,6 @@ fn push_file_ref_ids(file_ids: &mut HashSet<Uuid>, file_ref: &StoredFileRef) {
     file_ids.insert(file_ref.file_version_id);
 }
 
-fn collect_evaluator_file_ids(
-    evaluators: Option<&BTreeMap<String, StoredEvaluatorConfig>>,
-    file_ids: &mut HashSet<Uuid>,
-) {
-    let Some(evaluators) = evaluators else {
-        return;
-    };
-
-    for evaluator in evaluators.values() {
-        match evaluator {
-            StoredEvaluatorConfig::LLMJudge(StoredLLMJudgeConfig {
-                variants: Some(variants),
-                ..
-            }) => {
-                for variant in variants.values() {
-                    collect_llm_judge_file_ids(&variant.variant, file_ids);
-                }
-            }
-            StoredEvaluatorConfig::LLMJudge(_)
-            | StoredEvaluatorConfig::ExactMatch(_)
-            | StoredEvaluatorConfig::ToolUse(_)
-            | StoredEvaluatorConfig::Regex(_)
-            | StoredEvaluatorConfig::Typescript(_) => {}
-        }
-    }
-}
-
-fn collect_llm_judge_file_ids(variant: &StoredLLMJudgeVariantConfig, file_ids: &mut HashSet<Uuid>) {
-    match variant {
-        StoredLLMJudgeVariantConfig::ChatCompletion(chat) => {
-            push_file_ref_ids(file_ids, &chat.system_instructions);
-        }
-        StoredLLMJudgeVariantConfig::BestOfNSampling(best_of_n) => {
-            push_file_ref_ids(file_ids, &best_of_n.evaluator.system_instructions);
-        }
-        StoredLLMJudgeVariantConfig::MixtureOfNSampling(mixture_of_n) => {
-            push_file_ref_ids(file_ids, &mixture_of_n.fuser.system_instructions);
-        }
-        StoredLLMJudgeVariantConfig::Dicl(dicl) => {
-            if let Some(system_instructions) = dicl.system_instructions.as_ref() {
-                push_file_ref_ids(file_ids, system_instructions);
-            }
-        }
-        StoredLLMJudgeVariantConfig::ChainOfThought(chain_of_thought) => {
-            push_file_ref_ids(file_ids, &chain_of_thought.inner.system_instructions);
-        }
-    }
-}
-
 fn collect_function_file_ids(stored: &StoredFunctionConfig, file_ids: &mut HashSet<Uuid>) {
     match stored {
         StoredFunctionConfig::Chat(chat) => {
@@ -363,7 +314,6 @@ fn collect_function_file_ids(stored: &StoredFunctionConfig, file_ids: &mut HashS
                     push_file_ref_ids(file_ids, file_ref);
                 }
             }
-            collect_evaluator_file_ids(chat.evaluators.as_ref(), file_ids);
         }
         StoredFunctionConfig::Json(json) => {
             if let Some(file_ref) = json.system_schema.as_ref() {
@@ -383,7 +333,6 @@ fn collect_function_file_ids(stored: &StoredFunctionConfig, file_ids: &mut HashS
             if let Some(file_ref) = json.output_schema.as_ref() {
                 push_file_ref_ids(file_ids, file_ref);
             }
-            collect_evaluator_file_ids(json.evaluators.as_ref(), file_ids);
         }
     }
 }
@@ -498,14 +447,6 @@ fn collect_tool_file_ids(stored: &StoredToolConfig, file_ids: &mut HashSet<Uuid>
     push_file_ref_ids(file_ids, &stored.parameters);
 }
 
-fn collect_evaluation_file_ids(stored: &StoredEvaluationConfig, file_ids: &mut HashSet<Uuid>) {
-    match stored {
-        StoredEvaluationConfig::Inference(inference) => {
-            collect_evaluator_file_ids(inference.evaluators.as_ref(), file_ids);
-        }
-    }
-}
-
 fn rehydrate_named_collection<Stored, Item, DeserializeFn, RehydrateFn, DeserializeError>(
     rows: Vec<NamedVersionedConfigRow>,
     kind: &'static str,
@@ -565,10 +506,7 @@ struct LoadedStoredConfigRows {
     model_alias_rows: Vec<NamedVersionedConfigRow>,
     metric_rows: Vec<NamedVersionedConfigRow>,
     tool_rows: Vec<NamedVersionedConfigRow>,
-    evaluation_rows: Vec<NamedVersionedConfigRow>,
-    optimizer_rows: Vec<NamedVersionedConfigRow>,
     rate_limiting_row: Option<VersionedConfigRow>,
-    autopilot_row: Option<VersionedConfigRow>,
     provider_types_row: Option<VersionedConfigRow>,
     latest_function_rows: Vec<FunctionConfigRow>,
 }
@@ -595,10 +533,7 @@ async fn rehydrate_loaded_config_rows(
         model_alias_rows,
         metric_rows,
         tool_rows,
-        evaluation_rows,
-        optimizer_rows,
         rate_limiting_row,
-        autopilot_row,
         provider_types_row,
         latest_function_rows,
     } = rows;
@@ -655,16 +590,6 @@ async fn rehydrate_loaded_config_rows(
         },
         &mut loading_errors,
     );
-    let autopilot = load_singleton_or_default(
-        autopilot_row,
-        "autopilot_config",
-        |sr, c| {
-            deserialize_autopilot_config(sr, c)
-                .map(Into::into)
-                .map_err(schema_dispatch_error)
-        },
-        &mut loading_errors,
-    );
     let provider_types = load_singleton_or_default(
         provider_types_row,
         "provider_types_config",
@@ -706,14 +631,6 @@ async fn rehydrate_loaded_config_rows(
         });
     loading_errors.extend(metric_errors);
 
-    let (optimizers, optimizer_errors) = rehydrate_named_collection(
-        optimizer_rows,
-        "optimizer",
-        deserialize_optimizer_config,
-        TryInto::try_into,
-    );
-    loading_errors.extend(optimizer_errors);
-
     let (model_aliases_map, model_alias_errors) = rehydrate_named_collection(
         model_alias_rows,
         "model_alias",
@@ -754,14 +671,6 @@ async fn rehydrate_loaded_config_rows(
             Ok::<_, Error>(tool)
         });
     loading_errors.extend(tool_errors);
-
-    let (stored_evaluations, evaluation_errors) = rehydrate_named_collection(
-        evaluation_rows,
-        "evaluation",
-        deserialize_evaluation_config,
-        Ok::<_, Error>,
-    );
-    loading_errors.extend(evaluation_errors);
 
     let mut stored_functions = HashMap::new();
     let mut variant_ids = HashSet::new();
@@ -847,9 +756,6 @@ async fn rehydrate_loaded_config_rows(
     for stored_tool in stored_tools.values() {
         collect_tool_file_ids(stored_tool, &mut file_ids);
     }
-    for stored_evaluation in stored_evaluations.values() {
-        collect_evaluation_file_ids(stored_evaluation, &mut file_ids);
-    }
 
     let file_ids = file_ids.into_iter().collect::<Vec<_>>();
     let file_rows = load_files(&mut *conn, &file_ids)
@@ -881,24 +787,6 @@ async fn rehydrate_loaded_config_rows(
             Err(error) => {
                 loading_errors.push(ConfigLoadingError {
                     kind: "tool",
-                    name,
-                    parent: None,
-                    error: error.to_string(),
-                    raw_toml: None,
-                });
-            }
-        }
-    }
-
-    let mut evaluations = HashMap::new();
-    for (name, stored_evaluation) in stored_evaluations {
-        match rehydrate_evaluation(stored_evaluation, &files) {
-            Ok(evaluation) => {
-                evaluations.insert(name, evaluation);
-            }
-            Err(error) => {
-                loading_errors.push(ConfigLoadingError {
-                    kind: "evaluation",
                     name,
                     parent: None,
                     error: error.to_string(),
@@ -954,10 +842,7 @@ async fn rehydrate_loaded_config_rows(
         functions: Some(functions),
         metrics: Some(metrics),
         tools: Some(tools),
-        evaluations: Some(evaluations),
         provider_types: Some(provider_types),
-        optimizers: Some(optimizers),
-        autopilot: Some(autopilot),
     };
 
     validate_user_config_names(&config).map_err(|error| vec![error])?;
@@ -1069,10 +954,7 @@ pub async fn load_config_from_db(pool: &PgPool) -> Result<LoadedConfig, Vec<Erro
         model_alias_rows,
         metric_rows,
         tool_rows,
-        evaluation_rows,
-        optimizer_rows,
         rate_limiting_row,
-        autopilot_row,
         provider_types_row,
         latest_function_rows,
     ) = tokio::try_join!(
@@ -1121,25 +1003,10 @@ pub async fn load_config_from_db(pool: &PgPool) -> Result<LoadedConfig, Vec<Erro
             snapshot_id,
             "tools_configs"
         )),
-        Box::pin(load_collection_in_snapshot(
-            pool,
-            snapshot_id,
-            "evaluations_configs"
-        )),
-        Box::pin(load_collection_in_snapshot(
-            pool,
-            snapshot_id,
-            "optimizers_configs"
-        )),
         Box::pin(load_singleton_in_snapshot(
             pool,
             snapshot_id,
             "rate_limiting_configs"
-        )),
-        Box::pin(load_singleton_in_snapshot(
-            pool,
-            snapshot_id,
-            "autopilot_configs"
         )),
         Box::pin(load_singleton_in_snapshot(
             pool,
@@ -1160,10 +1027,7 @@ pub async fn load_config_from_db(pool: &PgPool) -> Result<LoadedConfig, Vec<Erro
         model_alias_rows,
         metric_rows,
         tool_rows,
-        evaluation_rows,
-        optimizer_rows,
         rate_limiting_row,
-        autopilot_row,
         provider_types_row,
         latest_function_rows,
     };

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 /**
  * Configuration loader for TensorZero UI.
  *
@@ -42,15 +43,6 @@ function isCookieAuthMode(): boolean {
 }
 
 let configCache: UiConfig | undefined = undefined;
-
-/**
- * Autopilot UI is hard-disabled. Revert this function (see git history) to
- * restore the gateway status check + TTL cache.
- */
-// eslint-disable-next-line @typescript-eslint/require-await
-export async function checkAutopilotAvailable(): Promise<boolean> {
-  return false;
-}
 
 /**
  * Checks if the config hash has changed by polling the gateway's status endpoint.
@@ -115,10 +107,6 @@ const defaultFunctionConfig: FunctionConfig = {
   parallel_tool_calls: null,
   description:
     "This is the default function for TensorZero. This function is used when you call a model directly without specifying a function name. It has no variants preconfigured because they are generated dynamically at inference time based on the model being called.",
-  experimentation: {
-    base: { type: "static", candidate_variants: [], fallback_variants: [] },
-    namespaces: {},
-  },
 };
 
 async function loadAndDecorateConfig(): Promise<UiConfig> {

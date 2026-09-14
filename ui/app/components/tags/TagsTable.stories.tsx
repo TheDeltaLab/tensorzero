@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { useState } from "react";
 import { TagsTable } from "./TagsTable";
@@ -56,10 +57,6 @@ export const ReadOnlyWithNavigableSystemTags: Story = {
   render: () => (
     <TagsTableWrapper
       initialTags={{
-        "tensorzero::dataset_name": "sample_dataset",
-        "tensorzero::datapoint_id": "123456789",
-        "tensorzero::evaluation_name": "test_evaluation",
-        "tensorzero::evaluation_run_id": "run_abc123",
         "tensorzero::evaluator_inference_id": "inference_xyz789",
         user_tag: "custom_value",
       }}

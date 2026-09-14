@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { pollForFeedbackItem } from "~/utils/clickhouse/feedback";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import {
@@ -39,17 +40,6 @@ export async function fetchUsedVariants(
   }
   const tensorZeroClient = getTensorZeroClient();
   return tensorZeroClient.getUsedVariants(functionName);
-}
-
-export async function fetchHasDemonstration(
-  inference_id: string,
-): Promise<boolean> {
-  const tensorZeroClient = getTensorZeroClient();
-  const demonstrationFeedback = await tensorZeroClient.getDemonstrationFeedback(
-    inference_id,
-    { limit: 1 },
-  );
-  return demonstrationFeedback.length > 0;
 }
 
 export async function fetchInput(

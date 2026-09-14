@@ -1,8 +1,8 @@
+// Modified by Delta-AI under Apache 2.0
 import { useState, useId, useEffect, memo } from "react";
 import { z } from "zod";
 import type {
   InferenceFilter,
-  DatapointFilter,
   MetricConfig,
   TagComparisonOperator,
   FloatComparisonOperator,
@@ -161,8 +161,7 @@ const BooleanValueSelect = memo(function BooleanValueSelect({
 
 // Row Components
 
-// TagFilter is the same shape in both InferenceFilter and DatapointFilter
-type TagFilterType = (InferenceFilter | DatapointFilter) & { type: "tag" };
+type TagFilterType = InferenceFilter & { type: "tag" };
 
 export interface TagFilterRowProps {
   filter: TagFilterType;

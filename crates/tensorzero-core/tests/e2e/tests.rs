@@ -7,7 +7,6 @@
     clippy::unwrap_used
 )]
 mod aggregated_response;
-mod async_inference;
 mod best_of_n;
 mod built_in;
 mod cache;
@@ -21,17 +20,13 @@ mod db_only_boot;
 mod dicl;
 mod dynamic_variants;
 mod endpoints;
-mod experimentation;
 mod fallback;
 mod feedback;
 mod health;
 mod howdy;
-mod human_feedback;
 mod image_url;
 mod inference;
 mod inference_clickhouse;
-mod inference_evaluation_human_feedback;
-mod mcp;
 mod mixture_of_n;
 mod object_storage;
 mod openai_compatible;
@@ -54,4 +49,3 @@ mod synapse_compat;
 mod template;
 mod timeouts;
 mod utils;
-mod workflow_evaluations;

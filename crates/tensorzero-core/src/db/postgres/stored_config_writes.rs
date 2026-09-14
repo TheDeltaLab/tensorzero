@@ -3,15 +3,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use sqlx::{Postgres, QueryBuilder, Transaction};
 use tensorzero_stored_config::{
-    STORED_AUTOPILOT_CONFIG_SCHEMA_REVISION, STORED_CLICKHOUSE_CONFIG_SCHEMA_REVISION,
-    STORED_EMBEDDING_MODEL_CONFIG_SCHEMA_REVISION, STORED_EVALUATION_CONFIG_SCHEMA_REVISION,
+    STORED_CLICKHOUSE_CONFIG_SCHEMA_REVISION,
+    STORED_EMBEDDING_MODEL_CONFIG_SCHEMA_REVISION,
     STORED_GATEWAY_CONFIG_SCHEMA_REVISION, STORED_METRIC_CONFIG_SCHEMA_REVISION,
     STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, STORED_MODEL_CONFIG_SCHEMA_REVISION,
-    STORED_OPTIMIZER_CONFIG_SCHEMA_REVISION, STORED_POSTGRES_CONFIG_SCHEMA_REVISION,
+    STORED_POSTGRES_CONFIG_SCHEMA_REVISION,
     STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION, STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION,
-    STORED_STORAGE_KIND_SCHEMA_REVISION, STORED_TOOL_CONFIG_SCHEMA_REVISION, StoredAutopilotConfig,
+    STORED_STORAGE_KIND_SCHEMA_REVISION, STORED_TOOL_CONFIG_SCHEMA_REVISION,
     StoredClickHouseConfig, StoredEmbeddingModelConfig, StoredGatewayConfig, StoredMetricConfig,
-    StoredModelAlias, StoredModelAliasTarget, StoredModelConfig, StoredOptimizerConfig,
+    StoredModelAlias, StoredModelAliasTarget, StoredModelConfig,
     StoredPostgresConfig, StoredProviderTypesConfig, StoredRateLimitingConfig, StoredStorageKind,
 };
 use uuid::Uuid;
@@ -144,10 +144,7 @@ pub(crate) async fn write_stored_config_in_tx(
         functions,
         metrics,
         tools,
-        evaluations,
         provider_types,
-        optimizers,
-        autopilot,
     } = config;
 
     // 1. Singleton tables (append-only)
@@ -201,17 +198,6 @@ pub(crate) async fn write_stored_config_in_tx(
             tx,
             "rate_limiting_configs",
             STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION,
-            &serialize_stored(&stored)?,
-        )
-        .await?;
-    }
-
-    if let Some(autopilot) = autopilot {
-        let stored = StoredAutopilotConfig::from(autopilot);
-        insert_singleton_config_row(
-            tx,
-            "autopilot_configs",
-            STORED_AUTOPILOT_CONFIG_SCHEMA_REVISION,
             &serialize_stored(&stored)?,
         )
         .await?;
@@ -273,16 +259,6 @@ pub(crate) async fn write_stored_config_in_tx(
     .await?;
     tombstone_removed_names(tx, "metrics_configs", &metrics_new_names).await?;
 
-    let optimizers_new_names = write_named_section(
-        tx,
-        "optimizers_configs",
-        STORED_OPTIMIZER_CONFIG_SCHEMA_REVISION,
-        optimizers.as_ref().into_iter().flat_map(|m| m.iter()),
-        |optimizer_info| serialize_stored(&StoredOptimizerConfig::from(optimizer_info.clone())),
-    )
-    .await?;
-    tombstone_removed_names(tx, "optimizers_configs", &optimizers_new_names).await?;
-
     let model_aliases_new_names = write_named_section(
         tx,
         "model_aliases_configs",
@@ -322,35 +298,7 @@ pub(crate) async fn write_stored_config_in_tx(
     .await?;
     tombstone_removed_names(tx, "tools_configs", &tools_new_names).await?;
 
-    // 4. Evaluations (with stored files)
-    let mut evaluations_new_names: HashSet<String> = HashSet::new();
-    let mut evaluation_rows: Vec<(String, serde_json::Value)> = Vec::new();
-    for (name, eval_config) in evaluations.as_ref().into_iter().flat_map(|m| m.iter()) {
-        let file_version_ids = write_files_in_tx(
-            tx,
-            eval_config.files_for_db().into_iter(),
-            creation_source,
-            source_autopilot_session_id,
-        )
-        .await?;
-        let stored_eval = eval_config.to_stored_for_db(&file_version_ids)?;
-        let config_json = serde_json::to_value(&stored_eval).map_err(|e| {
-            Error::new(ErrorDetails::Serialization {
-                message: format!("Failed to serialize evaluation `{name}` for DB: {e}"),
-            })
-        })?;
-        evaluation_rows.push((name.clone(), config_json));
-        evaluations_new_names.insert(name.clone());
-    }
-    upsert_named_config_rows(
-        tx,
-        "evaluations_configs",
-        STORED_EVALUATION_CONFIG_SCHEMA_REVISION,
-        &evaluation_rows,
-    )
-    .await?;
-    tombstone_removed_names(tx, "evaluations_configs", &evaluations_new_names).await?;
-
+    // 4. Functions.
     // 5. Functions.
     //
     // We use the skipping-CAS variant here because this bulk path always runs

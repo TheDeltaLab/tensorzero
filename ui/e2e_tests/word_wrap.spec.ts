@@ -1,8 +1,9 @@
+// Modified by Delta-AI under Apache 2.0
 import { test, expect } from "@playwright/test";
 
 test("ensure word wrap persists between pages", async ({ page }) => {
   await page.goto(
-    "/datasets/foo/datapoint/0196374b-d575-77b3-ac22-91806c67745c",
+    "/observability/inferences/0196368f-1aeb-7f92-a62b-bdc595d0a626",
   );
 
   // Clear localStorage to ensure clean state

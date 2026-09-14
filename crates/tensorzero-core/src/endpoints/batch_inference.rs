@@ -338,15 +338,11 @@ pub async fn start_batch_inference(
 
     while !candidate_variants.is_empty() {
         // We sample the same variant for the whole batch
-        let result = function
-            .experimentation()
-            .sample(
-                &params.function_name,
-                *first_episode_id,
-                &mut candidate_variants,
-                &database.postgres,
-            )
-            .await;
+        let result = crate::variant::sampling::sample_variant(
+            &params.function_name,
+            first_episode_id,
+            &mut candidate_variants,
+        );
         let (variant_name, variant) = match result {
             Ok((variant_name, variant)) => (variant_name, variant),
             Err(e) => {

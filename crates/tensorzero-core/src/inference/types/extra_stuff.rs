@@ -174,8 +174,6 @@ mod tests {
             parallel_tool_calls: None,
             description: None,
             all_explicit_templates_names: HashSet::new(),
-            experimentation: Default::default(),
-            evaluators: HashMap::new(),
         })
     }
 

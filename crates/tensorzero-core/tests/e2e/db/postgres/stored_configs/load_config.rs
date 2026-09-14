@@ -18,10 +18,6 @@ use tensorzero_core::config::{
 use tensorzero_core::db::postgres::PostgresConnectionInfo;
 use tensorzero_core::db::postgres::function_config_writes::WriteFunctionConfigParams;
 use tensorzero_core::db::postgres::stored_config_queries::load_config_from_db;
-use tensorzero_core::evaluations::{
-    ExactMatchConfig, UninitializedEvaluationConfig, UninitializedEvaluatorConfig,
-    UninitializedInferenceEvaluationConfig,
-};
 use tensorzero_core::inference::types::extra_body::{
     ExtraBodyConfig, ExtraBodyReplacement, ExtraBodyReplacementKind,
 };
@@ -33,9 +29,7 @@ use tensorzero_core::variant::chat_completion::{
     UninitializedChatCompletionConfig, UninitializedChatTemplate, UninitializedChatTemplates,
 };
 use tensorzero_stored_config::{
-    StoredEvaluationConfig, StoredEvaluatorConfig, StoredExactMatchConfig, StoredFileRef,
-    StoredFunctionConfig, StoredInferenceEvaluationConfig, StoredJsonFunctionConfig,
-    StoredToolConfig, StoredVariantRef,
+    StoredFunctionConfig, StoredJsonFunctionConfig, StoredVariantRef,
 };
 
 fn empty_config() -> UninitializedConfig {
@@ -55,11 +49,8 @@ fn empty_config() -> UninitializedConfig {
         functions: Some(HashMap::new()),
         metrics: Some(HashMap::new()),
         tools: Some(HashMap::new()),
-        evaluations: Some(HashMap::new()),
         model_aliases: Some(HashMap::new()),
         provider_types: Some(Default::default()),
-        optimizers: Some(HashMap::new()),
-        autopilot: Some(Default::default()),
     }
 }
 
@@ -159,8 +150,6 @@ fn sample_function() -> UninitializedFunctionConfig {
             "{\"type\":\"string\"}",
         )),
         description: Some("JSON test function".to_string()),
-        experimentation: None,
-        evaluators: HashMap::new(),
     })
 }
 
@@ -174,19 +163,6 @@ fn sample_tool() -> UninitializedToolConfig {
         name: Some("search".to_string()),
         strict: true,
     }
-}
-
-fn sample_evaluation() -> UninitializedEvaluationConfig {
-    #[expect(deprecated)]
-    let exact_match = ExactMatchConfig { cutoff: Some(0.9) };
-    UninitializedEvaluationConfig::Inference(UninitializedInferenceEvaluationConfig {
-        evaluators: HashMap::from([(
-            "exact".to_string(),
-            UninitializedEvaluatorConfig::ExactMatch(exact_match),
-        )]),
-        function_name: "test".to_string(),
-        description: Some("Exact-match evaluation".to_string()),
-    })
 }
 
 async fn insert_file(pool: &PgPool, file_path: &str, source_body: &str) -> Uuid {
@@ -234,11 +210,8 @@ async fn load_config_from_db_returns_defaults_on_empty_database(pool: PgPool) {
             functions: some(is_empty()),
             metrics: some(is_empty()),
             tools: some(is_empty()),
-            evaluations: some(is_empty()),
             model_aliases: some(is_empty()),
             provider_types: some(anything()),
-            optimizers: some(is_empty()),
-            autopilot: some(anything()),
         })
     );
 }
@@ -270,80 +243,6 @@ async fn load_config_from_db_round_trips_written_function_configs(pool: PgPool) 
         .insert("test".to_string(), sample_function());
     assert_that!(&loaded.config, eq(&expected));
     assert_that!(loaded.loading_errors.is_empty(), eq(true));
-}
-
-#[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
-async fn load_config_from_db_loads_top_level_tools_and_evaluations(pool: PgPool) {
-    let tool_file_id = insert_file(
-        &pool,
-        "tools.search.parameters",
-        "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}",
-    )
-    .await;
-
-    sqlx::query(
-        "INSERT INTO tensorzero.tools_configs (id, name, schema_revision, config) \
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(Uuid::now_v7())
-    .bind("search")
-    .bind(1_i32)
-    .bind(
-        serde_json::to_value(StoredToolConfig {
-            description: "Search docs".to_string(),
-            parameters: StoredFileRef {
-                file_version_id: tool_file_id,
-                file_path: "tools.search.parameters".to_string(),
-            },
-            name: Some("search".to_string()),
-            strict: true,
-        })
-        .expect("tool config should serialize"),
-    )
-    .execute(&pool)
-    .await
-    .expect("tool row insert should succeed");
-
-    sqlx::query(
-        "INSERT INTO tensorzero.evaluations_configs (id, name, schema_revision, config) \
-         VALUES ($1, $2, $3, $4)",
-    )
-    .bind(Uuid::now_v7())
-    .bind("exact_eval")
-    .bind(1_i32)
-    .bind(
-        serde_json::to_value(StoredEvaluationConfig::Inference(
-            StoredInferenceEvaluationConfig {
-                evaluators: Some(BTreeMap::from([(
-                    "exact".to_string(),
-                    StoredEvaluatorConfig::ExactMatch(StoredExactMatchConfig { cutoff: Some(0.9) }),
-                )])),
-                function_name: "test".to_string(),
-                description: Some("Exact-match evaluation".to_string()),
-            },
-        ))
-        .expect("evaluation config should serialize"),
-    )
-    .execute(&pool)
-    .await
-    .expect("evaluation row insert should succeed");
-
-    let loaded = load_config_from_db(&pool)
-        .await
-        .expect("DB load should succeed");
-
-    assert_that!(
-        loaded.config.tools.as_ref().and_then(|t| t.get("search")),
-        some(eq(&sample_tool()))
-    );
-    assert_that!(
-        loaded
-            .config
-            .evaluations
-            .as_ref()
-            .and_then(|e| e.get("exact_eval")),
-        some(eq(&sample_evaluation()))
-    );
 }
 
 #[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
@@ -399,8 +298,6 @@ async fn load_config_from_db_skips_invalid_collection_rows_and_broken_functions(
             schemas: None,
             output_schema: None,
             description: Some("broken function".to_string()),
-            experimentation: None,
-            evaluators: None,
         }))
         .expect("broken function config should serialize"),
     )

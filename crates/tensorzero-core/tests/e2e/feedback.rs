@@ -1,9 +1,10 @@
+// Modified by Delta-AI under Apache 2.0
 use googletest::prelude::*;
 use googletest_matchers::matches_json_literal;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::Arc,
 };
 use tensorzero_core::{
@@ -291,8 +292,6 @@ async fn test_comment_feedback_validation_disabled() {
         ValkeyConnectionInfo::Disabled,
         TensorzeroHttpClient::new_testing().unwrap(),
         None,
-        HashSet::new(), // available_tools
-        HashSet::new(), // tool_whitelist
         false,
     )
     .await
@@ -1670,8 +1669,6 @@ async fn test_float_feedback_validation_disabled() {
         ValkeyConnectionInfo::Disabled,
         TensorzeroHttpClient::new_testing().unwrap(),
         None,
-        HashSet::new(), // available_tools
-        HashSet::new(), // tool_whitelist
         false,
     )
     .await
@@ -2016,8 +2013,6 @@ async fn test_boolean_feedback_validation_disabled() {
         ValkeyConnectionInfo::Disabled,
         TensorzeroHttpClient::new_testing().unwrap(),
         None,
-        HashSet::new(), // available_tools
-        HashSet::new(), // tool_whitelist
         false,
     )
     .await

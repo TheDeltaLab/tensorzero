@@ -16,7 +16,6 @@ pub use config_snapshot::ConfigSnapshot;
 mod embedding_model_config;
 mod gateway_config;
 mod observability_config;
-mod optimizer_info;
 
 #[cfg(test)]
 mod fixtures_tests;
@@ -25,7 +24,6 @@ pub use cache_config::StoredCacheConfig;
 pub use embedding_model_config::{StoredEmbeddingModelConfig, StoredEmbeddingProviderConfig};
 pub use gateway_config::StoredGatewayConfig;
 pub use observability_config::StoredObservabilityConfig;
-pub use optimizer_info::{StoredGEPAConfig, StoredOptimizerConfig, StoredOptimizerInfo};
 pub use tensorzero_types::SnapshotHash;
 
 use serde::{Deserialize, Serialize};
@@ -35,10 +33,9 @@ use std::sync::Arc;
 use crate::config::gateway::UninitializedGatewayConfig;
 use crate::config::provider_types::ProviderTypesConfig;
 use crate::config::{
-    AutopilotConfig, ClickHouseConfig, MetricConfig, PostgresConfig, UninitializedConfig,
+    ClickHouseConfig, MetricConfig, PostgresConfig, UninitializedConfig,
     UninitializedFunctionConfig, UninitializedModelAlias, UninitializedToolConfig,
 };
-use crate::evaluations::UninitializedEvaluationConfig;
 use crate::inference::types::storage::StorageKind;
 use crate::model::UninitializedModelConfig;
 use crate::rate_limiting::UninitializedRateLimitingConfig;
@@ -69,11 +66,7 @@ pub struct StoredConfig {
     #[serde(default)]
     pub tools: HashMap<String, UninitializedToolConfig>,
     #[serde(default)]
-    pub evaluations: HashMap<String, UninitializedEvaluationConfig>,
-    #[serde(default)]
     pub provider_types: ProviderTypesConfig,
-    #[serde(default)]
-    pub optimizers: HashMap<String, StoredOptimizerInfo>,
 
     // Fields WITH deprecations or custom serde - use Stored* types
     #[serde(default)]
@@ -82,8 +75,6 @@ pub struct StoredConfig {
     pub embedding_models: HashMap<Arc<str>, StoredEmbeddingModelConfig>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub rerank_models: HashMap<Arc<str>, crate::config::rerank::UninitializedRerankModelConfig>,
-    #[serde(default)]
-    pub autopilot: AutopilotConfig,
     #[serde(default)]
     pub model_aliases: HashMap<String, UninitializedModelAlias>,
     // The following names should **not** be reused:
@@ -103,13 +94,10 @@ impl From<UninitializedConfig> for StoredConfig {
             functions,
             metrics,
             tools,
-            evaluations,
             provider_types,
-            optimizers,
             embedding_models,
             rerank_models,
             model_aliases,
-            autopilot,
         } = config;
 
         Self {
@@ -121,13 +109,7 @@ impl From<UninitializedConfig> for StoredConfig {
             functions: functions.unwrap_or_default(),
             metrics: metrics.unwrap_or_default(),
             tools: tools.unwrap_or_default(),
-            evaluations: evaluations.unwrap_or_default(),
             provider_types: provider_types.unwrap_or_default(),
-            optimizers: optimizers
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
             rate_limiting: rate_limiting.unwrap_or_default(),
             embedding_models: embedding_models
                 .unwrap_or_default()
@@ -136,7 +118,6 @@ impl From<UninitializedConfig> for StoredConfig {
                 .collect(),
             rerank_models: rerank_models.unwrap_or_default(),
             model_aliases: model_aliases.unwrap_or_default(),
-            autopilot: autopilot.unwrap_or_default(),
         }
     }
 }
@@ -156,13 +137,10 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
             functions,
             metrics,
             tools,
-            evaluations,
             provider_types,
-            optimizers,
             embedding_models,
             rerank_models,
             model_aliases,
-            autopilot,
         } = stored;
 
         // Migrate deprecated `gateway.observability.disable_automatic_migrations`
@@ -186,9 +164,7 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
             functions: Some(functions),
             metrics: Some(metrics),
             tools: Some(tools),
-            evaluations: Some(evaluations),
             provider_types: Some(provider_types),
-            optimizers: Some(optimizers.into_iter().map(|(k, v)| (k, v.into())).collect()),
             rate_limiting: Some(rate_limiting),
             embedding_models: Some(
                 embedding_models
@@ -197,7 +173,6 @@ impl TryFrom<StoredConfig> for UninitializedConfig {
                     .collect(),
             ),
             rerank_models: Some(rerank_models),
-            autopilot: Some(autopilot),
         })
     }
 }
@@ -520,21 +495,6 @@ mod tests {
         );
     }
 
-    /// Old snapshots with top-level [evaluators] should still deserialize
-    /// (the field is silently ignored since evaluators now live on functions)
-    #[test]
-    fn test_historical_stored_config_with_top_level_evaluators() {
-        let toml_str = r#"
-[evaluators.exact_match]
-type = "exact_match"
-"#;
-        let stored: StoredConfig =
-            toml::from_str(toml_str).expect("old config with top-level evaluators should parse");
-        let _uninit: UninitializedConfig = stored
-            .try_into()
-            .expect("should convert to UninitializedConfig");
-    }
-
     /// Legacy stored configs predate the `include_content` field on
     /// `[gateway.export.otlp.traces]` (added when GenAI content-capture span
     /// attributes were introduced). They must still parse and convert cleanly
@@ -562,34 +522,6 @@ type = "exact_match"
             .expect("traces config should be present");
         assert_eq!(traces.enabled, Some(true));
         assert!(traces.include_content.is_none());
-    }
-
-    /// Historical GEPA snapshots with legacy `evaluation_name` should still parse.
-    #[test]
-    fn test_historical_stored_gepa_optimizer_with_evaluation_name() {
-        let toml_str = r#"
-            [optimizers.test_gepa]
-            type = "gepa"
-            function_name = "basic_test"
-            evaluation_name = "test_evaluation"
-            analysis_model = "openai::gpt-4.1-mini"
-            mutation_model = "openai::gpt-4.1-mini"
-        "#;
-
-        let stored: StoredConfig =
-            toml::from_str(toml_str).expect("legacy GEPA optimizer should parse from snapshot");
-        let uninit: UninitializedConfig = stored.try_into().expect("should convert to uninit");
-
-        let optimizer = uninit
-            .optimizers
-            .as_ref()
-            .and_then(|m| m.get("test_gepa"))
-            .expect("GEPA optimizer should exist after conversion");
-        let crate::optimization::UninitializedOptimizerConfig::GEPA(gepa) = &optimizer.inner else {
-            panic!("Expected GEPA optimizer config")
-        };
-        assert_eq!(gepa.evaluation_name.as_deref(), Some("test_evaluation"));
-        assert!(gepa.evaluator_names.is_none());
     }
 
     /// Historical snapshots predate `[gateway.async_inference]`. They must

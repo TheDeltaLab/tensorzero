@@ -1,7 +1,6 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Route } from "./+types/route";
 import { data, useLocation } from "react-router";
-import { AskAutopilotButton } from "~/components/autopilot/AskAutopilotButton";
-import { useAutopilotAvailable } from "~/context/autopilot-available";
 import { SnapshotBanner } from "~/components/layout/SnapshotBanner";
 import { useSnapshotHash } from "~/hooks/use-snapshot-hash";
 import {
@@ -19,12 +18,9 @@ import {
   Breadcrumbs,
 } from "~/components/layout/PageLayout";
 import { FunctionTypeBadge } from "~/components/function/FunctionSelector";
-import { DEFAULT_FUNCTION } from "~/utils/constants";
 import type { FunctionConfig, TimeWindow } from "~/types/tensorzero";
 import { fetchVariantsSectionData } from "./variants-data.server";
 import { VariantsSection } from "./VariantsSection";
-import { fetchExperimentationSectionData } from "./experimentation-data.server";
-import { ExperimentationSection } from "./ExperimentationSection";
 import { fetchThroughputSectionData } from "./throughput-data.server";
 import { ThroughputSection } from "./ThroughputSection";
 import { fetchVariantUsageSectionData } from "./variant-usage-data.server";
@@ -44,7 +40,6 @@ function FunctionDetailPageHeader({
   functionName: string;
   functionConfig: FunctionConfig | null;
 }) {
-  const autopilotAvailable = useAutopilotAvailable();
   const snapshotHash = useSnapshotHash();
 
   return (
@@ -63,9 +58,6 @@ function FunctionDetailPageHeader({
       }
     >
       {functionConfig && <BasicInfo functionConfig={functionConfig} />}
-      {autopilotAvailable && (
-        <AskAutopilotButton message={`Function: ${functionName}\n\n`} />
-      )}
     </PageHeader>
   );
 }
@@ -86,9 +78,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
   const variant_usage_time_granularity = (url.searchParams.get(
     "variantUsageTimeGranularity",
   ) || "week") as TimeWindow;
-  const feedback_time_granularity = (url.searchParams.get(
-    "cumulative_feedback_time_granularity",
-  ) || "week") as TimeWindow;
   if (limit > 100) {
     throw data("Limit cannot exceed 100", { status: 400 });
   }
@@ -104,14 +93,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     function_name,
     function_config,
     variantsData: fetchVariantsSectionData({ function_name, function_config }),
-    experimentationData:
-      function_name !== DEFAULT_FUNCTION
-        ? fetchExperimentationSectionData({
-            function_name,
-            function_config,
-            time_granularity: feedback_time_granularity,
-          })
-        : null,
     throughputData: fetchThroughputSectionData({
       function_name,
       time_granularity: throughput_time_granularity,
@@ -143,7 +124,6 @@ export default function FunctionDetailPage({
     function_name,
     function_config,
     variantsData,
-    experimentationData,
     throughputData,
     variantUsageData,
     metricsData,
@@ -165,15 +145,6 @@ export default function FunctionDetailPage({
           functionName={function_name}
           locationKey={location.key}
         />
-
-        {experimentationData && (
-          <ExperimentationSection
-            experimentationData={experimentationData}
-            functionConfig={function_config}
-            functionName={function_name}
-            locationKey={location.key}
-          />
-        )}
 
         <ThroughputSection
           throughputData={throughputData}

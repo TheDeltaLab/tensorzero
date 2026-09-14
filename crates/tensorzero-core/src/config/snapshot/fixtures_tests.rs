@@ -192,7 +192,7 @@ fn fixture_empty() {
     expect_that!(json_path(&json, "models"), eq(&serde_json::json!({})));
     assert_canonical_hash_matches(
         &snapshot,
-        "29bc01770cca8f4b80d313d0c052c46fdcaae837af279b8b8a2220d5049fe610",
+        "4b31df61c9ce63583123d858772946e489c92ededfd90d4ee17eab90674ecce3",
     );
 }
 
@@ -209,7 +209,7 @@ fn fixture_chat_function_unversioned() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "b73790f51ecbb96e4d958288dfade5a2a7b3fb6b90d1cf105d14573293f9d17e",
+        "c8f6d72e95290dc288a31da726ceaf57b26240679bb0364db0d871eb513ee624",
     );
 }
 
@@ -233,7 +233,7 @@ fn fixture_multi_variant_types() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "434e834942b3aadfe8bd4c2bf7f1783d126e957c114914eda432612f9d2531a6",
+        "d2476ca0e0dc489b696c52899d21b5ae0f478066ac76b8608a8b1f82c7a732d9",
     );
 }
 
@@ -254,7 +254,7 @@ fn fixture_models_multi_provider() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "2f4ea5b54e885752c821ac7c07b7a51f23e32ad2bdf8e9ed343f4fca55ac40e6",
+        "2f3decf84f370c9caccf2b43bc42e3340c1890e6001f720d463c2e0d9eb8ddeb",
     );
 }
 
@@ -274,7 +274,7 @@ fn fixture_tools_and_metrics() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "ffff7125a34f7e56fbe0d7ec670da5b996862e249a29d04437f403d34f7287cf",
+        "dbbc625ee35adda74c8645fd434cc14921e1b99f7e10895e8f916309347cb049",
     );
 }
 
@@ -297,7 +297,7 @@ fn fixture_kitchen_sink() {
     );
     assert_canonical_hash_matches(
         &snapshot,
-        "6a88877a443e6eb222213e0dc4624e4f3a9c9c58fad72c300e392dba851abaca",
+        "d31c272a15596dcfd6beb6b4864f254c09e7f94669d1ed410e2c14d70c694c30",
     );
 }
 

@@ -20,7 +20,6 @@ export const EMPTY_CONFIG: UiConfig = {
   functions: {},
   metrics: {},
   tools: {},
-  evaluations: {},
   model_names: [],
   embedding_model_names: [],
   model_providers: {},

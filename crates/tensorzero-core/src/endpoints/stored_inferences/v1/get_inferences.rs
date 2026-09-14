@@ -86,7 +86,6 @@ mod tests {
     use crate::db::inferences::{
         DEFAULT_INFERENCE_QUERY_LIMIT, InferenceOutputSource, MockInferenceQueries,
     };
-    use crate::experimentation::ExperimentationConfigWithNamespaces;
     use crate::function::{FunctionConfig, FunctionConfigChat};
     use crate::inference::types::{ContentBlockChatOutput, StoredInput, Text};
     use crate::stored_inference::{
@@ -109,10 +108,8 @@ mod tests {
                 tool_choice: ToolChoice::Auto,
                 parallel_tool_calls: None,
                 description: None,
-                experimentation: ExperimentationConfigWithNamespaces::default(),
-                all_explicit_templates_names: Default::default(),
-                evaluators: HashMap::new(),
-            })),
+                    all_explicit_templates_names: Default::default(),
+                })),
         );
         config
     }

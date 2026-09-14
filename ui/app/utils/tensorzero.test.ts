@@ -1,89 +1,9 @@
+// Modified by Delta-AI under Apache 2.0
 import { describe, expect, test, beforeAll } from "vitest";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import type { TensorZeroClient } from "~/utils/tensorzero/tensorzero";
 
 let tensorZeroClient: TensorZeroClient;
-
-describe("update datapoints", () => {
-  beforeAll(() => {
-    tensorZeroClient = getTensorZeroClient();
-  });
-
-  test("should preserve source_inference_id, generate a new ID, and set is_custom to true when updating a datapoint", async () => {
-    // Create datapoint from inference
-    const inferenceId = "0196368e-5505-7721-88d2-644a2da892a7";
-    const createResult = await tensorZeroClient.createDatapointsFromInferences(
-      "test",
-      {
-        type: "inference_ids",
-        inference_ids: [inferenceId],
-        output_source: "inference",
-      },
-    );
-
-    expect(createResult.ids).toHaveLength(1);
-    const createdId = createResult.ids[0];
-
-    // Verify initial state: is_custom should be false, source_inference_id should match
-    const initialDatapoint = await tensorZeroClient.getDatapoint(
-      createdId,
-      /*datasetName=*/ "test",
-    );
-    expect(initialDatapoint).toBeDefined();
-    expect(initialDatapoint?.is_custom).toBe(false);
-    expect(initialDatapoint?.source_inference_id).toBe(inferenceId);
-
-    // TypeScript refinement: we've verified initialDatapoint is defined
-    if (!initialDatapoint || initialDatapoint.type !== "json") {
-      throw new Error("Expected JSON datapoint");
-    }
-
-    // Update the datapoint (e.g., modify the output)
-    const updatedOutput = {
-      person: ["Updated Person"],
-      organization: ["Updated Org"],
-      location: ["Updated Location"],
-      miscellaneous: ["Updated Misc"],
-    };
-
-    const updateResult = await tensorZeroClient.updateDatapoint("test", {
-      type: "json",
-      id: initialDatapoint.id,
-      input: initialDatapoint.input,
-      output: {
-        raw: JSON.stringify(updatedOutput),
-      },
-      output_schema: initialDatapoint.output_schema,
-    });
-
-    // Verify updated state
-    const updatedDatapoint = await tensorZeroClient.getDatapoint(
-      updateResult.id,
-      /*datasetName=*/ "test",
-    );
-
-    // New ID should be created
-    expect(updateResult.id).not.toBe(createdId);
-
-    // source_inference_id should be preserved
-    expect(updatedDatapoint?.source_inference_id).toBe(inferenceId);
-
-    // is_custom should now be true (custom modification)
-    expect(updatedDatapoint?.is_custom).toBe(true);
-  });
-
-  test("should list datapoints", async () => {
-    const datapoints = await tensorZeroClient.listDatapoints("foo", {
-      function_name: "extract_entities",
-      limit: 10,
-      offset: 0,
-    });
-    expect(datapoints.datapoints.length).toBe(10);
-    for (const datapoint of datapoints.datapoints) {
-      expect(datapoint.function_name).toBe("extract_entities");
-    }
-  });
-});
 
 describe("getInferenceCount", () => {
   beforeAll(() => {

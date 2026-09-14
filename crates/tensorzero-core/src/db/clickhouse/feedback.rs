@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -18,7 +19,7 @@ use crate::{
         },
     },
     error::{Error, ErrorDetails},
-    experimentation::asymptotic_confidence_sequences::asymp_cs,
+    statistics_util::asymp_cs,
     function::FunctionConfig,
 };
 

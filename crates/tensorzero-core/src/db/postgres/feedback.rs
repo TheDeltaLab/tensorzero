@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Feedback queries for Postgres.
 //!
 //! This module implements both read and write operations for feedback tables in Postgres.
@@ -21,7 +22,7 @@ use crate::db::feedback::{
 };
 use crate::db::{FeedbackQueries, TableBounds, TimeWindow};
 use crate::error::{Error, ErrorDetails};
-use crate::experimentation::asymptotic_confidence_sequences::asymp_cs;
+use crate::statistics_util::asymp_cs;
 use crate::function::FunctionConfig;
 
 use super::PostgresConnectionInfo;

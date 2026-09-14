@@ -13,13 +13,7 @@ import {
   TableEmptyState,
 } from "~/components/ui/table";
 import { useNavigate } from "react-router";
-import {
-  toEvaluationRunsUrl,
-  toDatapointUrl,
-  toDatasetUrl,
-  toInferenceUrl,
-  toWorkflowEvaluationRunUrl,
-} from "~/utils/urls";
+import { toInferenceUrl } from "~/utils/urls";
 import { DeleteButton } from "../ui/DeleteButton";
 
 interface TagsTableProps {
@@ -46,48 +40,15 @@ export function TagsTable({
   );
 
   // Navigation logic from TagsTable component
-  // NOTE: tensorzero::dynamic_evaluation_run_id uses the historical tag name.
-  // It has been renamed to "workflow_evaluation_run_id" but queries still use the old name.
-  // Gateway double-writes both tags. Future migration will update queries to use new tag.
-  const navigableKeys = [
-    "tensorzero::evaluation_run_id",
-    "tensorzero::dataset_name",
-    "tensorzero::evaluator_inference_id",
-    "tensorzero::dynamic_evaluation_run_id",
-    "tensorzero::workflow_evaluation_run_id",
-  ];
-  if (tags["tensorzero::dataset_name"]) {
-    navigableKeys.push("tensorzero::datapoint_id");
-  }
+  const navigableKeys = ["tensorzero::evaluator_inference_id"];
 
   // Navigation handler from TagsTable
   const handleRowClick = (key: string, value: string) => {
     // Only navigate if not in editing mode and navigation is available
     if (!isEditing && navigableKeys.includes(key)) {
       switch (key) {
-        case "tensorzero::evaluation_run_id":
-          navigate(toEvaluationRunsUrl(value));
-          break;
-        case "tensorzero::datapoint_id": {
-          const datasetName = tags["tensorzero::dataset_name"];
-          if (!datasetName) {
-            return;
-          }
-          navigate(toDatapointUrl(datasetName, value));
-          break;
-        }
-        case "tensorzero::dataset_name":
-          navigate(toDatasetUrl(value));
-          break;
         case "tensorzero::evaluator_inference_id":
           navigate(toInferenceUrl(value));
-          break;
-        // NOTE: This uses the historical tag name. See comment above navigableKeys definition.
-        case "tensorzero::dynamic_evaluation_run_id":
-          navigate(toWorkflowEvaluationRunUrl(value));
-          break;
-        case "tensorzero::workflow_evaluation_run_id":
-          navigate(toWorkflowEvaluationRunUrl(value));
           break;
       }
     }

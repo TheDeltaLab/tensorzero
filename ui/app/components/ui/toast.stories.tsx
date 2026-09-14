@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { AlertTriangle, Check } from "lucide-react";
 import { useToast } from "~/hooks/use-toast";
@@ -14,8 +15,8 @@ function ToastDemo({ variant }: { variant: "info" | "success" | "error" }) {
       });
     } else if (variant === "success") {
       toast.success({
-        title: "Datapoint added",
-        description: "Successfully added to dataset.",
+        title: "Feedback submitted",
+        description: "Your feedback has been recorded.",
       });
     } else {
       toast.info({

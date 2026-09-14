@@ -248,13 +248,6 @@ jobs:
       - name: Check all docker-compose.yml files
         run: ./ci/check-all-docker-compose.sh
 
-  check-python-client-build:
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.code == 'true'
-    permissions:
-      contents: read # Required for checkout or repository metadata reads.
-    uses: ./.github/workflows/python-client-build.yml
-
   check-node-bindings:
     name: check-node-bindings
     needs: [detect-changes]
@@ -322,60 +315,6 @@ jobs:
       - name: Check tensorzero-node bindings are properly exported
         run: pnpm --filter=@tensorzero/tensorzero-node run check-exports
 
-  check-python-schemas:
-    name: check-python-schemas
-    needs: [detect-changes]
-    if: github.repository == 'tensorzero/tensorzero' && needs.detect-changes.outputs.code == 'true'
-    permissions:
-      contents: read # Required for checkout or repository metadata reads.
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@cdca7365b2dadb8aad0a33bc7601856ffabcc48e # v4.3.0
-        with:
-          node-version: "24.13.0"
-
-      - name: Install pnpm
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 5m npm install -g pnpm@10.15.0; then
-              break
-            fi
-            if [ $attempt -eq 3 ]; then
-              echo "Failed to install pnpm after 3 attempts"
-              exit 1
-            fi
-            sleep $((10 * attempt))
-          done
-        shell: bash
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
-        with:
-          version: "0.9.27"
-
-      - name: Generate Python schemas
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 5m pnpm generate-python-schemas; then
-              break
-            fi
-            if [ $attempt -eq 3 ]; then
-              echo "Failed to generate Python schemas after 3 attempts"
-              exit 1
-            fi
-            sleep $((10 * attempt))
-          done
-
-      - name: Check for git diff after generating schemas
-        id: git_diff_check
-        run: git diff --exit-code
-
   build-windows:
     name: build-windows
     needs: [detect-changes]
@@ -408,28 +347,6 @@ jobs:
         with:
           save-if: ${{ github.event_name == 'merge_group' }}
           workspaces: "crates -> target"
-      - name: Install uv
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
-        with:
-          version: "0.9.27"
-
-      - name: Install Python 3.10
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 5m uv python install 3.10; then
-              break
-            fi
-            if [ $attempt -eq 3 ]; then
-              echo "Failed to install Python 3.10 after 3 attempts"
-              exit 1
-            fi
-            sleep $((10 * attempt))
-          done
-        shell: bash
-
-      - name: Set PYO3_PYTHON
-        run: echo "PYO3_PYTHON=$(uv python find python3.10)" >> $GITHUB_ENV
-        shell: bash
       - name: Build Rust
         working-directory: crates
         run: cargo build --workspace
@@ -468,77 +385,6 @@ jobs:
         working-directory: crates
         run: |
           cargo clippy --all-targets --all-features -- -D warnings
-
-  validate-python:
-    name: validate-python
-    needs: [detect-changes]
-    if: needs.detect-changes.outputs.python == 'true'
-    permissions:
-      contents: read # Required for checkout or repository metadata reads.
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          persist-credentials: false
-
-      # rust-toolchain.toml pins our MSRV to ensure everything compiles with that version
-      - name: Install Rust (from rust-toolchain.toml)
-        working-directory: crates
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 5m rustup show; then
-              break
-            fi
-            if [ $attempt -eq 3 ]; then
-              echo "Failed to install Rust toolchain after 3 attempts"
-              exit 1
-            fi
-            sleep $((10 * attempt))
-          done
-        shell: bash
-
-      - name: Print Rust version
-        run: rustc --version
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
-        with:
-          version: "0.9.27"
-
-      - name: Install Python 3.10
-        run: |
-          for attempt in 1 2 3; do
-            if timeout 5m uv python install 3.10; then
-              break
-            fi
-            if [ $attempt -eq 3 ]; then
-              echo "Failed to install Python 3.10 after 3 attempts"
-              exit 1
-            fi
-            sleep $((10 * attempt))
-          done
-        shell: bash
-
-      - name: Lint (Python:ruff)
-        run: |
-          uvx ruff@0.14.0 check --output-format=github --extend-select I .
-          uvx ruff@0.14.0 format --check .
-
-      - name: "Python: Pyo3 Client: Build and install dependencies"
-        working-directory: crates/tensorzero-python
-        run: uv sync
-
-      - name: "Python: PyO3 Client: pyright"
-        working-directory: crates/tensorzero-python
-        run: |
-          uv pip install pyright==1.1.394
-          uv run pyright
-
-      - name: "Python: PyO3 Client: stubtest"
-        working-directory: crates/tensorzero-python
-        run: |
-          uv run stubtest tensorzero.tensorzero
 
   validate-node:
     name: validate-node
@@ -1759,7 +1605,6 @@ jobs:
         ui-tests-e2e,
         validate,
         validate-node,
-        validate-python,
       ]
     runs-on: ubuntu-latest
     timeout-minutes: 10

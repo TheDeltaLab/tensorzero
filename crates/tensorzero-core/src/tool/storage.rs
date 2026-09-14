@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Database storage types for tool configuration.
 //!
 //! This module contains types for persisting tool configuration to the database:
@@ -14,7 +15,6 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
 use crate::config::Config;
-use crate::endpoints::datasets::v1::types::UpdateDynamicToolParamsRequest;
 use crate::error::Error;
 use crate::function::FunctionConfig;
 
@@ -584,58 +584,6 @@ impl ToolCallConfigDatabaseInsert {
 
         Ok(all_tools)
     }
-}
-
-/// Updates the dynamic tool parameters with the provided request and returns the updated ToolCallConfigDatabaseInsert.
-pub fn apply_dynamic_tool_params_update_to_tool_call_config(
-    existing_tool_params: Option<ToolCallConfigDatabaseInsert>,
-    update_request: UpdateDynamicToolParamsRequest,
-    function_config: &FunctionConfig,
-    static_tools: &HashMap<String, Arc<StaticToolConfig>>,
-) -> Result<Option<ToolCallConfigDatabaseInsert>, Error> {
-    if update_request.allowed_tools.is_none()
-        && update_request.additional_tools.is_none()
-        && update_request.tool_choice.is_none()
-        && update_request.parallel_tool_calls.is_none()
-        && update_request.provider_tools.is_none()
-    {
-        return Ok(existing_tool_params);
-    }
-
-    let mut merged_dynamic_tool_params: DynamicToolParams =
-        existing_tool_params.unwrap_or_default().into();
-
-    // Handle allowed_tools (three-state: omitted, null, value)
-    // Omitted (None): no change
-    // Some(None) = explicitly null -> clear to None
-    // Some(Some(vec)) = set to explicit list
-    if let Some(allowed_tools) = update_request.allowed_tools {
-        merged_dynamic_tool_params.allowed_tools = allowed_tools;
-    }
-
-    // Handle additional_tools
-    if let Some(additional_tools) = update_request.additional_tools {
-        merged_dynamic_tool_params.additional_tools = Some(additional_tools);
-    }
-
-    // Handle tool_choice (three-state: omitted, null, value)
-    if let Some(tool_choice_opt) = update_request.tool_choice {
-        // Some(None) = explicitly null -> clear to None (use function default)
-        // Some(Some(choice)) = set to specific value
-        merged_dynamic_tool_params.tool_choice = tool_choice_opt;
-    }
-
-    // Handle parallel_tool_calls (three-state: omitted, null, value)
-    if let Some(parallel_opt) = update_request.parallel_tool_calls {
-        merged_dynamic_tool_params.parallel_tool_calls = parallel_opt;
-    }
-
-    // Handle provider_tools
-    if let Some(provider_tools) = update_request.provider_tools {
-        merged_dynamic_tool_params.provider_tools = provider_tools;
-    }
-
-    function_config.dynamic_tool_params_to_database_insert(merged_dynamic_tool_params, static_tools)
 }
 
 /// This is a legacy struct. We use it for deserializing historical data and

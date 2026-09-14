@@ -111,6 +111,13 @@ export type UninitializedModelProvider = {
       include_encrypted_reasoning: boolean;
       provider_tools: Array<JsonValue>;
       content_type_overrides: { [key in string]: ContentBlockType };
+      /**
+       * Delta-AI fork: downgrade inbound Responses requests that carry a
+       * response format to chat completions outbound (for endpoints whose
+       * Responses API ignores `text.format`, e.g. Alibaba Bailian).
+       * Skipped when false so config snapshot hashes are unchanged.
+       */
+      responses_structured_output_fallback_to_chat: boolean;
     }
   | { type: "openrouter"; model_name: string; api_key_location: string | null }
   | {

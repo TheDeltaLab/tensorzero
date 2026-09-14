@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { FunctionSelector } from "./FunctionSelector";
 import type { FunctionConfig } from "~/types/tensorzero";
@@ -28,10 +29,6 @@ const mockFunctions: Record<string, FunctionConfig> = {
     tool_choice: "auto",
     parallel_tool_calls: null,
     description: "Default chat function",
-    experimentation: {
-      base: { type: "static", candidate_variants: [], fallback_variants: [] },
-      namespaces: {},
-    },
   },
   "chat-function": {
     type: "chat",
@@ -41,10 +38,6 @@ const mockFunctions: Record<string, FunctionConfig> = {
     tool_choice: "auto",
     parallel_tool_calls: true,
     description: "Chat function with tools",
-    experimentation: {
-      base: { type: "static", candidate_variants: [], fallback_variants: [] },
-      namespaces: {},
-    },
   },
   "json-extractor": {
     type: "json",
@@ -63,10 +56,6 @@ const mockFunctions: Record<string, FunctionConfig> = {
       allowed_tools: { tools: [], choice: "function_default" },
     },
     description: "Extract structured data from text",
-    experimentation: {
-      base: { type: "static", candidate_variants: [], fallback_variants: [] },
-      namespaces: {},
-    },
   },
   "sentiment-analyzer": {
     type: "json",
@@ -85,10 +74,6 @@ const mockFunctions: Record<string, FunctionConfig> = {
       allowed_tools: { tools: [], choice: "function_default" },
     },
     description: "Analyze sentiment of text",
-    experimentation: {
-      base: { type: "static", candidate_variants: [], fallback_variants: [] },
-      namespaces: {},
-    },
   },
 };
 

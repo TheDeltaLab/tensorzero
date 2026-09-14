@@ -1,5 +1,4 @@
 // Modified by Delta-AI under Apache 2.0
-use std::collections::HashSet;
 use std::{env, fmt::Display, future::Future, path::PathBuf, sync::Arc, time::Duration};
 
 use crate::config::snapshot::ConfigSnapshot;
@@ -47,11 +46,9 @@ pub use crate::inference::types::{
     ContentBlockChunk, Input, InputMessage, InputMessageContent, Role, System, Unknown,
 };
 
-pub mod async_inference;
 pub mod client_inference_params;
 pub mod input_handling;
 
-pub use async_inference::{AsyncTaskEventStream, AsyncTaskStreamEvent, AsyncTaskWaitOptions};
 
 pub enum ClientMode {
     HTTPGateway(HTTPGateway),
@@ -714,8 +711,6 @@ impl ClientBuilder {
                                 valkey_cache_connection_info,
                                 http_client,
                                 self.drop_wrapper,
-                                HashSet::new(), // available_tools not needed for embedded client
-                                HashSet::new(), // tool_whitelist not needed for embedded client
                                 false,
                             )
                             .await
@@ -766,8 +761,6 @@ impl ClientBuilder {
                                 valkey_cache_connection_info.clone(),
                                 http_client.clone(),
                                 self.drop_wrapper,
-                                HashSet::new(), // available_tools not needed for embedded client
-                                HashSet::new(), // tool_whitelist not needed for embedded client
                                 false,
                             )
                             .await
@@ -1438,7 +1431,7 @@ mod tests {
     async fn test_gateway_fails_to_start_with_observability_and_missing_clickhouse_url() {
         // This config file requires ClickHouse (backend = "clickhouse"), so it should fail if no ClickHouse URL is provided
         let err = ClientBuilder::new(ClientBuilderMode::EmbeddedGateway {
-            config_file: Some(PathBuf::from("../tensorzero-client/tests/test_config.toml")),
+            config_file: Some(PathBuf::from("fixtures/client_tests/test_config.toml")),
             clickhouse_url: None,
             postgres_config: None,
             valkey_url: None,
@@ -1463,7 +1456,7 @@ mod tests {
         // the gateway should fail to start without a Postgres connection.
         let err = ClientBuilder::new(ClientBuilderMode::EmbeddedGateway {
             config_file: Some(PathBuf::from(
-                "../tensorzero-client/tests/test_config_postgres.toml",
+                "fixtures/client_tests/test_config_postgres.toml",
             )),
             clickhouse_url: None,
             postgres_config: None,
@@ -1488,7 +1481,7 @@ mod tests {
         // the gateway should start even without ClickHouse.
         ClientBuilder::new(ClientBuilderMode::EmbeddedGateway {
             config_file: Some(PathBuf::from(
-                "../tensorzero-client/tests/test_config_postgres.toml",
+                "fixtures/client_tests/test_config_postgres.toml",
             )),
             clickhouse_url: None,
             postgres_config: Some(PostgresConfig::ExistingConnectionInfo(

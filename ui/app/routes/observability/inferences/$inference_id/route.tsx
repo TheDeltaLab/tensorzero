@@ -33,7 +33,6 @@ import { UsageDetailsSection } from "~/components/inference/UsageDetails";
 import {
   fetchModelInferences,
   fetchUsedVariants,
-  fetchHasDemonstration,
   fetchInput,
   fetchFeedbackData,
 } from "./inference-data.server";
@@ -65,7 +64,6 @@ export function shouldRevalidate({
 }: ShouldRevalidateFunctionArgs) {
   if (
     formAction?.startsWith("/api/feedback") ||
-    formAction?.startsWith("/api/datasets/datapoints/from-inference") ||
     formAction?.startsWith("/api/tensorzero/inference") ||
     (formAction?.startsWith("/api/inference/") &&
       formAction?.endsWith("/protection"))
@@ -124,7 +122,6 @@ export async function loader({ request, params }: Route.LoaderArgs) {
       }),
     modelInferences: fetchModelInferences(inference_id),
     usedVariants: fetchUsedVariants(inference.function_name),
-    hasDemonstration: fetchHasDemonstration(inference_id),
     input: fetchInput(inference),
     feedbackData: fetchFeedbackData(inference_id, {
       newFeedbackId,
@@ -143,7 +140,6 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
     protection,
     modelInferences,
     usedVariants,
-    hasDemonstration,
     input,
     feedbackData,
   } = loaderData;
@@ -210,7 +206,6 @@ export default function InferencePage({ loaderData }: Route.ComponentProps) {
           inference={inference}
           protectionPromise={protection}
           usedVariantsPromise={usedVariants}
-          hasDemonstrationPromise={hasDemonstration}
           inputPromise={input}
           modelInferencesPromise={modelInferences}
           onFeedbackAdded={handleFeedbackAdded}

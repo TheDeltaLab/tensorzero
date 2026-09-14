@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use std::future::Future;
 use std::pin::Pin;
 
@@ -13,7 +14,6 @@ use mockall::automock;
 
 use crate::config::Config;
 use crate::config::snapshot::{ConfigSnapshot, SnapshotHash};
-use crate::db::datasets::DatasetQueries;
 use crate::endpoints::stored_inferences::v1::types::InferenceFilter;
 use crate::error::{DelayedError, Error};
 use crate::serde_util::{deserialize_option_u64, deserialize_u64};
@@ -25,9 +25,7 @@ pub mod batch_inference;
 pub mod batching;
 pub mod cache;
 pub mod clickhouse;
-pub mod datasets;
 pub mod delegating_connection;
-pub mod evaluation_queries;
 pub mod feedback;
 pub mod inferences;
 pub mod model_inferences;
@@ -35,18 +33,16 @@ pub mod postgres;
 pub mod query_helpers;
 pub mod rate_limiting;
 pub mod resolve_uuid;
-pub mod stored_datapoint;
 pub mod test_helpers;
 pub mod valkey;
 pub mod variant_statistics;
-pub mod workflow_evaluation_queries;
 
 // For backcompat, re-export everything from the rate_limiting module
 pub use rate_limiting::*;
 
 #[async_trait]
 pub trait ClickHouseConnection:
-    EpisodeQueries + DatasetQueries + FeedbackQueries + HealthCheckable + Send + Sync
+    EpisodeQueries + FeedbackQueries + HealthCheckable + Send + Sync
 {
 }
 
@@ -209,9 +205,7 @@ pub struct TableBoundsWithCount {
     pub count: Option<u64>,
 }
 
-impl<T: EpisodeQueries + DatasetQueries + FeedbackQueries + HealthCheckable + Send + Sync>
-    ClickHouseConnection for T
-{
+impl<T: EpisodeQueries + FeedbackQueries + HealthCheckable + Send + Sync> ClickHouseConnection for T {
 }
 
 #[derive(ts_rs::TS, Debug, Default, Serialize, Deserialize)]

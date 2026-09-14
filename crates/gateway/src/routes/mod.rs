@@ -1,7 +1,6 @@
+// Modified by Delta-AI under Apache 2.0
 //! Route definitions and endpoint mappings for the TensorZero Gateway API.
 
-mod action;
-pub mod evaluations;
 mod external;
 mod internal;
 

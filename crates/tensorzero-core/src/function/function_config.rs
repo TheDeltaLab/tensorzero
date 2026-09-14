@@ -1,5 +1,4 @@
 // Modified by Delta-AI under Apache 2.0
-use crate::config::Namespace;
 use crate::config::SchemaData;
 use crate::config::gateway::GatewayConfig;
 use crate::config::path::ResolvedTomlPathData;
@@ -9,7 +8,6 @@ use crate::config::{
 };
 #[cfg(feature = "pyo3")]
 use crate::error::IMPOSSIBLE_ERROR_MESSAGE;
-use crate::experimentation::{ExperimentationConfig, ExperimentationConfigWithNamespaces};
 #[cfg(feature = "pyo3")]
 use crate::inference::types::pyo3_helpers::serialize_to_dict;
 #[cfg(feature = "pyo3")]
@@ -34,7 +32,6 @@ use uuid::Uuid;
 use crate::embeddings::EmbeddingModelTable;
 use crate::endpoints::inference::InferenceParams;
 use crate::error::{Error, ErrorDetails};
-use crate::evaluations::EvaluatorConfig;
 use crate::inference::types::{
     ChatInferenceResult, ContentBlockOutput, InferenceResult, Input, InputMessageContent,
     JsonInferenceResult, ModelInferenceResponseWithMetadata, Role, System,
@@ -168,35 +165,6 @@ impl FunctionConfig {
         self.config_type().postgres_table_name()
     }
 
-    /// Returns the experimentation config for this function.
-    /// Returns the base experimentation config (ignoring namespace-specific configs).
-    pub fn experimentation(&self) -> &ExperimentationConfig {
-        match self {
-            FunctionConfig::Chat(config) => &config.experimentation.base,
-            FunctionConfig::Json(config) => &config.experimentation.base,
-        }
-    }
-
-    /// Returns the experimentation config for a given namespace.
-    /// If namespace is None or doesn't have a specific config, returns the base config.
-    pub fn experimentation_for_namespace(
-        &self,
-        namespace: Option<&Namespace>,
-    ) -> &ExperimentationConfig {
-        match self {
-            FunctionConfig::Chat(config) => config.experimentation.get_for_namespace(namespace),
-            FunctionConfig::Json(config) => config.experimentation.get_for_namespace(namespace),
-        }
-    }
-
-    /// Returns the full experimentation config with namespaces.
-    pub fn experimentation_with_namespaces(&self) -> &ExperimentationConfigWithNamespaces {
-        match self {
-            FunctionConfig::Chat(config) => &config.experimentation,
-            FunctionConfig::Json(config) => &config.experimentation,
-        }
-    }
-
     pub fn tools(&self) -> Box<dyn Iterator<Item = &str> + '_> {
         match self {
             FunctionConfig::Chat(config) => Box::new(config.tools.iter().map(String::as_str)),
@@ -232,12 +200,6 @@ impl FunctionConfigChat {
             tool_choice: self.tool_choice.clone(),
             parallel_tool_calls: self.parallel_tool_calls,
             description: self.description.clone(),
-            experimentation: None,
-            evaluators: self
-                .evaluators
-                .iter()
-                .map(|(k, v)| (k.clone(), v.as_uninitialized()))
-                .collect(),
         }
     }
 }
@@ -259,12 +221,6 @@ impl FunctionConfigJson {
                 self.output_schema.value.to_string(),
             )),
             description: self.description.clone(),
-            experimentation: None,
-            evaluators: self
-                .evaluators
-                .iter()
-                .map(|(k, v)| (k.clone(), v.as_uninitialized()))
-                .collect(),
         }
     }
 }
@@ -427,9 +383,7 @@ pub struct FunctionConfigChat {
     pub tool_choice: ToolChoice,
     pub parallel_tool_calls: Option<bool>,
     pub description: Option<String>,
-    pub experimentation: ExperimentationConfigWithNamespaces,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub evaluators: HashMap<String, EvaluatorConfig>,
     // Holds all template names (e.g. 'user', 'my_custom_template'
     // which can be invoked through a `{"type": "template", "name": "..."}` input block)
     // This is used to perform early rejection of a template invocation,
@@ -455,9 +409,7 @@ pub struct FunctionConfigJson {
     pub output_schema: JSONSchema, // schema is mandatory for JSON functions
     pub json_mode_tool_call_config: ToolCallConfig,
     pub description: Option<String>,
-    pub experimentation: ExperimentationConfigWithNamespaces,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub evaluators: HashMap<String, EvaluatorConfig>,
     // See `FunctionConfigChat.all_explicit_template_names`.
     #[serde(skip)]
     pub all_explicit_template_names: HashSet<String>,
@@ -468,13 +420,6 @@ impl FunctionConfig {
         match self {
             FunctionConfig::Chat(params) => &params.variants,
             FunctionConfig::Json(params) => &params.variants,
-        }
-    }
-
-    pub fn evaluators(&self) -> &HashMap<String, EvaluatorConfig> {
-        match self {
-            FunctionConfig::Chat(params) => &params.evaluators,
-            FunctionConfig::Json(params) => &params.evaluators,
         }
     }
 
@@ -1570,8 +1515,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Json(tool_config);
 
@@ -1658,8 +1601,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Json(tool_config);
 
@@ -1734,8 +1675,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Json(tool_config);
 
@@ -1810,8 +1749,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Json(tool_config);
 
@@ -1889,8 +1826,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Json(tool_config);
 
@@ -1974,8 +1909,6 @@ mod tests {
             parallel_tool_calls: None,
             description: Some("A chat function description".to_string()),
             all_explicit_templates_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Chat(chat_config);
         assert_eq!(
@@ -1993,8 +1926,6 @@ mod tests {
             json_mode_tool_call_config,
             description: Some("A JSON function description".to_string()),
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Json(json_config);
         assert_eq!(
@@ -2011,8 +1942,6 @@ mod tests {
             parallel_tool_calls: None,
             description: None,
             all_explicit_templates_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         };
         let function_config = FunctionConfig::Chat(chat_config);
         assert_eq!(function_config.description(), None);
@@ -2047,8 +1976,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         });
         let raw_request = "raw_request".to_string();
 
@@ -2688,8 +2615,6 @@ mod tests {
             json_mode_tool_call_config,
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         });
         let inference_id = Uuid::now_v7();
         let content_blocks = vec![r#"{"answer": "42"}"#.to_string().into()];
@@ -2881,65 +2806,4 @@ mod tests {
         }
     }
 
-    /// Helper: build a minimal FunctionConfigChat with the given experimentation config.
-    fn make_chat_function_config(
-        experimentation: ExperimentationConfigWithNamespaces,
-    ) -> FunctionConfig {
-        FunctionConfig::Chat(FunctionConfigChat {
-            variants: HashMap::new(),
-            schemas: SchemaData::default(),
-            tools: vec![],
-            tool_choice: ToolChoice::default(),
-            parallel_tool_calls: None,
-            description: None,
-            experimentation,
-            all_explicit_templates_names: HashSet::new(),
-            evaluators: HashMap::new(),
-        })
-    }
-
-    #[test]
-    fn test_experimentation_for_namespace_none() {
-        let config = make_chat_function_config(ExperimentationConfigWithNamespaces::default());
-        let exp = config.experimentation_for_namespace(None);
-        assert!(
-            matches!(exp, ExperimentationConfig::Default),
-            "None namespace should return the base (default) config"
-        );
-    }
-
-    #[test]
-    fn test_experimentation_for_namespace_with_override() {
-        let mut namespaces = HashMap::new();
-        namespaces.insert(
-            "mobile".to_string(),
-            ExperimentationConfig::Static(crate::experimentation::StaticExperimentationConfig {
-                candidate_variants: crate::experimentation::WeightedVariants::from_map(
-                    std::collections::BTreeMap::from([("v1".to_string(), 1.0)]),
-                ),
-                fallback_variants: vec![],
-            }),
-        );
-        let config = make_chat_function_config(ExperimentationConfigWithNamespaces {
-            base: ExperimentationConfig::default(),
-            namespaces,
-        });
-        let ns = Namespace::new("mobile").unwrap();
-        let exp = config.experimentation_for_namespace(Some(&ns));
-        assert!(
-            matches!(exp, ExperimentationConfig::Static(_)),
-            "Known namespace should return the namespace-specific config"
-        );
-    }
-
-    #[test]
-    fn test_experimentation_for_namespace_unknown_returns_base() {
-        let config = make_chat_function_config(ExperimentationConfigWithNamespaces::default());
-        let ns = Namespace::new("nonexistent").unwrap();
-        let exp = config.experimentation_for_namespace(Some(&ns));
-        assert!(
-            matches!(exp, ExperimentationConfig::Default),
-            "Unknown namespace should fall back to the base config"
-        );
-    }
 }

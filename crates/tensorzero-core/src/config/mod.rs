@@ -1,8 +1,4 @@
 // Modified by Delta-AI under Apache 2.0
-use crate::experimentation::{
-    ExperimentationConfig, ExperimentationConfigWithNamespaces,
-    UninitializedExperimentationConfigWithNamespaces,
-};
 use crate::http::TensorzeroHttpClient;
 use crate::rate_limiting::{RateLimitingConfig, UninitializedRateLimitingConfig};
 use crate::relay::TensorzeroRelay;
@@ -50,10 +46,6 @@ use crate::config::snapshot::ConfigSnapshot;
 use crate::config::span_map::SpanMap;
 use crate::embeddings::{EmbeddingModelTable, UninitializedEmbeddingModelConfig};
 use crate::error::{Error, ErrorDetails, IMPOSSIBLE_ERROR_MESSAGE};
-use crate::evaluations::{
-    EvaluationConfig, EvaluatorConfig, UninitializedEvaluationConfig, UninitializedEvaluatorConfig,
-    get_function_evaluator_metric_name, get_function_llm_judge_function_name,
-};
 use crate::function::{FunctionConfig, FunctionConfigChat, FunctionConfigJson, get_function};
 #[cfg(feature = "pyo3")]
 use crate::function::{FunctionConfigChatPyClass, FunctionConfigJsonPyClass};
@@ -67,9 +59,6 @@ use crate::model::{
 use crate::model_alias::{ModelAlias, ModelAliasTable, ModelAliasTarget};
 use crate::model_table::{
     CowNoClone, ProviderTypeDefaultCredentials, RESERVED_MODEL_PREFIXES, ShorthandModelConfig,
-};
-use crate::optimization::{
-    OptimizerInfo, UninitializedOptimizerConfig, UninitializedOptimizerInfo,
 };
 use crate::tool::{StaticToolConfig, ToolChoice, create_json_mode_tool_call_config};
 use crate::variant::best_of_n_sampling::UninitializedBestOfNSamplingConfig;
@@ -101,32 +90,6 @@ pub use namespace::Namespace;
 pub use tensorzero_inference_types::credential_validation::{
     skip_credential_validation, with_skip_credential_validation,
 };
-
-/// Configuration for the autopilot system.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct AutopilotConfig {
-    /// Tools that are automatically approved without manual intervention.
-    /// If unset, defaults to all nondestructive tools.
-    /// If set, replaces the default list entirely.
-    pub tool_whitelist: Option<Vec<String>>,
-}
-
-impl From<tensorzero_stored_config::StoredAutopilotConfig> for AutopilotConfig {
-    fn from(stored: tensorzero_stored_config::StoredAutopilotConfig) -> Self {
-        AutopilotConfig {
-            tool_whitelist: stored.tool_whitelist,
-        }
-    }
-}
-
-impl From<&AutopilotConfig> for tensorzero_stored_config::StoredAutopilotConfig {
-    fn from(config: &AutopilotConfig) -> Self {
-        tensorzero_stored_config::StoredAutopilotConfig {
-            tool_whitelist: config.tool_whitelist.clone(),
-        }
-    }
-}
 
 /// A per-item error encountered during config loading from the database.
 /// Items with loading errors are skipped from the live config; this struct
@@ -162,15 +125,12 @@ pub struct Config {
     pub functions: HashMap<String, Arc<FunctionConfig>>, // function name => function config
     pub metrics: HashMap<String, MetricConfig>,     // metric name => metric config
     pub tools: HashMap<String, Arc<StaticToolConfig>>, // tool name => tool config
-    pub evaluations: HashMap<String, Arc<EvaluationConfig>>, // evaluation name => evaluation config
     pub templates: Arc<TemplateConfig<'static>>,
     pub object_store_info: Option<ObjectStoreInfo>,
     pub provider_types: ProviderTypesConfig,
-    pub optimizers: HashMap<String, OptimizerInfo>,
     pub postgres: PostgresConfig,
     pub rate_limiting: RateLimitingConfig,
     pub http_client: TensorzeroHttpClient,
-    pub autopilot: AutopilotConfig,
     pub hash: SnapshotHash,
     /// Errors encountered while loading config items from the database.
     /// Non-empty only in config-in-database mode; always empty for file configs.
@@ -1186,13 +1146,10 @@ struct ProcessedConfigInput {
     rerank_models: HashMap<Arc<str>, UninitializedRerankModelConfig>,
     model_aliases: HashMap<String, UninitializedModelAlias>,
     metrics: HashMap<String, MetricConfig>,
-    evaluations: HashMap<String, UninitializedEvaluationConfig>,
     provider_types: ProviderTypesConfig,
-    optimizers: HashMap<String, UninitializedOptimizerInfo>,
     clickhouse: ClickHouseConfig,
     postgres: PostgresConfig,
     rate_limiting: UninitializedRateLimitingConfig,
-    autopilot: AutopilotConfig,
     snapshot: ConfigSnapshot,
 
     /// All functions (user-defined + built-in), loaded but with evaluator artifacts not yet extracted
@@ -1272,10 +1229,7 @@ async fn process_config_input(
                 functions,
                 metrics,
                 tools,
-                evaluations,
                 provider_types,
-                optimizers,
-                autopilot,
             } = original_snapshot
                 .config
                 .clone()
@@ -1294,10 +1248,7 @@ async fn process_config_input(
             let functions = functions.unwrap_or_default();
             let metrics = metrics.unwrap_or_default();
             let tools = tools.unwrap_or_default();
-            let evaluations = evaluations.unwrap_or_default();
             let provider_types = provider_types.unwrap_or_default();
-            let optimizers = optimizers.unwrap_or_default();
-            let autopilot = autopilot.unwrap_or_default();
 
             // Reconstruct with overlaid values for snapshot hash computation
             let overlaid_config = UninitializedConfig {
@@ -1315,10 +1266,7 @@ async fn process_config_input(
                 functions: Some(functions.clone()),
                 metrics: Some(metrics.clone()),
                 tools: Some(tools.clone()),
-                evaluations: Some(evaluations.clone()),
                 provider_types: Some(provider_types.clone()),
-                optimizers: Some(optimizers.clone()),
-                autopilot: Some(autopilot.clone()),
             };
 
             let extra_templates = original_snapshot.extra_templates.clone();
@@ -1352,13 +1300,10 @@ async fn process_config_input(
                 rerank_models,
                 model_aliases,
                 metrics,
-                evaluations,
                 provider_types,
-                optimizers,
                 clickhouse: overlay_clickhouse.unwrap_or_default(),
                 postgres: overlay_postgres.unwrap_or_default(),
                 rate_limiting: overlay_rate_limiting.unwrap_or_default(),
-                autopilot,
                 // unused
                 snapshot,
                 uninitialized_config,
@@ -1406,10 +1351,7 @@ async fn process_uninitialized_config(
         functions,
         metrics,
         tools,
-        evaluations,
         provider_types,
-        optimizers,
-        autopilot,
     } = config.clone();
 
     // Resolve Options with defaults
@@ -1424,10 +1366,7 @@ async fn process_uninitialized_config(
     let functions = functions.unwrap_or_default();
     let metrics = metrics.unwrap_or_default();
     let tools = tools.unwrap_or_default();
-    let evaluations = evaluations.unwrap_or_default();
     let provider_types = provider_types.unwrap_or_default();
-    let optimizers = optimizers.unwrap_or_default();
-    let autopilot = autopilot.unwrap_or_default();
 
     // Load ALL functions (user + built-in), including their evaluators
     let mut loaded_functions = HashMap::new();
@@ -1473,13 +1412,10 @@ async fn process_uninitialized_config(
         rerank_models,
         model_aliases,
         metrics,
-        evaluations,
         provider_types,
-        optimizers,
         clickhouse,
         postgres,
         rate_limiting,
-        autopilot,
         snapshot,
         loaded_functions,
         gateway_config,
@@ -1706,13 +1642,10 @@ impl Config {
             rerank_models: uninitialized_rerank_models,
             model_aliases: toml_model_aliases,
             metrics,
-            evaluations: uninitialized_evaluations,
             provider_types,
-            optimizers: uninitialized_optimizers,
             clickhouse,
             postgres,
             rate_limiting,
-            autopilot,
             snapshot,
             uninitialized_config,
             loaded_functions,
@@ -1782,10 +1715,6 @@ impl Config {
             .into_iter()
             .collect::<HashMap<_, _>>();
 
-        let optimizers = uninitialized_optimizers
-            .into_iter()
-            .map(|(name, config)| (name, config.load()))
-            .collect::<HashMap<_, _>>();
         let model_aliases = Arc::new({
             let mut table = ModelAliasTable::default();
             for (name, uninit_alias) in toml_model_aliases {
@@ -1858,16 +1787,10 @@ impl Config {
         })?;
         let rerank_models = RerankModelTable::load(uninitialized_rerank_models)?;
 
-        // Split loaded functions into function configs and deferred evaluator artifacts
-        let mut functions = HashMap::new();
-        let mut deferred_evaluator_artifacts = Vec::new();
-        for (name, loaded) in loaded_functions {
-            functions.insert(name, Arc::new(loaded.function_config));
-            if !loaded.evaluator_functions.is_empty() || !loaded.evaluator_metrics.is_empty() {
-                deferred_evaluator_artifacts
-                    .push((loaded.evaluator_functions, loaded.evaluator_metrics));
-            }
-        }
+        let functions: HashMap<_, _> = loaded_functions
+            .into_iter()
+            .map(|(name, loaded)| (name, Arc::new(loaded.function_config)))
+            .collect();
 
         let mut config = Config {
             gateway: gateway_config,
@@ -1878,120 +1801,18 @@ impl Config {
             functions,
             metrics,
             tools,
-            evaluations: HashMap::new(),
             templates: Arc::new(templates),
             object_store_info,
             provider_types,
-            optimizers,
             postgres,
             rate_limiting: rate_limiting.try_into()?,
             http_client,
-            autopilot,
             hash: snapshot.hash.clone(),
             loading_errors,
         };
 
-        // Validate the config (before adding tensorzero:: prefixed evaluator artifacts)
+        // Validate the config
         config.validate().await?;
-
-        // Register function-level evaluator functions and metrics after validation
-        // (they use tensorzero:: prefix which validation would reject for user-defined items)
-        for (evaluator_functions, evaluator_metrics) in deferred_evaluator_artifacts {
-            for (fn_name, fn_config) in evaluator_functions {
-                let fn_config = Arc::new(fn_config);
-                let templates = Arc::get_mut(&mut config.templates).ok_or_else(|| {
-                    Error::from(ErrorDetails::Config {
-                        message: format!(
-                            "Internal error: templates Arc has multiple references. {IMPOSSIBLE_ERROR_MESSAGE}"
-                        ),
-                    })
-                })?;
-                for variant in fn_config.variants().values() {
-                    for template in variant.get_all_template_paths() {
-                        templates.add_template(
-                            template.path.get_template_key(),
-                            template.contents.clone(),
-                        )?;
-                    }
-                }
-                fn_config
-                    .validate(
-                        &config.tools,
-                        &config.models,
-                        &config.embedding_models,
-                        &config.templates,
-                        &fn_name,
-                        &config.gateway,
-                    )
-                    .await?;
-                config.functions.insert(fn_name, fn_config);
-            }
-            config.metrics.extend(evaluator_metrics);
-        }
-
-        // We add the evaluations after validation since we will be writing tensorzero:: functions to the functions map
-        // and tensorzero:: metrics to the metrics map
-        let mut evaluations = HashMap::new();
-        for (name, evaluation_config) in uninitialized_evaluations {
-            let (evaluation_config, evaluation_function_configs, evaluation_metric_configs) =
-                evaluation_config.load(&config.functions, &name)?;
-            evaluations.insert(
-                name,
-                Arc::new(EvaluationConfig::Inference(evaluation_config)),
-            );
-            for (evaluation_function_name, evaluation_function_config) in
-                evaluation_function_configs
-            {
-                if config.functions.contains_key(&evaluation_function_name) {
-                    return Err(ErrorDetails::Config {
-                        message: format!(
-                            "Duplicate evaluator function name: `{evaluation_function_name}` already exists. This should never happen. Please file a bug report at https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports."
-                        ),
-                    }
-                    .into());
-                }
-                // Get mutable access to templates - this is safe because we just created the Arc
-                // and haven't shared it yet
-                let templates = Arc::get_mut(&mut config.templates).ok_or_else(|| {
-                                    Error::from(ErrorDetails::Config {
-                                        message: format!("Internal error: templates Arc has multiple references. {IMPOSSIBLE_ERROR_MESSAGE}"),
-                                    })
-                                })?;
-                for variant in evaluation_function_config.variants().values() {
-                    for template in variant.get_all_template_paths() {
-                        templates.add_template(
-                            template.path.get_template_key(),
-                            template.contents.clone(),
-                        )?;
-                    }
-                }
-                evaluation_function_config
-                    .validate(
-                        &config.tools,
-                        &config.models,
-                        &config.embedding_models,
-                        &config.templates,
-                        &evaluation_function_name,
-                        &config.gateway,
-                    )
-                    .await?;
-                config
-                    .functions
-                    .insert(evaluation_function_name, evaluation_function_config);
-            }
-            for (evaluation_metric_name, evaluation_metric_config) in evaluation_metric_configs {
-                if config.metrics.contains_key(&evaluation_metric_name) {
-                    return Err(ErrorDetails::Config {
-                        message: format!("Duplicate evaluator metric name: `{evaluation_metric_name}` already exists. This should never happen. Please file a bug report at https://github.com/tensorzero/tensorzero/discussions/new?category=bug-reports."),
-                    }
-                    .into());
-                }
-                config
-                    .metrics
-                    .insert(evaluation_metric_name, evaluation_metric_config);
-            }
-        }
-        config.evaluations = evaluations;
 
         Ok(UnwrittenConfig::new(
             config,
@@ -2094,8 +1915,6 @@ impl Config {
             model.validate(model_name, &self.gateway.global_outbound_http_timeout)?;
         }
 
-        namespace::validate_namespaced_model_usage(&self.functions, &self.models)?;
-        namespace::validate_namespaced_variant_usage(&self.functions)?;
 
         for embedding_model_name in self.embedding_models.table.keys() {
             if embedding_model_name.starts_with("tensorzero::") {
@@ -2225,17 +2044,6 @@ impl Config {
         Ok(templates)
     }
 
-    pub fn get_evaluation(&self, evaluation_name: &str) -> Result<Arc<EvaluationConfig>, Error> {
-        Ok(self
-            .evaluations
-            .get(evaluation_name)
-            .ok_or_else(|| {
-                Error::new(ErrorDetails::UnknownEvaluation {
-                    name: evaluation_name.to_string(),
-                })
-            })?
-            .clone())
-    }
 }
 
 pub enum ConfigInput {
@@ -2359,10 +2167,7 @@ pub struct UninitializedConfig {
     pub functions: Option<HashMap<String, UninitializedFunctionConfig>>, // function name => function config
     pub metrics: Option<HashMap<String, MetricConfig>>, // metric name => metric config
     pub tools: Option<HashMap<String, UninitializedToolConfig>>, // tool name => tool config
-    pub evaluations: Option<HashMap<String, UninitializedEvaluationConfig>>, // evaluation name => evaluation
     pub provider_types: Option<ProviderTypesConfig>, // global configuration for all model providers of a particular type
-    pub optimizers: Option<HashMap<String, UninitializedOptimizerInfo>>, // optimizer name => optimizer config
-    pub autopilot: Option<AutopilotConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -2391,9 +2196,6 @@ impl UninitializedConfig {
     /// the consumer (for TOML configs).
     pub(crate) fn warn_on_deprecations(&mut self) -> Result<(), Error> {
         self.resolve_clickhouse_config_deprecation()?;
-        self.warn_variant_weight_deprecation();
-        self.warn_evaluation_evaluators_deprecation();
-        self.warn_gepa_evaluation_name_deprecation()?;
         Ok(())
     }
 
@@ -2419,90 +2221,6 @@ impl UninitializedConfig {
                 "`gateway.observability.disable_automatic_migrations` is deprecated. Use `clickhouse.disable_automatic_migrations` instead.",
             );
         }
-        Ok(())
-    }
-
-    fn warn_variant_weight_deprecation(&self) {
-        let empty = HashMap::new();
-        let functions = self.functions.as_ref().unwrap_or(&empty);
-        let functions_with_weight: Vec<&str> = functions
-            .iter()
-            .filter(|(_, func)| {
-                let variants = match func {
-                    UninitializedFunctionConfig::Chat(c) => &c.variants,
-                    UninitializedFunctionConfig::Json(c) => &c.variants,
-                };
-                variants.values().any(|v| v.inner.weight().is_some())
-            })
-            .map(|(name, _)| name.as_str())
-            .collect();
-
-        if !functions_with_weight.is_empty() {
-            // TODO (#4626): Finish deprecation
-            deprecation_warning(&format!(
-                "The `weight` field on variants is deprecated and will be removed in a future release (2026.6+). \
-                 Use the `[functions.<name>.experimentation]` section instead. \
-                 Affected functions: {}",
-                functions_with_weight.join(", ")
-            ));
-        }
-    }
-
-    fn warn_evaluation_evaluators_deprecation(&self) {
-        if self.evaluations.as_ref().is_none_or(|e| e.is_empty()) {
-            return;
-        }
-        deprecation_warning(
-            "Top-level evaluations are deprecated — please migrate them to \
-             `[functions.function_name.evaluators]` instead.",
-        );
-    }
-
-    fn warn_gepa_evaluation_name_deprecation(&self) -> Result<(), Error> {
-        let mut legacy_gepa_optimizers = Vec::new();
-
-        for (optimizer_name, optimizer) in self.optimizers.iter().flat_map(|m| m.iter()) {
-            let UninitializedOptimizerConfig::GEPA(gepa_config) = &optimizer.inner else {
-                continue;
-            };
-
-            match (
-                gepa_config.evaluation_name.as_ref(),
-                gepa_config.evaluator_names.as_ref(),
-            ) {
-                (Some(_), Some(_)) => {
-                    return Err(Error::new(ErrorDetails::Config {
-                        message: format!(
-                            "GEPA optimizer `{optimizer_name}` cannot specify both `evaluation_name` and `evaluator_names`"
-                        ),
-                    }));
-                }
-                (None, None) => {
-                    return Err(Error::new(ErrorDetails::Config {
-                        message: format!(
-                            "GEPA optimizer `{optimizer_name}` must specify exactly one of `evaluation_name` or `evaluator_names`"
-                        ),
-                    }));
-                }
-                (None, Some(evaluator_names)) if evaluator_names.is_empty() => {
-                    return Err(Error::new(ErrorDetails::Config {
-                        message: format!(
-                            "GEPA optimizer `{optimizer_name}` must specify at least one evaluator name"
-                        ),
-                    }));
-                }
-                (Some(_), None) => legacy_gepa_optimizers.push(optimizer_name.as_str()),
-                (None, Some(_)) => {}
-            }
-        }
-
-        if !legacy_gepa_optimizers.is_empty() {
-            deprecation_warning(&format!(
-                "The `evaluation_name` field on GEPA optimizers is deprecated. Use `evaluator_names` instead. Affected optimizers: {}",
-                legacy_gepa_optimizers.join(", ")
-            ));
-        }
-
         Ok(())
     }
 
@@ -2544,13 +2262,7 @@ struct TomlUninitializedConfig {
     #[serde(default)]
     tools: HashMap<String, UninitializedToolConfig>,
     #[serde(default)]
-    evaluations: HashMap<String, UninitializedEvaluationConfig>,
-    #[serde(default)]
     provider_types: ProviderTypesConfig,
-    #[serde(default)]
-    optimizers: HashMap<String, UninitializedOptimizerInfo>,
-    #[serde(default)]
-    autopilot: AutopilotConfig,
 }
 
 impl TryFrom<TomlUninitializedConfig> for UninitializedConfig {
@@ -2574,10 +2286,7 @@ impl TryFrom<TomlUninitializedConfig> for UninitializedConfig {
             functions: Some(toml_config.functions),
             metrics: Some(toml_config.metrics),
             tools: Some(toml_config.tools),
-            evaluations: Some(toml_config.evaluations),
             provider_types: Some(toml_config.provider_types),
-            optimizers: Some(toml_config.optimizers),
-            autopilot: Some(toml_config.autopilot),
         })
     }
 }
@@ -2661,9 +2370,6 @@ pub struct UninitializedFunctionConfigChat {
     pub tool_choice: ToolChoice,
     pub parallel_tool_calls: Option<bool>,
     pub description: Option<String>,
-    pub experimentation: Option<UninitializedExperimentationConfigWithNamespaces>,
-    #[serde(default)]
-    pub evaluators: HashMap<String, UninitializedEvaluatorConfig>,
 }
 
 #[serde_with::skip_serializing_none]
@@ -2678,9 +2384,6 @@ pub struct UninitializedFunctionConfigJson {
     pub schemas: UninitializedSchemas,
     pub output_schema: Option<ResolvedTomlPathData>, // schema will default to {} if not specified
     pub description: Option<String>,
-    pub experimentation: Option<UninitializedExperimentationConfigWithNamespaces>,
-    #[serde(default)]
-    pub evaluators: HashMap<String, UninitializedEvaluatorConfig>,
 }
 
 /// Holds all of the schemas used by a chat completion function.
@@ -2848,58 +2551,16 @@ fn propagate_timeout_s_to_candidates(
     Ok(())
 }
 
-/// Result of loading a function config, including any generated evaluator functions and metrics.
+/// Result of loading a function config.
 pub struct LoadedFunctionConfig {
     pub function_config: FunctionConfig,
-    /// LLM judge functions generated by evaluators on this function
-    pub evaluator_functions: HashMap<String, FunctionConfig>,
-    /// Metrics generated by evaluators on this function
-    pub evaluator_metrics: HashMap<String, MetricConfig>,
-}
-
-struct LoadedEvaluators {
-    evaluators: HashMap<String, EvaluatorConfig>,
-    generated_functions: HashMap<String, FunctionConfig>,
-    generated_metrics: HashMap<String, MetricConfig>,
-}
-
-/// Load evaluators defined on a function, returning the loaded evaluator configs
-/// plus any generated LLM judge functions and metrics.
-fn load_function_evaluators(
-    function_name: &str,
-    uninitialized_evaluators: HashMap<String, UninitializedEvaluatorConfig>,
-) -> Result<LoadedEvaluators, Error> {
-    let mut evaluators = HashMap::new();
-    let mut generated_functions = HashMap::new();
-    let mut generated_metrics = HashMap::new();
-
-    for (evaluator_name, evaluator_config) in uninitialized_evaluators {
-        let (loaded_evaluator, function_config, metric_config) =
-            evaluator_config.load(None, Some(function_name), &evaluator_name)?;
-
-        if let Some(func) = function_config {
-            let llm_judge_fn_name =
-                get_function_llm_judge_function_name(function_name, &evaluator_name);
-            generated_functions.insert(llm_judge_fn_name, func);
-        }
-
-        let metric_name = get_function_evaluator_metric_name(function_name, &evaluator_name);
-        generated_metrics.insert(metric_name, metric_config);
-        evaluators.insert(evaluator_name, loaded_evaluator);
-    }
-
-    Ok(LoadedEvaluators {
-        evaluators,
-        generated_functions,
-        generated_metrics,
-    })
 }
 
 impl UninitializedFunctionConfig {
     pub fn load(
         self,
         function_name: &str,
-        metrics: &HashMap<String, MetricConfig>,
+        _metrics: &HashMap<String, MetricConfig>,
     ) -> Result<LoadedFunctionConfig, Error> {
         match self {
             UninitializedFunctionConfig::Chat(mut params) => {
@@ -2951,19 +2612,6 @@ impl UninitializedFunctionConfig {
                         .into());
                     }
                 }
-                let experimentation = params
-                    .experimentation
-                    .map(|config| config.load(&variants, metrics, function_name, true))
-                    .transpose()?
-                    .unwrap_or_else(|| ExperimentationConfigWithNamespaces {
-                        base: ExperimentationConfig::legacy_from_variants_map(&variants),
-                        namespaces: std::collections::HashMap::new(),
-                    });
-                let LoadedEvaluators {
-                    evaluators: loaded_evaluators,
-                    generated_functions: evaluator_functions,
-                    generated_metrics: evaluator_metrics,
-                } = load_function_evaluators(function_name, params.evaluators)?;
                 Ok(LoadedFunctionConfig {
                     function_config: FunctionConfig::Chat(FunctionConfigChat {
                         variants,
@@ -2973,11 +2621,7 @@ impl UninitializedFunctionConfig {
                         parallel_tool_calls: params.parallel_tool_calls,
                         description: params.description,
                         all_explicit_templates_names: all_template_names,
-                        experimentation,
-                        evaluators: loaded_evaluators,
                     }),
-                    evaluator_functions,
-                    evaluator_metrics,
                 })
             }
             UninitializedFunctionConfig::Json(mut params) => {
@@ -3061,19 +2705,6 @@ impl UninitializedFunctionConfig {
                         .into());
                     }
                 }
-                let experimentation = params
-                    .experimentation
-                    .map(|config| config.load(&variants, metrics, function_name, true))
-                    .transpose()?
-                    .unwrap_or_else(|| ExperimentationConfigWithNamespaces {
-                        base: ExperimentationConfig::legacy_from_variants_map(&variants),
-                        namespaces: std::collections::HashMap::new(),
-                    });
-                let LoadedEvaluators {
-                    evaluators: loaded_evaluators,
-                    generated_functions: evaluator_functions,
-                    generated_metrics: evaluator_metrics,
-                } = load_function_evaluators(function_name, params.evaluators)?;
                 Ok(LoadedFunctionConfig {
                     function_config: FunctionConfig::Json(FunctionConfigJson {
                         variants,
@@ -3082,11 +2713,7 @@ impl UninitializedFunctionConfig {
                         json_mode_tool_call_config,
                         description: params.description,
                         all_explicit_template_names: all_template_names,
-                        experimentation,
-                        evaluators: loaded_evaluators,
                     }),
-                    evaluator_functions,
-                    evaluator_metrics,
                 })
             }
         }

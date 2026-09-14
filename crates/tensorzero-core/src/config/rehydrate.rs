@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Converts stored config types (from `tensorzero-stored-config`) back into
 //! `Uninitialized*` types that the existing `load()` pipeline can consume.
 //!
@@ -10,12 +11,9 @@ use std::collections::{BTreeMap, HashMap};
 
 use tensorzero_stored_config::{
     StoredBestOfNVariantConfig, StoredChatCompletionVariantConfig, StoredDiclVariantConfig,
-    StoredEvaluationConfig, StoredEvaluatorConfig, StoredFile, StoredFileRef, StoredFunctionConfig,
-    StoredInputWrappers, StoredLLMJudgeBestOfNVariantConfig,
-    StoredLLMJudgeChatCompletionVariantConfig, StoredLLMJudgeConfig,
-    StoredLLMJudgeDiclVariantConfig, StoredLLMJudgeMixtureOfNVariantConfig,
-    StoredLLMJudgeVariantConfig, StoredLLMJudgeVariantInfo, StoredMixtureOfNVariantConfig,
-    StoredToolConfig, StoredVariantConfig, StoredVariantVersionConfig,
+    StoredFile, StoredFileRef, StoredFunctionConfig, StoredInputWrappers,
+    StoredMixtureOfNVariantConfig, StoredToolConfig, StoredVariantConfig,
+    StoredVariantVersionConfig,
 };
 use uuid::Uuid;
 
@@ -25,15 +23,6 @@ use crate::config::{
     UninitializedFunctionConfigJson, UninitializedSchemas,
 };
 use crate::error::{Error, ErrorDetails};
-use crate::evaluations::{
-    UninitializedEvaluationConfig, UninitializedEvaluatorConfig,
-    UninitializedInferenceEvaluationConfig, UninitializedLLMJudgeBestOfNVariantConfig,
-    UninitializedLLMJudgeChainOfThoughtVariantConfig,
-    UninitializedLLMJudgeChatCompletionVariantConfig, UninitializedLLMJudgeConfig,
-    UninitializedLLMJudgeDiclVariantConfig, UninitializedLLMJudgeMixtureOfNVariantConfig,
-    UninitializedLLMJudgeVariantConfig, UninitializedLLMJudgeVariantInfo,
-    UninitializedTypescriptJudgeConfig,
-};
 use crate::inference::types::extra_body::ExtraBodyConfig;
 use crate::inference::types::extra_headers::ExtraHeadersConfig;
 use crate::tool::ToolChoice;
@@ -290,211 +279,6 @@ pub fn rehydrate_variant(
     })
 }
 
-// ─── Evaluator conversions ─────────────────────────────────────────────────
-
-fn rehydrate_llm_judge_chat_completion(
-    stored: StoredLLMJudgeChatCompletionVariantConfig,
-    files: &FileMap,
-) -> Result<UninitializedLLMJudgeChatCompletionVariantConfig, Error> {
-    let StoredLLMJudgeChatCompletionVariantConfig {
-        active,
-        model,
-        system_instructions,
-        temperature,
-        top_p,
-        max_tokens,
-        presence_penalty,
-        frequency_penalty,
-        seed,
-        json_mode,
-        stop_sequences,
-        reasoning_effort,
-        service_tier,
-        thinking_budget_tokens,
-        verbosity,
-        retries,
-        extra_body,
-        extra_headers,
-    } = stored;
-    Ok(UninitializedLLMJudgeChatCompletionVariantConfig {
-        active,
-        model,
-        system_instructions: resolve_file_ref(&system_instructions, files)?,
-        temperature,
-        top_p,
-        max_tokens,
-        presence_penalty,
-        frequency_penalty,
-        seed,
-        json_mode,
-        stop_sequences,
-        reasoning_effort,
-        service_tier,
-        thinking_budget_tokens,
-        verbosity,
-        retries: retries.map(RetryConfig::from).unwrap_or_default(),
-        extra_body: extra_body.map(ExtraBodyConfig::from),
-        extra_headers: extra_headers.map(ExtraHeadersConfig::from),
-    })
-}
-
-fn rehydrate_llm_judge_variant(
-    stored: StoredLLMJudgeVariantConfig,
-    files: &FileMap,
-) -> Result<UninitializedLLMJudgeVariantConfig, Error> {
-    match stored {
-        StoredLLMJudgeVariantConfig::ChatCompletion(c) => {
-            Ok(UninitializedLLMJudgeVariantConfig::ChatCompletion(
-                rehydrate_llm_judge_chat_completion(c, files)?,
-            ))
-        }
-        StoredLLMJudgeVariantConfig::BestOfNSampling(b) => {
-            let StoredLLMJudgeBestOfNVariantConfig {
-                active,
-                timeout_s,
-                candidates,
-                evaluator,
-            } = b;
-            #[expect(deprecated)]
-            Ok(UninitializedLLMJudgeVariantConfig::BestOfNSampling(
-                UninitializedLLMJudgeBestOfNVariantConfig {
-                    active,
-                    timeout_s,
-                    candidates: candidates.unwrap_or_default(),
-                    evaluator: rehydrate_llm_judge_chat_completion(evaluator, files)?,
-                },
-            ))
-        }
-        StoredLLMJudgeVariantConfig::MixtureOfNSampling(m) => {
-            let StoredLLMJudgeMixtureOfNVariantConfig {
-                active,
-                timeout_s,
-                candidates,
-                fuser,
-            } = m;
-            #[expect(deprecated)]
-            Ok(UninitializedLLMJudgeVariantConfig::MixtureOfNSampling(
-                UninitializedLLMJudgeMixtureOfNVariantConfig {
-                    active,
-                    timeout_s,
-                    candidates: candidates.unwrap_or_default(),
-                    fuser: rehydrate_llm_judge_chat_completion(fuser, files)?,
-                },
-            ))
-        }
-        StoredLLMJudgeVariantConfig::Dicl(d) => {
-            let StoredLLMJudgeDiclVariantConfig {
-                active,
-                embedding_model,
-                k,
-                model,
-                system_instructions,
-                temperature,
-                top_p,
-                presence_penalty,
-                frequency_penalty,
-                max_tokens,
-                seed,
-                json_mode,
-                stop_sequences,
-                extra_body,
-                retries,
-                extra_headers,
-            } = d;
-            Ok(UninitializedLLMJudgeVariantConfig::Dicl(
-                UninitializedLLMJudgeDiclVariantConfig {
-                    active,
-                    embedding_model,
-                    k,
-                    model,
-                    system_instructions: resolve_optional_file_ref(
-                        system_instructions.as_ref(),
-                        files,
-                    )?,
-                    temperature,
-                    top_p,
-                    presence_penalty,
-                    frequency_penalty,
-                    max_tokens,
-                    seed,
-                    json_mode,
-                    stop_sequences,
-                    extra_body: extra_body.map(ExtraBodyConfig::from),
-                    retries: retries.map(RetryConfig::from).unwrap_or_default(),
-                    extra_headers: extra_headers.map(ExtraHeadersConfig::from),
-                },
-            ))
-        }
-        StoredLLMJudgeVariantConfig::ChainOfThought(c) => {
-            Ok(UninitializedLLMJudgeVariantConfig::ChainOfThought(
-                UninitializedLLMJudgeChainOfThoughtVariantConfig {
-                    inner: rehydrate_llm_judge_chat_completion(c.inner, files)?,
-                },
-            ))
-        }
-    }
-}
-
-fn rehydrate_evaluator(
-    stored: StoredEvaluatorConfig,
-    files: &FileMap,
-) -> Result<UninitializedEvaluatorConfig, Error> {
-    match stored {
-        StoredEvaluatorConfig::ExactMatch(e) => {
-            Ok(UninitializedEvaluatorConfig::ExactMatch(e.into()))
-        }
-        StoredEvaluatorConfig::Regex(r) => Ok(UninitializedEvaluatorConfig::Regex(r.into())),
-        StoredEvaluatorConfig::ToolUse(t) => Ok(UninitializedEvaluatorConfig::ToolUse(t.into())),
-        StoredEvaluatorConfig::LLMJudge(j) => {
-            let StoredLLMJudgeConfig {
-                input_format,
-                variants,
-                output_type,
-                optimize,
-                cutoff,
-                include,
-                description,
-            } = j;
-            let rehydrated_variants = variants
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(name, vi)| {
-                    let StoredLLMJudgeVariantInfo { variant, timeouts } = vi;
-                    let inner = rehydrate_llm_judge_variant(variant, files)?;
-                    Ok((
-                        name,
-                        UninitializedLLMJudgeVariantInfo {
-                            inner,
-                            timeouts: timeouts.map(Into::into),
-                        },
-                    ))
-                })
-                .collect::<Result<HashMap<_, _>, Error>>()?;
-            #[expect(deprecated)]
-            let config = UninitializedLLMJudgeConfig {
-                input_format: input_format.map(Into::into),
-                variants: rehydrated_variants,
-                output_type: output_type.into(),
-                optimize: optimize.into(),
-                cutoff,
-                include: include.map(Into::into),
-                description,
-            };
-            Ok(UninitializedEvaluatorConfig::LLMJudge(config))
-        }
-        StoredEvaluatorConfig::Typescript(t) => Ok(UninitializedEvaluatorConfig::TypescriptJudge(
-            UninitializedTypescriptJudgeConfig {
-                typescript_file: ResolvedTomlPathData::new_fake_path(
-                    "stored::typescript_evaluator".to_string(),
-                    t.typescript_code,
-                ),
-                output_type: t.output_type.into(),
-                optimize: t.optimize.into(),
-            },
-        )),
-    }
-}
-
 // ─── Function conversions ──────────────────────────────────────────────────
 
 /// Rehydrates a stored function config into an `UninitializedFunctionConfig`.
@@ -593,20 +377,6 @@ fn resolve_schemas(
     })
 }
 
-fn resolve_evaluators(
-    stored: Option<BTreeMap<String, StoredEvaluatorConfig>>,
-    files: &FileMap,
-) -> Result<HashMap<String, UninitializedEvaluatorConfig>, Error> {
-    stored
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(name, eval)| {
-            let rehydrated = rehydrate_evaluator(eval, files)?;
-            Ok((name, rehydrated))
-        })
-        .collect()
-}
-
 fn rehydrate_chat_function(
     stored: tensorzero_stored_config::StoredChatFunctionConfig,
     variant_rows: &HashMap<Uuid, (String, StoredVariantVersionConfig)>,
@@ -622,8 +392,6 @@ fn rehydrate_chat_function(
         tool_choice,
         parallel_tool_calls,
         description,
-        experimentation,
-        evaluators,
     } = stored;
 
     let (resolved_variants, variant_errors) = resolve_variants(variants, variant_rows, files);
@@ -646,8 +414,6 @@ fn rehydrate_chat_function(
             tool_choice: tool_choice.map(ToolChoice::from).unwrap_or_default(),
             parallel_tool_calls,
             description,
-            experimentation: experimentation.map(Into::into),
-            evaluators: resolve_evaluators(evaluators, files)?,
         },
         variant_errors,
     ))
@@ -666,8 +432,6 @@ fn rehydrate_json_function(
         schemas,
         output_schema,
         description,
-        experimentation,
-        evaluators,
     } = stored;
 
     let (resolved_variants, variant_errors) = resolve_variants(variants, variant_rows, files);
@@ -688,8 +452,6 @@ fn rehydrate_json_function(
             schemas: resolved.schemas,
             output_schema: resolve_optional_file_ref(output_schema.as_ref(), files)?,
             description,
-            experimentation: experimentation.map(Into::into),
-            evaluators: resolve_evaluators(evaluators, files)?,
         },
         variant_errors,
     ))
@@ -715,39 +477,14 @@ pub fn rehydrate_tool(
     })
 }
 
-// ─── Evaluation conversions ────────────────────────────────────────────────
-
-pub fn rehydrate_evaluation(
-    stored: StoredEvaluationConfig,
-    files: &FileMap,
-) -> Result<UninitializedEvaluationConfig, Error> {
-    match stored {
-        StoredEvaluationConfig::Inference(i) => {
-            let tensorzero_stored_config::StoredInferenceEvaluationConfig {
-                evaluators,
-                function_name,
-                description,
-            } = i;
-            Ok(UninitializedEvaluationConfig::Inference(
-                UninitializedInferenceEvaluationConfig {
-                    evaluators: resolve_evaluators(evaluators, files)?,
-                    function_name,
-                    description,
-                },
-            ))
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
     use googletest::prelude::*;
     use tensorzero_stored_config::{
-        StoredChatFunctionConfig, StoredExactMatchConfig, StoredFile,
-        StoredInferenceEvaluationConfig, StoredJsonFunctionConfig, StoredLLMJudgeConfig,
-        StoredLLMJudgeOptimize, StoredLLMJudgeOutputType, StoredVariantRef,
+        StoredChatFunctionConfig, StoredFile,
+        StoredJsonFunctionConfig, StoredVariantRef,
     };
     use tensorzero_types::inference_params::JsonMode;
 
@@ -898,8 +635,6 @@ mod tests {
             tool_choice: None,
             parallel_tool_calls: None,
             description: None,
-            experimentation: None,
-            evaluators: None,
         });
 
         let (config, variant_errors) = rehydrate_function(stored, &HashMap::new(), &FileMap::new())
@@ -919,22 +654,6 @@ mod tests {
             error.to_string(),
             contains_substring("Missing or broken variant version")
         );
-    }
-
-    #[gtest]
-    fn rehydrate_evaluation_inference_preserves_function_name() -> Result<()> {
-        let evaluation = StoredEvaluationConfig::Inference(StoredInferenceEvaluationConfig {
-            evaluators: None,
-            function_name: "answer_question".to_string(),
-            description: Some("eval description".to_string()),
-        });
-
-        let rehydrated = rehydrate_evaluation(evaluation, &FileMap::new())?;
-        let UninitializedEvaluationConfig::Inference(config) = rehydrated;
-
-        expect_that!(config.function_name, eq("answer_question"));
-        expect_that!(config.description, some(eq("eval description")));
-        Ok(())
     }
 
     // ─── Prompt-resolving conversions ──────────────────────────────────────
@@ -1210,8 +929,6 @@ mod tests {
             )])),
             output_schema: Some(file_ref(output_schema_id, "schemas/output")),
             description: Some("a json function".to_string()),
-            experimentation: None,
-            evaluators: None,
         });
 
         let (rehydrated, variant_errors) = rehydrate_function(stored, &variant_rows, &files)?;
@@ -1237,82 +954,4 @@ mod tests {
         Ok(())
     }
 
-    #[gtest]
-    fn rehydrate_evaluation_with_llm_judge_evaluator_resolves_variants() -> Result<()> {
-        let system_instructions_id = Uuid::now_v7();
-        let files = FileMap::from([(
-            system_instructions_id,
-            stored_file(system_instructions_id, "grade me"),
-        )]);
-
-        let judge = StoredLLMJudgeConfig {
-            input_format: None,
-            variants: Some(BTreeMap::from([(
-                "judge-variant".to_string(),
-                StoredLLMJudgeVariantInfo {
-                    variant: StoredLLMJudgeVariantConfig::ChatCompletion(
-                        StoredLLMJudgeChatCompletionVariantConfig {
-                            active: Some(true),
-                            model: Arc::<str>::from("gpt-4o-mini"),
-                            system_instructions: file_ref(system_instructions_id, "files/judge"),
-                            temperature: None,
-                            top_p: None,
-                            max_tokens: None,
-                            presence_penalty: None,
-                            frequency_penalty: None,
-                            seed: None,
-                            json_mode: JsonMode::Off,
-                            stop_sequences: None,
-                            reasoning_effort: None,
-                            service_tier: None,
-                            thinking_budget_tokens: None,
-                            verbosity: None,
-                            retries: None,
-                            extra_body: None,
-                            extra_headers: None,
-                        },
-                    ),
-                    timeouts: None,
-                },
-            )])),
-            output_type: StoredLLMJudgeOutputType::Boolean,
-            optimize: StoredLLMJudgeOptimize::Max,
-            cutoff: None,
-            include: None,
-            description: Some("judge".to_string()),
-        };
-
-        let evaluation = StoredEvaluationConfig::Inference(StoredInferenceEvaluationConfig {
-            evaluators: Some(BTreeMap::from([
-                (
-                    "exact".to_string(),
-                    StoredEvaluatorConfig::ExactMatch(StoredExactMatchConfig { cutoff: None }),
-                ),
-                ("judge".to_string(), StoredEvaluatorConfig::LLMJudge(judge)),
-            ])),
-            function_name: "my_fn".to_string(),
-            description: None,
-        });
-
-        let rehydrated = rehydrate_evaluation(evaluation, &files)?;
-        let UninitializedEvaluationConfig::Inference(config) = rehydrated;
-        expect_that!(config.function_name, eq("my_fn"));
-        let judge_evaluator = config
-            .evaluators
-            .get("judge")
-            .expect("judge evaluator should exist");
-        let UninitializedEvaluatorConfig::LLMJudge(judge_cfg) = judge_evaluator else {
-            panic!("expected LLMJudge evaluator");
-        };
-        let variant = judge_cfg
-            .variants
-            .get("judge-variant")
-            .expect("judge variant should exist");
-        let UninitializedLLMJudgeVariantConfig::ChatCompletion(chat) = &variant.inner else {
-            panic!("expected chat completion judge variant");
-        };
-        expect_that!(chat.system_instructions.data(), eq("grade me"));
-        expect_that!(config.evaluators.contains_key("exact"), eq(true));
-        Ok(())
-    }
 }

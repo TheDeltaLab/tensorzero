@@ -361,10 +361,7 @@ mod tests {
                     strict: false,
                 },
             )])),
-            evaluations: Some(HashMap::new()),
             provider_types: Default::default(),
-            optimizers: Some(HashMap::new()),
-            autopilot: Default::default(),
         };
         let response = GetConfigTomlResponse::from_uninitialized(
             config,
@@ -422,10 +419,7 @@ mod tests {
                     strict: false,
                 },
             )])),
-            evaluations: Some(HashMap::new()),
             provider_types: Default::default(),
-            optimizers: Some(HashMap::new()),
-            autopilot: Default::default(),
         };
         let (toml, path_contents) =
             config_to_toml(&config).expect("editable TOML serialization should succeed");

@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Router construction and middleware for the TensorZero Gateway.
 //!
 //! This module builds the final Axum router with all layers (auth, tracing, metrics)
@@ -26,7 +27,6 @@ use tensorzero_core::{
     error::{Error, ErrorDetails},
 };
 use tokio_stream::{StreamExt, wrappers::ReceiverStream};
-use tokio_util::sync::CancellationToken;
 use tower_http::decompression::RequestDecompressionLayer;
 use tracing::Instrument;
 
@@ -36,13 +36,12 @@ use tracing::Instrument;
     clippy::disallowed_types,
     reason = "router construction receives SwappableAppStateData from GatewayHandle"
 )]
-pub async fn build_axum_router(
+pub fn build_axum_router(
     base_path: &str,
     otel_tracer: Option<Arc<TracerWrapper>>,
     app_state: SwappableAppStateData,
     metrics_handle: PrometheusHandle,
-    shutdown_token: CancellationToken,
-) -> Result<(Router, InFlightRequestsData), Error> {
+) -> (Router, InFlightRequestsData) {
     let api_routes = build_api_routes(otel_tracer, metrics_handle);
     // The path was just `/` (or multiple slashes)
     let mut router = if base_path.is_empty() {
@@ -51,18 +50,7 @@ pub async fn build_axum_router(
         Router::new().nest(base_path, api_routes)
     };
 
-    // Serve the MCP endpoint on the same port, respecting `base_path`.
-    let mcp_router = tensorzero_mcp::build_mcp_router(Arc::new(app_state.clone()), shutdown_token)
-        .await
-        .map_err(|e| Error::new(ErrorDetails::InternalError { message: e }))?;
-    let mcp_path = if base_path.is_empty() {
-        "/mcp".to_string()
-    } else {
-        format!("{base_path}/mcp")
-    };
-    router = router
-        .nest_service(&mcp_path, mcp_router)
-        .fallback(endpoints::fallback::handle_404);
+    router = router.fallback(endpoints::fallback::handle_404);
 
     let config = app_state.config().load();
     if config.gateway.auth.enabled {
@@ -104,14 +92,14 @@ pub async fn build_axum_router(
             tensorzero_core::observability::request_logging::request_logging_middleware,
         ))
         .with_state(app_state.clone());
-    Ok((final_router, in_flight_requests_data))
+    (final_router, in_flight_requests_data)
 }
 
 /// Routes that should not require authentication
 /// We apply authentication to all routes *except* these ones, to make it difficult
 /// to accidentally skip running authentication on a route, especially if we later refactor
 /// how we build up our router.
-const UNAUTHENTICATED_ROUTES: &[&str] = &["/status", "/health", "/internal/autopilot/status"];
+const UNAUTHENTICATED_ROUTES: &[&str] = &["/status", "/health"];
 
 /// This middleware spawns all non-'safe' (e.g. non GET/HEAD/OPTIONS) requests on a new tokio task,
 /// and awaits the task completion. This prevents the handler future from getting dropped if

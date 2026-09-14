@@ -31,7 +31,6 @@ const config: UiConfig = {
     },
   },
   tools: {},
-  evaluations: {},
   model_names: [],
   embedding_model_names: [],
   model_providers: {},

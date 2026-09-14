@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! External route definitions for the TensorZero Gateway API.
 //!
 //! This file should remain minimal, containing only endpoint path definitions and their handler mappings.
@@ -11,7 +12,7 @@
 
 use axum::{
     Router,
-    routing::{delete, get, patch, post},
+    routing::{get, post},
 };
 use metrics_exporter_prometheus::PrometheusHandle;
 use tensorzero_core::endpoints::openai_compatible::build_openai_compatible_routes;
@@ -59,10 +60,6 @@ pub fn build_non_otel_enabled_routes(
 ) -> Router<SwappableAppStateData> {
     Router::new()
         .merge(build_observability_routes())
-        .merge(build_datasets_routes())
-        .merge(build_optimization_routes())
-        .merge(build_gepa_routes())
-        .merge(build_evaluations_routes())
         .merge(build_meta_observability_routes(metrics_handle))
 }
 
@@ -78,90 +75,6 @@ fn build_observability_routes() -> Router<SwappableAppStateData> {
         .route(
             "/v1/inferences/get_inferences",
             post(endpoints::stored_inferences::v1::get_inferences_handler),
-        )
-}
-
-/// This function builds the public routes for datasets.
-///
-/// IMPORTANT: Add internal routes to `internal.rs` instead.
-fn build_datasets_routes() -> Router<SwappableAppStateData> {
-    Router::new()
-        .route(
-            "/v1/datasets/{dataset_name}/datapoints",
-            post(endpoints::datasets::v1::create_datapoints_handler)
-                .patch(endpoints::datasets::v1::update_datapoints_handler)
-                .delete(endpoints::datasets::v1::delete_datapoints_handler),
-        )
-        .route(
-            "/v1/datasets/{dataset_name}/datapoints/metadata",
-            patch(endpoints::datasets::v1::update_datapoints_metadata_handler),
-        )
-        .route(
-            "/v1/datasets/{dataset_name}/from_inferences",
-            post(endpoints::datasets::v1::create_from_inferences_handler),
-        )
-        .route(
-            "/v1/datasets/{dataset_name}/list_datapoints",
-            post(endpoints::datasets::v1::list_datapoints_handler),
-        )
-        .route(
-            "/v1/datasets/{dataset_name}",
-            delete(endpoints::datasets::v1::delete_dataset_handler),
-        )
-        .route(
-            "/v1/datasets/{dataset_name}/get_datapoints",
-            post(endpoints::datasets::v1::get_datapoints_by_dataset_handler),
-        )
-        // DEPRECATED: prefer /v1/datasets/{dataset_name}/get_datapoints
-        .route(
-            "/v1/datasets/get_datapoints",
-            post(endpoints::datasets::v1::get_datapoints_handler),
-        )
-}
-
-/// This function builds the public routes for optimization.
-///
-/// IMPORTANT: Add internal routes to `internal.rs` instead.
-fn build_optimization_routes() -> Router<SwappableAppStateData> {
-    Router::new()
-        .route(
-            "/experimental_optimization_workflow",
-            post(tensorzero_optimizers::endpoints::launch_optimization_workflow_handler),
-        )
-        .route(
-            "/experimental_optimization/{job_handle}",
-            get(tensorzero_optimizers::endpoints::poll_optimization_handler),
-        )
-}
-
-/// This function builds the public routes for GEPA optimization.
-///
-/// IMPORTANT: Add internal routes to `internal.rs` instead.
-fn build_gepa_routes() -> Router<SwappableAppStateData> {
-    Router::new()
-        .route(
-            "/v1/optimization/gepa",
-            post(tensorzero_optimizers::endpoints::gepa_launch_handler),
-        )
-        .route(
-            "/v1/optimization/gepa/{task_id}",
-            get(tensorzero_optimizers::endpoints::gepa_get_handler),
-        )
-}
-
-/// This function builds the public routes for evaluations.
-///
-/// IMPORTANT: Add internal routes to `internal.rs` instead.
-fn build_evaluations_routes() -> Router<SwappableAppStateData> {
-    Router::new()
-        // Workflow evaluation endpoints (new)
-        .route(
-            "/workflow_evaluation_run",
-            post(endpoints::workflow_evaluation_run::workflow_evaluation_run_handler),
-        )
-        .route(
-            "/workflow_evaluation_run/{run_id}/episode",
-            post(endpoints::workflow_evaluation_run::workflow_evaluation_run_episode_handler),
         )
 }
 

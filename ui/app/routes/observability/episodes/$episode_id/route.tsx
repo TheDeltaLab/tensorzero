@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 import { listInferencesWithPagination } from "~/utils/clickhouse/inference.server";
 import { pollForFeedbackItem } from "~/utils/clickhouse/feedback";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
@@ -15,7 +16,6 @@ import FeedbackTable, {
   FeedbackTableHeaders,
 } from "~/components/feedback/FeedbackTable";
 import PageButtons from "~/components/utils/PageButtons";
-import { AskAutopilotButton } from "~/components/autopilot/AskAutopilotButton";
 import {
   PageHeader,
   PageLayout,
@@ -65,19 +65,15 @@ export const handle: RouteHandle = {
  * Prevent revalidation of this route when actions are submitted to API routes.
  * This is needed because:
  * 1. The InferencePreviewSheet submits feedback to /api/feedback
- * 2. The AddToDatasetButton submits to /api/datasets/datapoints/from-inference
- * 3. By default, React Router revalidates all active loaders after any action
- * 4. We don't want to reload the entire episode page when these actions complete
+ * 2. By default, React Router revalidates all active loaders after any action
+ * 3. We don't want to reload the entire episode page when these actions complete
  *    because the sheet handles its own data refresh
  */
 export function shouldRevalidate({
   formAction,
   defaultShouldRevalidate,
 }: ShouldRevalidateFunctionArgs) {
-  if (
-    formAction?.startsWith("/api/feedback") ||
-    formAction?.startsWith("/api/datasets/datapoints/from-inference")
-  ) {
+  if (formAction?.startsWith("/api/feedback")) {
     return false;
   }
   return defaultShouldRevalidate;
@@ -395,7 +391,6 @@ export default function EpisodeDetailPage({
               />
             </humanFeedbackFetcher.Form>
           </HumanFeedbackModal>
-          <AskAutopilotButton message={`Episode ID: ${episode_id}\n\n`} />
         </ActionBar>
       </PageHeader>
 
