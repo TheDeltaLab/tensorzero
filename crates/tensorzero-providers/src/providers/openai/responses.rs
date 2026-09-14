@@ -11,6 +11,7 @@ use tensorzero_types::ThoughtSummaryBlock;
 use tensorzero_types::inference_params::{ChatCompletionInferenceParamsV2, ServiceTier};
 
 const PROVIDER_NAME: &str = "OpenAI Responses";
+use crate::providers::deepseek::PROVIDER_TYPE as DEEPSEEK_PROVIDER_TYPE;
 use crate::providers::helpers::convert_stream_error;
 use futures::StreamExt;
 use futures::{Stream, future::try_join_all};
@@ -504,6 +505,7 @@ pub enum OpenAIResponsesToolReference {
 impl<'a> OpenAIResponsesRequest<'a> {
     pub async fn new(
         openai_model: &'a str,
+        provider_type: &'a str,
         request: &'a ModelInferenceRequest<'_>,
         include_encrypted_reasoning: bool,
         provider_tools: &'a [Value],
@@ -630,7 +632,7 @@ impl<'a> OpenAIResponsesRequest<'a> {
                 &request.messages,
                 OpenAIMessagesConfig {
                     json_mode: Some(&request.json_mode),
-                    provider_type: PROVIDER_TYPE,
+                    provider_type,
                     fetch_and_encode_input_files_before_inference: request
                         .fetch_and_encode_input_files_before_inference,
                     content_type_overrides: None,
@@ -914,6 +916,10 @@ pub async fn prepare_openai_responses_messages<'a>(
     .flatten()
     .collect();
 
+    if messages_config.provider_type == DEEPSEEK_PROVIDER_TYPE {
+        openai_messages = synthesize_reasoning_before_function_calls(openai_messages);
+    }
+
     if let Some(system_msg) = prepare_system_or_developer_message_helper(
         system_or_developer,
         messages_config.json_mode,
@@ -923,6 +929,76 @@ pub async fn prepare_openai_responses_messages<'a>(
     }
 
     Ok(openai_messages)
+}
+
+/// DeepSeek's Responses API (thinking mode) rejects a replayed assistant turn
+/// when a `function_call` item is not preceded by a `reasoning` item (counting
+/// since the previous `function_call_output` or the start of the input),
+/// answering 400 with "The reasoning_text in the thinking mode must be passed
+/// back to the API". The model does not always emit reasoning for a turn
+/// (`reasoning_tokens == 0`), leaving nothing to replay. DeepSeek only checks
+/// structure and position — any plaintext `reasoning_text` is accepted — so
+/// insert a synthesized plaintext reasoning item before each uncovered
+/// `function_call`. Note the reasoning item must precede the whole assistant
+/// turn: verified against `api.deepseek.com`, a reasoning item placed after
+/// the turn's assistant `message` item (but still before the `function_call`)
+/// is still rejected, so the insert walks back over the assistant `message`
+/// items that open the turn. This must stay gated to DeepSeek: real OpenAI
+/// requires `rs_*` ids on replayed reasoning items and would reject these.
+fn synthesize_reasoning_before_function_calls<'a>(
+    messages: Vec<OpenAIResponsesInput<'a>>,
+) -> Vec<OpenAIResponsesInput<'a>> {
+    const SYNTHESIZED_REASONING_TEXT: &str = "Planning next steps.";
+    let mut has_reasoning = false;
+    let mut output: Vec<OpenAIResponsesInput<'_>> = Vec::with_capacity(messages.len());
+    for message in messages {
+        match &message {
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(_)) => {
+                has_reasoning = true;
+            }
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCallOutput(_)) => {
+                has_reasoning = false;
+            }
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCall(_)) => {
+                if !has_reasoning {
+                    // Insert before the run of assistant `message` items that
+                    // opens this turn, not directly before the `function_call`
+                    // (see the doc comment).
+                    let mut insert_at = output.len();
+                    while insert_at > 0 {
+                        match &output[insert_at - 1] {
+                            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Message(
+                                msg,
+                            )) if msg.role == "assistant" => {
+                                insert_at -= 1;
+                            }
+                            _ => break,
+                        }
+                    }
+                    output.insert(
+                        insert_at,
+                        OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(
+                            OpenAIResponsesReasoning {
+                                encrypted_content: None,
+                                content: Some(vec![OpenAIResponsesReasoningText::ReasoningText {
+                                    text: Cow::Owned(SYNTHESIZED_REASONING_TEXT.to_string()),
+                                }]),
+                                summary: Vec::new(),
+                            },
+                        )),
+                    );
+                }
+                has_reasoning = true;
+            }
+            // `Unknown` items carry no positional meaning for DeepSeek's
+            // check, and plain messages don't affect it either — leave the
+            // flag untouched in both cases.
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Message(_))
+            | OpenAIResponsesInput::Unknown(_) => {}
+        }
+        output.push(message);
+    }
+    output
 }
 
 pub(super) async fn tensorzero_to_openai_responses_messages<'a>(
@@ -1853,12 +1929,56 @@ mod tests {
     use googletest::assert_that;
     use googletest::expect_that;
     use googletest::gtest;
-    use googletest::matchers::{eq, none, some};
+    use googletest::matchers::{container_eq, eq, none, some};
     use std::time::Duration;
     use uuid::Uuid;
 
     use tensorzero_inference_types::{ModelInferenceRequest, RequestMessage};
-    use tensorzero_types::{FunctionType, Role};
+    use tensorzero_types::{FunctionType, Role, ToolResult};
+
+    fn responses_messages_config(provider_type: &str) -> OpenAIMessagesConfig<'_> {
+        OpenAIMessagesConfig {
+            json_mode: None,
+            provider_type,
+            fetch_and_encode_input_files_before_inference: false,
+            content_type_overrides: None,
+            reasoning_field_name: ReasoningFieldName::ReasoningContent,
+        }
+    }
+
+    fn input_type_name(item: &OpenAIResponsesInput<'_>) -> &'static str {
+        match item {
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Message(_)) => "message",
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCall(_)) => {
+                "function_call"
+            }
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCallOutput(_)) => {
+                "function_call_output"
+            }
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(_)) => "reasoning",
+            OpenAIResponsesInput::Unknown(_) => "unknown",
+        }
+    }
+
+    fn input_type_names(items: &[OpenAIResponsesInput<'_>]) -> Vec<&'static str> {
+        items.iter().map(input_type_name).collect()
+    }
+
+    fn tool_call_block(id: &str) -> ContentBlock {
+        ContentBlock::ToolCall(ToolCall {
+            id: id.to_string(),
+            name: "get_weather".to_string(),
+            arguments: r#"{"city":"Paris"}"#.to_string(),
+        })
+    }
+
+    fn tool_result_block(id: &str) -> ContentBlock {
+        ContentBlock::ToolResult(ToolResult {
+            name: "get_weather".to_string(),
+            result: "sunny".to_string(),
+            id: id.to_string(),
+        })
+    }
 
     #[gtest]
     fn test_assistant_thought_emits_reasoning_content() {
@@ -1891,6 +2011,217 @@ mod tests {
                 "summary": [{ "type": "summary_text", "text": "thinking..." }]
             }]),
             "replayed reasoning must carry both the encrypted payload and the reasoning text"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deepseek_synthesizes_reasoning_before_function_call() {
+        // A replayed assistant turn with text + tool call but no Thought
+        // (the model emitted zero reasoning tokens) must get a synthesized
+        // plaintext reasoning item before the whole turn (i.e. before the
+        // assistant `message` item, not just before the `function_call`), or
+        // DeepSeek's thinking mode rejects the request with a 400.
+        let messages = vec![RequestMessage {
+            role: Role::Assistant,
+            content: vec![
+                "Let me check that.".to_string().into(),
+                tool_call_block("call_1"),
+            ],
+        }];
+        let items = prepare_openai_responses_messages(
+            None,
+            &messages,
+            responses_messages_config(DEEPSEEK_PROVIDER_TYPE),
+        )
+        .await
+        .expect("messages should prepare");
+
+        assert_that!(
+            input_type_names(&items),
+            container_eq(vec!["reasoning", "message", "function_call"]),
+            "a synthesized reasoning item must open the assistant turn"
+        );
+        let wire = serde_json::to_value(&items[0]).expect("reasoning item should serialize");
+        assert_eq!(
+            wire,
+            serde_json::json!({
+                "type": "reasoning",
+                "content": [{ "type": "reasoning_text", "text": "Planning next steps." }],
+                "summary": []
+            }),
+            "synthesized reasoning must be a plaintext reasoning item without encrypted_content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deepseek_synthesizes_reasoning_each_round_of_tool_loop() {
+        // Every `function_call` needs its own preceding reasoning item,
+        // counting since the previous `function_call_output`, and it must be
+        // placed before the turn's assistant `message` item. Round 2 has a
+        // real Thought (no synthesis needed); rounds 1 and 3 do not.
+        let thought_block = ContentBlock::Thought(Thought {
+            text: Some("real thinking".to_string()),
+            signature: Some("sig".to_string()),
+            summary: None,
+            provider_type: None,
+            extra_data: None,
+        });
+        let messages = vec![
+            RequestMessage {
+                role: Role::Assistant,
+                content: vec![tool_call_block("call_1")],
+            },
+            RequestMessage {
+                role: Role::User,
+                content: vec![tool_result_block("call_1")],
+            },
+            RequestMessage {
+                role: Role::Assistant,
+                content: vec![thought_block, tool_call_block("call_2")],
+            },
+            RequestMessage {
+                role: Role::User,
+                content: vec![tool_result_block("call_2")],
+            },
+            RequestMessage {
+                role: Role::Assistant,
+                content: vec![
+                    "Checking again.".to_string().into(),
+                    tool_call_block("call_3"),
+                ],
+            },
+        ];
+        let items = prepare_openai_responses_messages(
+            None,
+            &messages,
+            responses_messages_config(DEEPSEEK_PROVIDER_TYPE),
+        )
+        .await
+        .expect("messages should prepare");
+
+        assert_that!(
+            input_type_names(&items),
+            container_eq(vec![
+                "reasoning",
+                "function_call",
+                "function_call_output",
+                "reasoning",
+                "function_call",
+                "function_call_output",
+                "reasoning",
+                "message",
+                "function_call",
+            ]),
+            "each function_call must be preceded by a reasoning item since the last function_call_output"
+        );
+        // The round-2 reasoning item must be the real replayed one, not a
+        // synthesized duplicate.
+        let wire = serde_json::to_value(&items[3]).expect("reasoning item should serialize");
+        assert_eq!(
+            wire["encrypted_content"],
+            serde_json::json!("sig"),
+            "an existing reasoning item must be kept as-is instead of duplicated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_openai_does_not_synthesize_reasoning() {
+        // Real OpenAI requires `rs_*` ids on replayed reasoning items, so the
+        // synthesis must stay gated to DeepSeek.
+        let messages = vec![RequestMessage {
+            role: Role::Assistant,
+            content: vec![
+                "Let me check that.".to_string().into(),
+                tool_call_block("call_1"),
+            ],
+        }];
+        let items = prepare_openai_responses_messages(
+            None,
+            &messages,
+            responses_messages_config(PROVIDER_TYPE),
+        )
+        .await
+        .expect("messages should prepare");
+
+        assert_that!(
+            input_type_names(&items),
+            container_eq(vec!["message", "function_call"]),
+            "no reasoning item may be synthesized for the OpenAI provider"
+        );
+    }
+
+    #[gtest]
+    fn test_unknown_items_do_not_reset_reasoning_tracking() {
+        let reasoning_item = || {
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(
+                OpenAIResponsesReasoning {
+                    encrypted_content: None,
+                    content: Some(vec![OpenAIResponsesReasoningText::ReasoningText {
+                        text: Cow::Owned("real thinking".to_string()),
+                    }]),
+                    summary: Vec::new(),
+                },
+            ))
+        };
+        let unknown_item = || OpenAIResponsesInput::Unknown(Cow::Owned(json!({"type": "custom"})));
+        let function_call_item = || {
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCall(
+                OpenAIResponsesFunctionCall {
+                    call_id: Cow::Owned("call_1".to_string()),
+                    name: Cow::Owned("get_weather".to_string()),
+                    arguments: Cow::Owned("{}".to_string()),
+                },
+            ))
+        };
+        let function_call_output_item = || {
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCallOutput(
+                OpenAIResponsesFunctionCallOutput {
+                    call_id: Cow::Owned("call_1".to_string()),
+                    output: Cow::Owned("sunny".to_string()),
+                },
+            ))
+        };
+        let items = vec![
+            reasoning_item(),
+            unknown_item(),
+            function_call_item(),
+            function_call_output_item(),
+            unknown_item(),
+            function_call_item(),
+        ];
+        let result = synthesize_reasoning_before_function_calls(items);
+        assert_that!(
+            input_type_names(&result),
+            container_eq(vec![
+                "reasoning",
+                "unknown",
+                "function_call",
+                "function_call_output",
+                "unknown",
+                "reasoning",
+                "function_call",
+            ]),
+            "unknown items must be passed through without affecting reasoning tracking"
+        );
+    }
+
+    #[gtest]
+    fn test_consecutive_function_calls_share_one_reasoning() {
+        let function_call_item = || {
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCall(
+                OpenAIResponsesFunctionCall {
+                    call_id: Cow::Owned("call_1".to_string()),
+                    name: Cow::Owned("get_weather".to_string()),
+                    arguments: Cow::Owned("{}".to_string()),
+                },
+            ))
+        };
+        let items = vec![function_call_item(), function_call_item()];
+        let result = synthesize_reasoning_before_function_calls(items);
+        assert_that!(
+            input_type_names(&result),
+            container_eq(vec!["reasoning", "function_call", "function_call"]),
+            "one reasoning item covers a run of consecutive function_calls"
         );
     }
 
@@ -3524,6 +3855,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
@@ -3627,6 +3959,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o-2024-08-06",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
@@ -3682,6 +4015,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o-2024-08-06",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
@@ -3742,6 +4076,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o-2024-08-06",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
@@ -3787,6 +4122,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o-2024-08-06",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
@@ -3828,6 +4164,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o-2024-08-06",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
@@ -3884,6 +4221,7 @@ mod tests {
 
         let openai_responses_request = OpenAIResponsesRequest::new(
             "gpt-4o-2024-08-06",
+            PROVIDER_TYPE,
             &request,
             false,
             &[],
