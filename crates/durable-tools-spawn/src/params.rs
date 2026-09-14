@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Shared parameter types for task spawning.
 
 use serde::{Deserialize, Serialize};

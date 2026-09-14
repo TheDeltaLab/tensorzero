@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! Error types for spawning operations.
 
 use thiserror::Error;
