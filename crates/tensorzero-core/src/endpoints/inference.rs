@@ -31,7 +31,7 @@ use crate::config::snapshot::SnapshotHash;
 use crate::config::{
     Config, ErrorContext, Namespace, OtlpConfig, SchemaData, UninitializedVariantInfo,
 };
-use crate::cost::{CostConfig, apply_computed_cost_from_streaming_chunks};
+use crate::cost::{CostConfig, StreamingCostAggregate, apply_computed_cost_from_aggregate};
 use crate::db::clickhouse::ClickHouseConnectionInfo;
 use crate::db::delegating_connection::{DelegatingDatabaseConnection, PrimaryDatastore};
 use crate::db::inferences::InferenceQueries;
@@ -60,7 +60,7 @@ use crate::inference::types::{
     InferenceResultChunk, InferenceResultStream, Input, InputExt, InternalJsonInferenceOutput,
     JsonInferenceDatabaseInsert, JsonInferenceOutput, JsonInferenceResultChunk,
     ModelInferenceResponseWithMetadata, RawResponseEntry, RawUsageEntry, RequestMessage,
-    ResolvedInput, TextChunk, Usage, collect_chunks,
+    ResolvedInput, StreamCollector, TextChunk, Usage, collect_chunks,
 };
 use crate::jsonschema_util::JSONSchema;
 use crate::minijinja_util::TemplateConfig;
@@ -69,8 +69,7 @@ use crate::observability::internal_metrics::TENSORZERO_INFERENCES_TOTAL;
 use crate::observability::request_logging::HttpMetricData;
 use crate::observability_tags::{
     API_KEY_PUBLIC_ID_TAG, FALLBACK_COUNT_TAG, STATUS_CODE_TAG, SYNAPSE_REQUEST_ID_TAG,
-    apply_usage_observability_tags,
-    insert_api_key_public_id_from_headers, overlay_compat_headers,
+    apply_usage_observability_tags, insert_api_key_public_id_from_headers, overlay_compat_headers,
 };
 use crate::rate_limiting::{RateLimitingManager, ScopeInfo};
 use crate::relay::TensorzeroRelay;
@@ -1346,30 +1345,43 @@ fn create_stream(
     let parent_span = tracing::Span::current();
 
     async_stream::stream! {
-        let mut buffer = vec![];
+        // Delta-AI fork: fold chunks into the aggregate collector as they
+        // arrive (first real chunk pins TTFT; content/usage fold
+        // incrementally) instead of buffering every chunk until the stream
+        // completes.
+        let mut collector = StreamCollector::new();
 
         // If previous model inferences (e.g. best-of-N candidates) had `raw_usage`, emit them immediately in an artificial chunk.
         if let Some(chunk) = create_previous_raw_usage_chunk(&metadata, &function) {
-            buffer.push(chunk.clone());
+            collector.push(chunk.clone());
             yield Ok(prepare_response_chunk(&metadata, chunk));
         }
 
         // If failed provider attempts (model-level fallback) had `raw_response`, emit them immediately in an artificial chunk.
         if let Some(chunk) = create_failed_raw_response_chunk(&metadata, &function) {
-            buffer.push(chunk.clone());
+            collector.push(chunk.clone());
             yield Ok(prepare_response_chunk(&metadata, chunk));
         }
 
         // If previous model inferences (e.g. best-of-N candidates) had `raw_response`, emit them immediately in an artificial chunk.
         if let Some(chunk) = create_previous_raw_response_chunk(&metadata, &function) {
-            buffer.push(chunk.clone());
+            collector.push(chunk.clone());
             yield Ok(prepare_response_chunk(&metadata, chunk));
         }
 
         // Then, send all chunks but strip usage and finish reason
-        let mut usages: Vec<Usage> = vec![];
+        // Delta-AI fork: fold usage per chunk instead of collecting a
+        // Vec<Usage> until the stream completes — the aggregation is the same
+        // running field-wise max either way.
+        let mut model_inference_usage = Usage::default();
         let mut finish_reasons: Vec<FinishReason> = vec![];
-        let mut cost_raw_chunks: Vec<String> = vec![];
+        // Delta-AI fork: absorb each raw chunk into a running per-pointer
+        // aggregate for post-loop cost computation, so the raw chunk strings
+        // don't accumulate in memory until the stream completes.
+        let mut cost_aggregate = metadata
+            .cost_config
+            .as_ref()
+            .map(StreamingCostAggregate::new);
         let mut inference_ttft = None;
         while let Some(chunk) = stream.next().await {
             let mut chunk = match chunk {
@@ -1385,15 +1397,17 @@ fn create_stream(
                 inference_ttft = Some(metadata.start_time.elapsed());
             }
 
-            // Collect raw chunks for post-loop cost computation (independent of usage presence,
+            // Absorb into the cost aggregate (independent of usage presence,
             // since cost pointers may resolve from non-usage chunks)
-            if !metadata.cached && metadata.cost_config.is_some() {
-                cost_raw_chunks.push(chunk.raw_chunk().to_string());
+            if !metadata.cached && let Some(aggregate) = cost_aggregate.as_mut() {
+                aggregate.absorb_raw_chunk(chunk.raw_chunk());
             }
 
             // Strip usage
             if let Some(u) = chunk.usage().copied() {
-                usages.push(u);
+                model_inference_usage = aggregate_usage_from_single_streaming_model_inference(
+                    [model_inference_usage, u],
+                );
                 chunk.set_usage(None);
             }
 
@@ -1403,7 +1417,16 @@ fn create_stream(
                 chunk.set_finish_reason(None);
             }
 
-            buffer.push(chunk.clone());
+            // Delta-AI fork: the folded copy only feeds observability
+            // storage, which builds a merged view of the stream — drop the
+            // raw chunk envelope so a second copy of every chunk isn't held
+            // until the stream completes. The chunk yielded to the client
+            // below still carries the full raw data.
+            let mut stored_chunk = chunk.clone();
+            if stored_chunk.provider_latency().is_some() {
+                stored_chunk.clear_raw_chunk();
+            }
+            collector.push(stored_chunk);
 
             // Stream chunk, unless we've stripped all useful information
             if should_stream_chunk_in_create_stream(&chunk, metadata.cached, metadata.include_original_response, metadata.include_raw_response, metadata.include_raw_usage) {
@@ -1417,18 +1440,9 @@ fn create_stream(
         }
         let finish_reason = finish_reasons.pop();
 
-        // If we saw multiple chunks with `usage`, compute the field-wise max and warn if they are non-cumulative
-        // This is the current model's usage (used for database storage)
-        let mut model_inference_usage = aggregate_usage_from_single_streaming_model_inference(usages);
-
-        // Compute cost from all collected raw chunks (handles both cumulative and split-usage providers)
-        if let Some(ref cost_config) = metadata.cost_config {
-            let chunk_refs: Vec<&str> = cost_raw_chunks.iter().map(|s| s.as_str()).collect();
-            apply_computed_cost_from_streaming_chunks(
-                &mut model_inference_usage,
-                &chunk_refs,
-                cost_config,
-            );
+        // Compute cost from the running aggregate (handles both cumulative and split-usage providers)
+        if let (Some(aggregate), Some(cost_config)) = (&cost_aggregate, metadata.cost_config.as_ref()) {
+            apply_computed_cost_from_aggregate(&mut model_inference_usage, aggregate, cost_config);
         }
 
         // Then add the usage from previous inferences (e.g. best-of-N candidates)
@@ -1439,10 +1453,10 @@ fn create_stream(
 
 
 
-        // Build the collect_chunks args before moving buffer and metadata fields
+        // Build the collect_chunks args before moving the collector and metadata fields
         let templates = Arc::clone(&config.templates);
         let collect_chunks_args = CollectChunksArgs {
-            value: buffer,
+            value: collector,
             inference_id: metadata.inference_id,
             episode_id: metadata.episode_id,
             system: metadata.system.clone(),

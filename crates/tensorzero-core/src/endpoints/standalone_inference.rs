@@ -13,8 +13,10 @@
 //! their own types instead of chat completions.
 //!
 //! Embedding vectors are not stored in `chat_inferences.output` (too large);
-//! we keep count/dimensions and put provider `raw_request` / `raw_response` on
-//! the model-inference row.
+//! we keep count/dimensions there and on the model-inference row's
+//! `raw_response` (Delta-AI fork: the provider response containing the
+//! vectors is not persisted — only the count/dimensions payload and the
+//! provider `raw_request`).
 
 use std::collections::HashMap;
 use std::sync::Arc;

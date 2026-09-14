@@ -104,18 +104,29 @@ pub fn compute_cost_at(
             message: format!("raw response is not valid JSON: {e}"),
         })
     })?;
+    let lookup = |pointer: &str| lookup_in_json(&json, pointer);
+    resolve_cost_entries(&lookup, cost_config, mode, clock)
+}
+
+/// Shared entry-resolution loop for all cost computation entry points
+/// (Delta-AI fork: extracted so the streaming aggregate can reuse it).
+fn resolve_cost_entries(
+    lookup: &impl Fn(&str) -> Result<Option<Decimal>, Error>,
+    cost_config: &CostConfig,
+    mode: ResponseMode,
+    clock: CostClock,
+) -> Result<(Cost, UsageOverrides), Error> {
     let mut total = Decimal::ZERO;
     let mut usage = UsageOverrides::default();
-    let lookup = |pointer: &str| lookup_in_json(&json, pointer);
 
     for entry in cost_config {
-        if should_skip(entry, &lookup)? {
+        if should_skip(entry, lookup)? {
             continue;
         }
         let pointers = pointers_for_mode(entry, mode);
-        match first_numeric(&lookup, pointers)? {
+        match first_numeric(lookup, pointers)? {
             Some(numeric) => {
-                apply_extracted_value(entry, numeric, clock, &lookup, &mut total, &mut usage)?;
+                apply_extracted_value(entry, numeric, clock, lookup, &mut total, &mut usage)?;
             }
             None => {
                 if entry.required {
@@ -153,27 +164,116 @@ pub fn compute_cost_from_streaming_chunks_at(
         .filter_map(|raw_chunk| serde_json::from_str(raw_chunk).ok())
         .collect();
     let lookup = |pointer: &str| max_numeric_in_values(&parsed_chunks, pointer);
-    let mut total = Decimal::ZERO;
-    let mut usage = UsageOverrides::default();
+    resolve_cost_entries(&lookup, cost_config, ResponseMode::Streaming, clock)
+}
 
-    for entry in cost_config {
-        if should_skip(entry, &lookup)? {
-            continue;
-        }
-        let pointers = pointers_for_mode(entry, ResponseMode::Streaming);
-        match first_numeric(&lookup, pointers)? {
-            Some(numeric) => {
-                apply_extracted_value(entry, numeric, clock, &lookup, &mut total, &mut usage)?;
+/// Delta-AI fork: running per-pointer aggregation for streaming cost computation.
+///
+/// [`compute_cost_from_streaming_chunks_at`] only ever queries the maximum
+/// numeric value at each JSON pointer across all chunks (plus per-pointer
+/// "resolved to a non-numeric value" errors). Aggregating that incrementally
+/// lets callers absorb each raw chunk as it arrives and drop the string,
+/// instead of accumulating the full raw stream until the request completes.
+#[derive(Clone, Debug, Default)]
+pub struct StreamingCostAggregate {
+    pointers: Vec<String>,
+    maxima: Vec<Option<Decimal>>,
+    /// Per-pointer sticky error: some chunk resolved the pointer to a
+    /// non-numeric value. Surfaced (only) when that pointer is queried,
+    /// matching `max_numeric_in_values`.
+    errors: Vec<Option<Error>>,
+}
+
+impl StreamingCostAggregate {
+    /// Builds an aggregate covering every pointer that streaming cost
+    /// resolution may query for this config: the streaming pointer lists,
+    /// `skip_if`, `tier_by`, and tier `when` conditions.
+    pub fn new(cost_config: &CostConfig) -> Self {
+        let mut pointers: Vec<String> = Vec::new();
+        let mut insert = |pointer: &str| {
+            if !pointer.is_empty() && !pointers.iter().any(|p| p == pointer) {
+                pointers.push(pointer.to_string());
             }
-            None => {
-                if entry.required {
-                    return Err(missing_required_pointer(pointers));
+        };
+        for entry in cost_config {
+            match &entry.pointer {
+                NormalizedCostPointerConfig::Unified { pointers } => {
+                    pointers.iter().for_each(|p| insert(p));
+                }
+                NormalizedCostPointerConfig::Split {
+                    pointer_streaming, ..
+                } => pointer_streaming.iter().for_each(|p| insert(p)),
+            }
+            for pointer in &entry.skip_if {
+                insert(pointer);
+            }
+            for pointer in &entry.tier_by {
+                insert(pointer);
+            }
+            for tier in &entry.tiers {
+                for condition in &tier.when {
+                    for pointer in &condition.pointers {
+                        insert(pointer);
+                    }
+                }
+            }
+        }
+        let len = pointers.len();
+        Self {
+            pointers,
+            maxima: vec![None; len],
+            errors: vec![None; len],
+        }
+    }
+
+    /// Folds one raw provider chunk into the aggregate. Non-JSON chunks are
+    /// ignored, matching the `filter_map(... .ok())` in
+    /// [`compute_cost_from_streaming_chunks_at`].
+    pub fn absorb_raw_chunk(&mut self, raw_chunk: &str) {
+        let Ok(value) = serde_json::from_str::<Value>(raw_chunk) else {
+            return;
+        };
+        for (index, pointer) in self.pointers.iter().enumerate() {
+            match lookup_in_json(&value, pointer) {
+                Ok(Some(numeric)) => {
+                    if self.maxima[index].is_none_or(|current| current < numeric) {
+                        self.maxima[index] = Some(numeric);
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    self.errors[index].get_or_insert(e);
                 }
             }
         }
     }
 
-    finalize_cost(total, usage)
+    /// Resolves a pointer to its running maximum, mirroring
+    /// `max_numeric_in_values` over the absorbed chunks.
+    pub fn lookup(&self, pointer: &str) -> Result<Option<Decimal>, Error> {
+        let Some(index) = self.pointers.iter().position(|p| p == pointer) else {
+            debug_assert!(
+                false,
+                "cost pointer `{pointer}` was not pre-aggregated by `StreamingCostAggregate::new`"
+            );
+            return Ok(None);
+        };
+        if let Some(error) = &self.errors[index] {
+            return Err(error.clone());
+        }
+        Ok(self.maxima[index])
+    }
+}
+
+/// Compute cost from a [`StreamingCostAggregate`] — equivalent to
+/// [`compute_cost_from_streaming_chunks_at`] over the absorbed chunks.
+pub fn compute_cost_from_aggregate_at(
+    aggregate: &StreamingCostAggregate,
+    cost_config: &CostConfig,
+    clock: CostClock,
+) -> Result<(Cost, UsageOverrides), Error> {
+    let lookup = |pointer: &str| aggregate.lookup(pointer);
+    resolve_cost_entries(&lookup, cost_config, ResponseMode::Streaming, clock)
 }
 
 /// Compute cost and overlay `usage = "..."` fields onto `usage`.
@@ -210,6 +310,22 @@ pub fn apply_computed_cost_from_streaming_chunks(
 ) {
     if let Ok((cost, overrides)) =
         compute_cost_from_streaming_chunks_at(raw_chunks, cost_config, CostClock::now())
+    {
+        usage.cost = Some(cost);
+        usage.currency = currency_of(cost_config);
+        overrides.apply_to(usage);
+    }
+}
+
+/// Delta-AI fork: like [`apply_computed_cost_from_streaming_chunks`], but over a
+/// [`StreamingCostAggregate`] maintained incrementally during streaming.
+pub fn apply_computed_cost_from_aggregate(
+    usage: &mut Usage,
+    aggregate: &StreamingCostAggregate,
+    cost_config: &CostConfig,
+) {
+    if let Ok((cost, overrides)) =
+        compute_cost_from_aggregate_at(aggregate, cost_config, CostClock::now())
     {
         usage.cost = Some(cost);
         usage.currency = currency_of(cost_config);
@@ -1649,7 +1765,11 @@ cost_per_million = 3.0
         let config = vec![
             unified_config("/usage/input_tokens", Decimal::from(3), true),
             unified_config("/usage/output_tokens", Decimal::from(15), false),
-            unified_config("/usage/input_tokens_details/cached_tokens", Decimal::from(1), false),
+            unified_config(
+                "/usage/input_tokens_details/cached_tokens",
+                Decimal::from(1),
+                false,
+            ),
         ];
         let chunks: Vec<&str> = vec![delta, completed];
         let cost = compute_cost_from_streaming_chunks(&chunks, &config)
@@ -2598,5 +2718,219 @@ tiers = [{ cost_per_million = 8 }]
             err.to_string().contains("invalid currency"),
             "error should mention invalid currency: {err}"
         );
+    }
+
+    // ========================================================================
+    // Delta-AI fork: streaming aggregate parity tests
+    // ========================================================================
+
+    fn assert_aggregate_parity(cost_config: &CostConfig, chunks: &[&str]) {
+        let clock = clock_rfc3339("2026-09-14T10:00:00Z");
+        let mut aggregate = StreamingCostAggregate::new(cost_config);
+        for chunk in chunks {
+            aggregate.absorb_raw_chunk(chunk);
+        }
+        let expected = compute_cost_from_streaming_chunks_at(chunks, cost_config, clock);
+        let actual = compute_cost_from_aggregate_at(&aggregate, cost_config, clock);
+        match (&expected, &actual) {
+            (Ok((expected_cost, expected_usage)), Ok((actual_cost, actual_usage))) => {
+                assert_eq!(
+                    expected_cost, actual_cost,
+                    "cost mismatch between chunk-list and aggregate computation"
+                );
+                assert_eq!(
+                    expected_usage, actual_usage,
+                    "usage mismatch between chunk-list and aggregate computation"
+                );
+            }
+            (Err(expected), Err(actual)) => {
+                assert_eq!(
+                    expected.to_string(),
+                    actual.to_string(),
+                    "error mismatch between chunk-list and aggregate computation"
+                );
+            }
+            _ => panic!("result shape mismatch: chunk-list={expected:?} aggregate={actual:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregate_parity_cumulative_usage_max() {
+        let config = load_cost_config(vec![UninitializedCostConfigEntry {
+            pointer: unified("/usage/input_tokens"),
+            rate: per_million(Decimal::from(3)),
+            required: true,
+            usage: None,
+            peak: None,
+            ..Default::default()
+        }])
+        .expect("should load");
+        // OpenAI-style cumulative usage: the max across chunks is the final value.
+        assert_aggregate_parity(
+            &config,
+            &[
+                r#"{"usage": {"input_tokens": 5}}"#,
+                r#"{"usage": {"input_tokens": 9}}"#,
+                r#"{"usage": {"input_tokens": 12}}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn aggregate_parity_split_pointers_and_usage_fields() {
+        let config = load_cost_config(vec![
+            UninitializedCostConfigEntry {
+                pointer: unified("/usage/prompt_cache_hit_tokens"),
+                rate: per_million(Decimal::from(1)),
+                required: false,
+                usage: Some(UsageField::CacheRead),
+                peak: None,
+                ..Default::default()
+            },
+            UninitializedCostConfigEntry {
+                pointer: split("/usage/prompt_tokens", "/usage/input_tokens"),
+                rate: per_million(Decimal::from(2)),
+                required: false,
+                usage: Some(UsageField::Input),
+                peak: None,
+                ..Default::default()
+            },
+        ])
+        .expect("should load");
+        // Anthropic-style split usage: different pointers resolve in different chunks.
+        assert_aggregate_parity(
+            &config,
+            &[
+                r#"{"usage": {"input_tokens": 100}}"#,
+                r#"{"usage": {"prompt_cache_hit_tokens": 40}}"#,
+                r#"{"usage": {"prompt_cache_hit_tokens": 40, "input_tokens": 100}}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn aggregate_parity_skip_if_pointer() {
+        let config = load_cost_config(vec![UninitializedCostConfigEntry {
+            pointer: unified("/usage/output_tokens"),
+            rate: per_million(Decimal::from(4)),
+            required: false,
+            usage: None,
+            peak: None,
+            ..UninitializedCostConfigEntry {
+                skip_if_pointer: Some(PointerList::one("/audio/output_tokens")),
+                ..Default::default()
+            }
+        }])
+        .expect("should load");
+        // One chunk flips the skip condition; both computations must skip.
+        assert_aggregate_parity(
+            &config,
+            &[
+                r#"{"usage": {"output_tokens": 50}}"#,
+                r#"{"audio": {"output_tokens": 30}}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn aggregate_parity_tier_bucket_with_when_and_tier_by() {
+        let config = load_cost_config(vec![UninitializedCostConfigEntry {
+            pointer: unified("/usage/output_tokens"),
+            rate: UninitializedCostRate::default(),
+            required: false,
+            usage: None,
+            peak: None,
+            tier_mode: TierMode::Bucket,
+            tier_by: Some(PointerList::one("/usage/input_tokens")),
+            tiers: vec![
+                UninitializedCostTier {
+                    up_to: Some(1000),
+                    when: vec![UninitializedTierWhen {
+                        pointer: PointerList::one("/usage/cache_hit_tokens"),
+                        up_to: 500,
+                    }],
+                    rate: per_million(Decimal::from(2)),
+                },
+                UninitializedCostTier {
+                    up_to: None,
+                    when: vec![],
+                    rate: per_million(Decimal::from(4)),
+                },
+            ],
+            ..Default::default()
+        }])
+        .expect("should load");
+        assert_aggregate_parity(
+            &config,
+            &[
+                r#"{"usage": {"input_tokens": 800, "output_tokens": 30}}"#,
+                r#"{"usage": {"cache_hit_tokens": 300, "output_tokens": 30}}"#,
+            ],
+        );
+        assert_aggregate_parity(
+            &config,
+            &[
+                r#"{"usage": {"input_tokens": 2000, "output_tokens": 30}}"#,
+                r#"{"usage": {"cache_hit_tokens": 900, "output_tokens": 30}}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn aggregate_parity_non_numeric_pointer_errors() {
+        let config = load_cost_config(vec![UninitializedCostConfigEntry {
+            pointer: unified("/usage/input_tokens"),
+            rate: per_million(Decimal::from(3)),
+            required: true,
+            usage: None,
+            peak: None,
+            ..Default::default()
+        }])
+        .expect("should load");
+        // A non-numeric value at the pointer must fail both paths identically.
+        assert_aggregate_parity(
+            &config,
+            &[
+                r#"{"usage": {"input_tokens": 5}}"#,
+                r#"{"usage": {"input_tokens": "not-a-number"}}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn aggregate_parity_drops_invalid_json_and_response_wrapper() {
+        let config = load_cost_config(vec![UninitializedCostConfigEntry {
+            pointer: unified("/usage/input_tokens"),
+            rate: per_million(Decimal::from(3)),
+            required: true,
+            usage: None,
+            peak: None,
+            ..Default::default()
+        }])
+        .expect("should load");
+        // Invalid JSON chunks are ignored; Responses-API frames wrap usage
+        // under a top-level `response` key.
+        assert_aggregate_parity(
+            &config,
+            &[
+                "{not json at all",
+                r#"{"response": {"usage": {"input_tokens": 7}}}"#,
+            ],
+        );
+    }
+
+    #[test]
+    fn aggregate_parity_empty_and_missing_required() {
+        let config = load_cost_config(vec![UninitializedCostConfigEntry {
+            pointer: unified("/usage/input_tokens"),
+            rate: per_million(Decimal::from(3)),
+            required: true,
+            usage: None,
+            peak: None,
+            ..Default::default()
+        }])
+        .expect("should load");
+        assert_aggregate_parity(&config, &[]);
+        assert_aggregate_parity(&config, &[r#"{"usage": {}}"#]);
     }
 }

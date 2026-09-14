@@ -172,7 +172,10 @@ pub async fn embeddings(
             },
             output_text: embedding_output_payload(&response.embeddings),
             raw_request: response.raw_request.clone(),
-            raw_response: response.raw_response.clone(),
+            // Delta-AI fork: embedding vectors dominated stored bytes without
+            // observability value — store only count/dimensions metadata
+            // instead of the provider response (which contains the vectors).
+            raw_response: embedding_output_payload(&response.embeddings),
             usage: response.usage,
             latency: response.latency,
             cached: response.cached,
