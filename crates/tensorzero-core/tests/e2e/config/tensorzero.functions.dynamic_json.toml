@@ -4,10 +4,6 @@ type = "json"
 system_schema = "../../../fixtures/config/functions/dynamic_json/system_schema.json"
 user_schema = "../../../fixtures/config/functions/dynamic_json/user_schema.json"
 
-[functions.dynamic_json.experimentation]
-type = "static"
-candidate_variants = { "test" = 1.0 }
-
 [functions.dynamic_json.variants.test]
 type = "chat_completion"
 model = "json"

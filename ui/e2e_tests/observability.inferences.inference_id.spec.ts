@@ -3,7 +3,6 @@ import {
   installClipboardMock,
   readMockClipboard,
 } from "./helpers/clipboard-helpers";
-import { createDatapointFromInference } from "./helpers/datapoint-helpers";
 
 test("should show the inference detail page", async ({ page }) => {
   const inference_id = "0196367a-842d-74c2-9e62-67e058632503";
@@ -111,56 +110,6 @@ test("should display inferences with old image content", async ({ page }) => {
   await expect(secondNewImage).toBeVisible();
   await expect(thirdNewImage).toBeVisible();
   await expect(fourthNewImage).toBeVisible();
-});
-
-test("tag navigation works by evaluation_run_id", async ({ page }) => {
-  await page.goto(
-    "/observability/inferences/0196368f-1b05-7181-b50c-e2ea0acea312",
-  );
-
-  // Wait for page to load
-  await page.waitForLoadState("networkidle");
-
-  // Find the evaluation_run_id tag value and click it
-  const evaluationRunIdCell = page
-    .locator("span")
-    .filter({ hasText: /^0196368f-19bd-7082-a677-1c0bf346ff24$/ })
-    .first();
-
-  // Wait for the element to be visible
-  await evaluationRunIdCell.waitFor({ state: "visible" });
-
-  // Click the element
-  await evaluationRunIdCell.click();
-
-  // Assert that the page navigates to the evaluation runs page
-  await expect(page).toHaveURL(
-    "/evaluations/runs?evaluation_run_ids=0196368f-19bd-7082-a677-1c0bf346ff24",
-  );
-});
-
-test("tag navigation works by datapoint_id", async ({ page }) => {
-  await page.goto(
-    "/observability/inferences/0196368f-1ae7-7e21-9027-f120f73d8ce0",
-  );
-
-  // Wait for page to load completely
-  await page.waitForLoadState("networkidle");
-
-  // Use a more specific selector and ensure it's visible before clicking
-  const datapointElement = page.getByText("tensorzero::datapoint_id");
-  await datapointElement.waitFor({ state: "visible" });
-
-  // Force the click to ensure it happens correctly
-  await datapointElement.click({ force: true });
-
-  // Wait for navigation to complete
-  await page.waitForURL("**/datasets/foo/datapoint/**");
-
-  // Assert the URL
-  await expect(page).toHaveURL(
-    "/datasets/foo/datapoint/01936b20-e838-7322-956f-cd5a5d56f5fa",
-  );
 });
 
 test("should be able to add float feedback via the inference page", async ({
@@ -519,61 +468,6 @@ test.describe("should navigate to inference from Try with X modal and verify tag
       await expect(uiTagValue).toBeVisible();
     });
   });
-});
-
-test("should be able to add a datapoint from the inference page", async ({
-  page,
-}) => {
-  // NOTE: this datapoint has auxiliary_content as "" so was failing to insert into dataset
-  // We want to make sure that we can add it to a dataset now that we've fixed that issue.
-  // Create a new datapoint from an inference
-  const datasetName = await createDatapointFromInference(page, {
-    inferenceId: "0196368f-1ae8-7551-b5df-9a61593eb307", // `extract_entities`
-  });
-
-  // Assert that the page URL starts with /datasets/test_json_dataset/datapoint/
-  expect(page.url()).toMatch(
-    new RegExp(`/datasets/${datasetName}/datapoint/.*`),
-  );
-
-  // Verify we can see the datapoint page loaded (breadcrumb shows "Datapoints")
-  await expect(
-    page
-      .getByRole("navigation", { name: "breadcrumb" })
-      .getByText("Datapoints", { exact: true }),
-  ).toBeVisible();
-
-  // Clean up: delete the dataset by going to the list datasets page
-  await page.goto("/datasets");
-  // Wait for the page to load
-  await page.waitForLoadState("networkidle");
-
-  // Find the row containing our dataset
-  const datasetRow = page.locator("tr").filter({ hasText: datasetName });
-
-  // Hover over the row to make the delete button visible
-  await datasetRow.hover();
-
-  // Click on the delete button (trash icon)
-  const deleteButton = datasetRow
-    .locator("button")
-    .filter({ has: page.locator("svg") });
-  await deleteButton.click();
-
-  // Wait for the shadcn dialog to appear and click the Delete button
-  const dialog = page.getByRole("alertdialog");
-  await dialog.waitFor({ state: "visible" });
-
-  // Click the destructive "Delete" button in the dialog
-  await dialog.getByRole("button", { name: /Delete/ }).click();
-
-  // Wait for the deletion to complete and page to update
-  await page.waitForTimeout(1000);
-
-  // Assert that the dataset name is not in the list of datasets anymore
-  await expect(
-    page.locator("tr").filter({ hasText: datasetName }),
-  ).not.toBeVisible();
 });
 
 test("should load an inference page with a tool call", async ({ page }) => {

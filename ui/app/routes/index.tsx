@@ -8,12 +8,8 @@ import {
   Inferences,
   Episodes,
   Functions,
-  SupervisedFineTuning,
   GitHub,
   Documentation,
-  Dataset,
-  GridCheck,
-  SequenceChecks,
   Playground,
   Model,
 } from "~/components/icons/Icons";
@@ -23,7 +19,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "~/components/ui/tooltip";
-import { getConfig, getAllFunctionConfigs } from "~/utils/config/index.server";
+import { getAllFunctionConfigs } from "~/utils/config/index.server";
 import type { Route } from "./+types/index";
 import { getTensorZeroClient } from "~/utils/tensorzero.server";
 import { getErrorDetails } from "~/utils/tensorzero/errors";
@@ -128,13 +124,6 @@ export async function loader() {
 
   const countsInfoPromise = httpClient.listFunctionsWithInferenceCount();
   const episodesPromise = httpClient.queryEpisodeTableBounds();
-  const datasetMetadataPromise = httpClient.listDatasets({});
-  const numEvaluationRunsPromise = httpClient.countEvaluationRuns();
-  const numWorkflowEvaluationRunsPromise =
-    httpClient.countWorkflowEvaluationRuns();
-  const numWorkflowEvaluationRunProjectsPromise =
-    httpClient.countWorkflowEvaluationProjects();
-  const configPromise = getConfig();
   const functionConfigsPromise = getAllFunctionConfigs();
   const numModelsUsedPromise = httpClient
     .countDistinctModelsUsed()
@@ -169,23 +158,6 @@ export async function loader() {
     result.count != null ? `${result.count.toLocaleString()} episodes` : "—",
   );
 
-  const numDatasetsDesc = datasetMetadataPromise.then(
-    (datasets) => `${datasets.datasets.length} datasets`,
-  );
-
-  const inferenceEvaluationsDesc = Promise.all([
-    configPromise,
-    numEvaluationRunsPromise,
-  ]).then(([config, runs]) => {
-    const numEvaluations = Object.keys(config.evaluations || {}).length;
-    return `${numEvaluations} evaluations, ${runs} runs`;
-  });
-
-  const dynamicEvaluationsDesc = Promise.all([
-    numWorkflowEvaluationRunProjectsPromise,
-    numWorkflowEvaluationRunsPromise,
-  ]).then(([projects, runs]) => `${projects} projects, ${runs} runs`);
-
   const numModelsUsedDesc = numModelsUsedPromise.then(
     (numModelsUsed) => `${numModelsUsed} models used`,
   );
@@ -195,9 +167,6 @@ export async function loader() {
     numFunctionsDesc,
     numVariantsDesc,
     numEpisodesDesc,
-    numDatasetsDesc,
-    inferenceEvaluationsDesc,
-    dynamicEvaluationsDesc,
     numModelsUsedDesc,
   };
 }
@@ -208,9 +177,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     numFunctionsDesc,
     numVariantsDesc,
     numEpisodesDesc,
-    numDatasetsDesc,
-    inferenceEvaluationsDesc,
-    dynamicEvaluationsDesc,
     numModelsUsedDesc,
   } = loaderData;
 
@@ -258,45 +224,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             </div>
           </div>
 
-          <div className="flex w-full flex-col gap-12 lg:gap-6">
-            <div id="evaluations" className="flex w-full flex-col gap-2">
-              <h2 className="text-md text-fg-secondary font-medium">
-                Evaluations
-              </h2>
-              <div className="flex flex-col gap-2">
-                <DirectoryCard
-                  source="/evaluations"
-                  icon={GridCheck}
-                  title="Inference Evaluations"
-                  description={inferenceEvaluationsDesc}
-                />
-                <DirectoryCard
-                  source="/workflow-evaluations"
-                  icon={SequenceChecks}
-                  title="Workflow Evaluations"
-                  description={dynamicEvaluationsDesc}
-                />
-              </div>
-            </div>
-
-            <div
-              id="optimization"
-              className="mt-auto flex w-full flex-col gap-2"
-            >
-              <h2 className="text-md text-fg-secondary font-medium">
-                Optimization
-              </h2>
-              <div className="flex flex-col gap-2">
-                <DirectoryCard
-                  source="/optimization/supervised-fine-tuning"
-                  icon={SupervisedFineTuning}
-                  title="Supervised Fine-tuning"
-                  description={numFunctionsDesc}
-                />
-              </div>
-            </div>
-          </div>
-
           <div id="resources" className="flex w-full flex-col gap-2">
             <h2 className="text-md text-fg-secondary font-medium">Resources</h2>
             <div className="flex flex-col gap-2">
@@ -305,12 +232,6 @@ export default function Home({ loaderData }: Route.ComponentProps) {
                 icon={Playground}
                 title="Playground"
                 description={numVariantsDesc}
-              />
-              <DirectoryCard
-                source="/datasets"
-                icon={Dataset}
-                title="Datasets"
-                description={numDatasetsDesc}
               />
               <DirectoryCard
                 source="/api-keys"

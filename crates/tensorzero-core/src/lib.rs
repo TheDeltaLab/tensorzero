@@ -12,8 +12,6 @@ pub mod db;
 pub mod embeddings; // embedding inference
 pub mod endpoints; // API endpoints
 pub mod error; // error handling
-pub mod evaluations; // evaluation
-pub mod experimentation;
 pub mod feature_flags;
 pub mod function; // types and methods for working with TensorZero functions
 pub mod howdy;
@@ -25,7 +23,6 @@ pub mod model; // types and methods for working with TensorZero-supported models
 pub mod model_alias;
 pub mod model_table;
 pub mod observability; // utilities for observability (logs, metrics, etc.)
-pub mod optimization;
 pub mod rate_limiting; // utilities for rate limiting
 pub mod relay;
 pub mod serde_util; // utilities for working with serde

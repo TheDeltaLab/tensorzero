@@ -11,11 +11,10 @@ use tensorzero_core::config::{
     MetricConfig, MetricConfigLevel, MetricConfigOptimize, MetricConfigType,
 };
 use tensorzero_core::db::TimeWindow;
-use tensorzero_core::db::evaluation_queries::EvaluationQueries;
 use tensorzero_core::db::feedback::{
     BooleanMetricFeedbackInsert, CommentFeedbackInsert, CommentTargetType,
     DemonstrationFeedbackInsert, FeedbackQueries, FeedbackRow, FloatMetricFeedbackInsert,
-    GetVariantPerformanceParams, StaticEvaluationHumanFeedbackInsert,
+    GetVariantPerformanceParams,
 };
 use tensorzero_core::db::test_helpers::TestDatabaseHelpers;
 use tensorzero_core::function::FunctionConfigType;
@@ -1136,103 +1135,6 @@ async fn test_insert_demonstration_feedback(conn: impl FeedbackQueries + TestDat
     assert!(found, "Should find the inserted demonstration feedback");
 }
 make_db_test!(test_insert_demonstration_feedback);
-
-async fn test_insert_static_eval_feedback(
-    conn: impl FeedbackQueries + EvaluationQueries + TestDatabaseHelpers,
-) {
-    let feedback_id = Uuid::now_v7();
-    let datapoint_id = Uuid::now_v7();
-    let evaluator_inference_id = Uuid::now_v7();
-    let metric_name = format!("e2e_test_quality_{feedback_id}");
-    let output = format!("Test output for static evaluation {feedback_id}");
-
-    let insert = StaticEvaluationHumanFeedbackInsert {
-        feedback_id,
-        metric_name: metric_name.clone(),
-        datapoint_id,
-        output: output.clone(),
-        value: "0.95".to_string(),
-        evaluator_inference_id: Some(evaluator_inference_id),
-    };
-
-    // Insert should succeed
-    conn.insert_static_eval_feedback(&insert)
-        .await
-        .expect("Static eval feedback insert should succeed");
-
-    conn.sleep_for_writes_to_be_visible().await;
-
-    // Read back the feedback using evaluation queries
-    let feedback = conn
-        .get_inference_evaluation_human_feedback(&metric_name, &datapoint_id, &output)
-        .await
-        .expect("Query should succeed");
-
-    assert!(
-        feedback.is_some(),
-        "Should find the inserted static eval feedback"
-    );
-    let feedback = feedback.unwrap();
-    assert_eq!(
-        feedback.value,
-        serde_json::json!(0.95),
-        "Value should match"
-    );
-    assert_eq!(
-        feedback.evaluator_inference_id, evaluator_inference_id,
-        "Evaluator inference ID should match"
-    );
-}
-make_db_test!(test_insert_static_eval_feedback);
-
-async fn test_insert_static_eval_feedback_without_evaluator_inference_id(
-    conn: impl FeedbackQueries + EvaluationQueries + TestDatabaseHelpers,
-) {
-    let feedback_id = Uuid::now_v7();
-    let datapoint_id = Uuid::now_v7();
-    let metric_name = format!("e2e_test_quality_no_evaluator_{feedback_id}");
-    let output = format!("Test output without evaluator {feedback_id}");
-
-    let insert = StaticEvaluationHumanFeedbackInsert {
-        feedback_id,
-        metric_name: metric_name.clone(),
-        datapoint_id,
-        output: output.clone(),
-        value: "true".to_string(),
-        evaluator_inference_id: None,
-    };
-
-    // Insert should succeed
-    conn.insert_static_eval_feedback(&insert)
-        .await
-        .expect("Static eval feedback insert without evaluator_inference_id should succeed");
-
-    conn.sleep_for_writes_to_be_visible().await;
-
-    // Read back the feedback using evaluation queries
-    let feedback = conn
-        .get_inference_evaluation_human_feedback(&metric_name, &datapoint_id, &output)
-        .await
-        .expect("Query should succeed");
-
-    assert!(
-        feedback.is_some(),
-        "Should find the inserted static eval feedback"
-    );
-    let feedback = feedback.unwrap();
-    assert_eq!(
-        feedback.value,
-        serde_json::json!(true),
-        "Value should match"
-    );
-    // When evaluator_inference_id is not provided, ClickHouse uses default zero UUID
-    assert_eq!(
-        feedback.evaluator_inference_id,
-        Uuid::nil(),
-        "Evaluator inference ID should be nil UUID when not provided"
-    );
-}
-make_db_test!(test_insert_static_eval_feedback_without_evaluator_inference_id);
 
 /// Tests that `get_variant_performances` returns only the latest feedback per inference
 /// when there are multiple feedbacks for the same inference (deduplication via DISTINCT ON).

@@ -29,11 +29,6 @@ export async function loader({
     const modelInferencesPromise = client
       .getModelInferences(inference_id)
       .then((response) => resolveModelInferences(response.model_inferences));
-    const demonstrationFeedbackPromise = client.getDemonstrationFeedback(
-      inference_id,
-      { limit: 1 },
-    );
-
     // If there is a freshly inserted feedback, ClickHouse may take some time to
     // update the feedback table and materialized views as it is eventually consistent.
     // In this case, we poll for the feedback item until it is found.
@@ -45,7 +40,6 @@ export async function loader({
 
     let inferences,
       model_inferences,
-      demonstration_feedback,
       feedback_bounds,
       feedback,
       latestFeedbackByMetric;
@@ -53,13 +47,11 @@ export async function loader({
     if (newFeedbackId) {
       // When there's new feedback, wait for polling to complete before querying
       // feedbackBounds and latestFeedbackByMetric to ensure ClickHouse materialized views are updated
-      [inferences, model_inferences, demonstration_feedback, feedback] =
-        await Promise.all([
-          inferencesPromise,
-          modelInferencesPromise,
-          demonstrationFeedbackPromise,
-          feedbackDataPromise,
-        ]);
+      [inferences, model_inferences, feedback] = await Promise.all([
+        inferencesPromise,
+        modelInferencesPromise,
+        feedbackDataPromise,
+      ]);
 
       // Query these after polling completes to avoid race condition with materialized views
       [feedback_bounds, latestFeedbackByMetric] = await Promise.all([
@@ -71,14 +63,12 @@ export async function loader({
       [
         inferences,
         model_inferences,
-        demonstration_feedback,
         feedback_bounds,
         feedback,
         latestFeedbackByMetric,
       ] = await Promise.all([
         inferencesPromise,
         modelInferencesPromise,
-        demonstrationFeedbackPromise,
         client.getFeedbackBoundsByTargetId(inference_id),
         feedbackDataPromise,
         client.getLatestFeedbackIdByMetric(inference_id),
@@ -107,7 +97,6 @@ export async function loader({
       model_inferences,
       feedback,
       feedback_bounds,
-      hasDemonstration: demonstration_feedback.length > 0,
       latestFeedbackByMetric,
       usedVariants,
     };

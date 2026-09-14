@@ -1,7 +1,7 @@
 use serde_json::Value;
 
 use crate::{
-    StoredAutopilotConfig, StoredClickHouseConfig, StoredEmbeddingModelConfig,
+    StoredClickHouseConfig, StoredEmbeddingModelConfig,
     StoredEvaluationConfig, StoredFunctionConfig, StoredGatewayConfig, StoredMetricConfig,
     StoredModelConfig, StoredOptimizerConfig, StoredPostgresConfig, StoredProviderTypesConfig,
     StoredRateLimitingConfig, StoredStorageKind, StoredToolConfig, StoredVariantVersionConfig,
@@ -165,18 +165,6 @@ pub fn deserialize_rate_limiting_config(
 ) -> Result<StoredRateLimitingConfig, SchemaDispatchError> {
     dispatch_schema(
         "rate_limiting_config",
-        schema_revision,
-        value,
-        &[(1, &|v| serde_json::from_value(v))],
-    )
-}
-
-pub fn deserialize_autopilot_config(
-    schema_revision: i32,
-    value: Value,
-) -> Result<StoredAutopilotConfig, SchemaDispatchError> {
-    dispatch_schema(
-        "autopilot_config",
         schema_revision,
         value,
         &[(1, &|v| serde_json::from_value(v))],

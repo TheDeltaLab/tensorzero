@@ -5,10 +5,6 @@ use uuid::Uuid;
 use crate::config::Config;
 use crate::config::MetricConfigLevel;
 use crate::config::snapshot::{ConfigSnapshot, SnapshotHash};
-use crate::db::datasets::{
-    DatasetMetadata, DatasetQueries, GetDatapointParams, GetDatapointsParams,
-    GetDatasetMetadataParams, MockDatasetQueries,
-};
 use crate::db::feedback::{
     BooleanMetricFeedbackInsert, CommentFeedbackInsert, CumulativeFeedbackTimeSeriesPoint,
     DemonstrationFeedbackInsert, DemonstrationFeedbackRow, FeedbackBounds, FeedbackByVariant,
@@ -24,7 +20,6 @@ use crate::db::inferences::{
 };
 use crate::db::model_inferences::{MockModelInferenceQueries, ModelInferenceQueries};
 use crate::db::resolve_uuid::{ResolveUuidQueries, ResolvedObject};
-use crate::db::stored_datapoint::StoredDatapoint;
 use crate::db::{
     CacheStatisticsTimePoint, ConfigQueries, MockConfigQueries, ModelLatencyDatapoint,
     ModelUsageTimePoint, TimeWindow, VariantUsageTimePoint,
@@ -49,7 +44,6 @@ use serde_json::Value;
 /// ```
 pub(crate) struct MockClickHouseConnectionInfo {
     pub(crate) inference_queries: MockInferenceQueries,
-    pub(crate) dataset_queries: MockDatasetQueries,
     pub(crate) config_queries: MockConfigQueries,
     pub(crate) model_inference_queries: MockModelInferenceQueries,
     pub(crate) feedback_queries: MockFeedbackQueries,
@@ -59,7 +53,6 @@ impl MockClickHouseConnectionInfo {
     pub fn new() -> Self {
         Self {
             inference_queries: MockInferenceQueries::new(),
-            dataset_queries: MockDatasetQueries::new(),
             config_queries: MockConfigQueries::new(),
             model_inference_queries: MockModelInferenceQueries::new(),
             feedback_queries: MockFeedbackQueries::new(),
@@ -186,61 +179,6 @@ impl InferenceQueries for MockClickHouseConnectionInfo {
     }
 }
 
-#[async_trait]
-impl DatasetQueries for MockClickHouseConnectionInfo {
-    async fn get_dataset_metadata(
-        &self,
-        params: &GetDatasetMetadataParams,
-    ) -> Result<Vec<DatasetMetadata>, Error> {
-        self.dataset_queries.get_dataset_metadata(params).await
-    }
-
-    async fn insert_datapoints(&self, datapoints: &[StoredDatapoint]) -> Result<u64, Error> {
-        self.dataset_queries.insert_datapoints(datapoints).await
-    }
-
-    async fn count_datapoints_for_dataset(
-        &self,
-        dataset_name: &str,
-        function_name: Option<&str>,
-    ) -> Result<u64, Error> {
-        self.dataset_queries
-            .count_datapoints_for_dataset(dataset_name, function_name)
-            .await
-    }
-
-    async fn get_datapoint(&self, params: &GetDatapointParams) -> Result<StoredDatapoint, Error> {
-        self.dataset_queries.get_datapoint(params).await
-    }
-
-    async fn get_datapoints(
-        &self,
-        params: &GetDatapointsParams,
-    ) -> Result<Vec<StoredDatapoint>, Error> {
-        self.dataset_queries.get_datapoints(params).await
-    }
-
-    async fn delete_datapoints(
-        &self,
-        dataset_name: &str,
-        datapoint_ids: Option<&[Uuid]>,
-    ) -> Result<u64, Error> {
-        self.dataset_queries
-            .delete_datapoints(dataset_name, datapoint_ids)
-            .await
-    }
-
-    async fn clone_datapoints(
-        &self,
-        target_dataset_name: &str,
-        source_datapoint_ids: &[Uuid],
-        id_mappings: &std::collections::HashMap<Uuid, Uuid>,
-    ) -> Result<Vec<Option<Uuid>>, Error> {
-        self.dataset_queries
-            .clone_datapoints(target_dataset_name, source_datapoint_ids, id_mappings)
-            .await
-    }
-}
 
 #[async_trait]
 impl ConfigQueries for MockClickHouseConnectionInfo {

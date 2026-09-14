@@ -3,31 +3,13 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use evaluations::RunInfo;
-use evaluations::sse_events::{
-    EvaluationRunEvent, EvaluationRunStartEvent, EvaluationRunSuccessEvent,
-};
-use evaluations::stats::{EvaluationError, EvaluationInfo, EvaluationUpdate};
 use tensorzero_core::config::UninitializedConfig;
-use tensorzero_core::config::UninitializedVariantInfo;
 use tensorzero_core::config::snapshot::ConfigSnapshot;
 use tensorzero_core::db::ConfigQueries;
 use tensorzero_core::db::HealthCheckable;
-use tensorzero_core::db::delegating_connection::DelegatingDatabaseQueries;
 use tensorzero_core::endpoints::stored_inferences::render_samples;
-use tensorzero_core::endpoints::validate_tags;
-use tensorzero_core::endpoints::workflow_evaluation_run::{
-    WorkflowEvaluationRunEpisodeParams, WorkflowEvaluationRunEpisodeResponse,
-};
 use tensorzero_core::error::{Error, ErrorDetails};
-use tensorzero_core::evaluations::EvaluationConfig;
-use tensorzero_core::http::TensorZeroEventSource;
 use tensorzero_core::stored_inference::StoredSample;
-use tensorzero_optimizers::endpoints::{
-    launch_optimization, launch_optimization_workflow, poll_optimization,
-};
-use tokio::sync::mpsc;
-use tokio_stream::StreamExt;
 use uuid::Uuid;
 
 // Re-export the core client from tensorzero-core
@@ -46,12 +28,6 @@ pub use tensorzero_core::client::{
 
 // Async inference client types (Delta-AI fork: `POST .../async` submit,
 // `GET /v1/async_tasks/{task_id}` status and SSE stream)
-pub use tensorzero_core::client::{
-    AsyncTaskEventStream, AsyncTaskStreamEvent, AsyncTaskWaitOptions,
-};
-pub use tensorzero_core::endpoints::openai_compatible::async_inference_types::{
-    AsyncInferenceApiKind, AsyncInferenceLaunchResponse, AsyncTaskStatusResponse,
-};
 pub use tensorzero_core::endpoints::status::StatusResponse;
 
 // Client input types
@@ -70,27 +46,9 @@ pub use tensorzero_core::db::clickhouse::query_builder::{
     OrderByTerm, OrderDirection, TagComparisonOperator, TagFilter, TimeComparisonOperator,
     TimeFilter,
 };
-pub use tensorzero_core::db::datasets::{
-    DatasetQueries, GetDatapointParams, GetDatapointsParams, GetDatasetMetadataParams,
-};
 pub use tensorzero_core::db::inferences::{InferenceOutputSource, ListInferencesParams};
-pub use tensorzero_core::db::stored_datapoint::{
-    StoredChatInferenceDatapoint, StoredDatapoint, StoredJsonInferenceDatapoint,
-};
 pub use tensorzero_core::db::{
     ClickHouseConnection, EpisodeByIdRow, ModelUsageTimePoint, TableBoundsWithCount, TimeWindow,
-};
-pub use tensorzero_core::endpoints::datasets::v1::types::{
-    CreateChatDatapointRequest, CreateDatapointRequest, CreateDatapointsFromInferenceRequest,
-    CreateDatapointsFromInferenceRequestParams, CreateDatapointsRequest, CreateDatapointsResponse,
-    CreateJsonDatapointRequest, DatasetMetadata, DeleteDatapointsRequest, DeleteDatapointsResponse,
-    GetDatapointsRequest, GetDatapointsResponse, JsonDatapointOutputUpdate, ListDatapointsRequest,
-    ListDatasetsRequest, ListDatasetsResponse, UpdateChatDatapointRequest,
-    UpdateDatapointMetadataRequest, UpdateDatapointRequest, UpdateDatapointsMetadataRequest,
-    UpdateDatapointsRequest, UpdateDatapointsResponse, UpdateJsonDatapointRequest,
-};
-pub use tensorzero_core::endpoints::datasets::{
-    ChatInferenceDatapoint, Datapoint, DatapointKind, JsonInferenceDatapoint,
 };
 pub use tensorzero_core::endpoints::episodes::internal::{
     ListEpisodesParams, ListEpisodesRequest, ListEpisodesResponse,
@@ -108,21 +66,11 @@ pub use tensorzero_core::endpoints::object_storage::ObjectResponse;
 pub use tensorzero_core::endpoints::stored_inferences::v1::types::{
     GetInferencesRequest, GetInferencesResponse, ListInferencesRequest,
 };
-pub use tensorzero_core::endpoints::variant_probabilities::{
-    GetVariantSamplingProbabilitiesParams, GetVariantSamplingProbabilitiesResponse,
-};
-pub use tensorzero_core::endpoints::workflow_evaluation_run::{
-    WorkflowEvaluationRunParams, WorkflowEvaluationRunResponse,
-};
 pub use tensorzero_core::inference::types::storage::{StorageKind, StoragePath};
 pub use tensorzero_core::inference::types::{
     Base64File, ContentBlockChunk, File, ObjectStoragePointer, Role, System, Unknown, UnknownChunk,
     UrlFile, Usage,
 };
-pub use tensorzero_core::optimization::gepa::{
-    GepaEvaluatorStats, GepaGetResponse, GepaLaunchRequest, GepaLaunchResponse, GepaProgress,
-};
-pub use tensorzero_core::optimization::{OptimizationJobHandle, OptimizationJobInfo};
 pub use tensorzero_core::stored_inference::{
     RenderedSample, StoredChatInference, StoredChatInferenceDatabase, StoredInference,
     StoredInferenceDatabase, StoredJsonInference,
@@ -135,11 +83,6 @@ pub use tensorzero_inference_types::tool::{DynamicToolParams, FunctionTool, Tool
 pub use tensorzero_core::db::clickhouse::migration_manager::migrations::migration_0037::QUANTILES;
 
 // Re-export optimization types from tensorzero-optimizers
-pub use tensorzero_optimizers::endpoints::{
-    DatasetDataSource, InferencesDataSource, LaunchOptimizationParams,
-    LaunchOptimizationWorkflowParams, OptimizationDataSource,
-};
-
 #[cfg(feature = "e2e_tests")]
 pub mod test_helpers;
 
@@ -147,69 +90,24 @@ pub mod test_helpers;
 #[cfg(feature = "pyo3")]
 pub use tensorzero_core::observability;
 
-/// Identifies the evaluation to run over HTTP.
-/// Mirrors the gateway's `EvaluationIdentifier` untagged enum for serialization.
-#[derive(Debug, serde::Serialize)]
-#[serde(untagged)]
-pub enum HttpEvaluationIdentifier {
-    /// Named evaluation resolved from gateway config.
-    NamedEvaluation { evaluation_name: String },
-    /// Named evaluators resolved from gateway config.
-    Evaluators {
-        function_name: String,
-        evaluator_names: Vec<String>,
-    },
-}
 
-/// Parameters for running an evaluation over HTTP via the SSE endpoint.
-#[derive(Debug, serde::Serialize)]
-pub struct RunEvaluationHttpParams {
-    #[serde(flatten)]
-    pub identifier: HttpEvaluationIdentifier,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dataset_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub datapoint_ids: Option<Vec<Uuid>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub variant_name: Option<String>,
-    pub concurrency: u32,
-    pub inference_cache: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub internal_dynamic_variant_config: Option<UninitializedVariantInfo>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_datapoints: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub precision_targets: Option<HashMap<String, f32>>,
-}
 
-/// Result from running an evaluation over HTTP via SSE.
-/// Similar to `EvaluationStreamResult` but without `batcher_join_handles`
-/// since the server manages batch writers.
-pub struct ClientEvaluationStreamResult {
-    pub receiver: mpsc::Receiver<EvaluationUpdate>,
-    pub run_info: RunInfo,
-    pub evaluators: HashMap<String, tensorzero_core::evaluations::EvaluatorConfig>,
-}
 
 // NOTE(shuyangli): For methods that delegate to APIs in the gateway, the arguments generally are flattened from the request type for
-// ease of use, except when the type contains more than 2-3 fields or multiple fields with the same type (e.g. `ListDatapointsRequest`).
 // This is because when reading the code outside of an IDE, it's often difficult to tell the arguments apart without argument names.
 //
 // To illustrate:
 //
 // It's easy to understand the semantics of methods that take few, unambiguous arguments:
 // ```rust
-// client.delete_datapoints("dataset-name", vec![uuid1, uuid2]);
 // ```
 //
 // But it quickly gets confusing with more arguments or arguments with similar types:
 // ```rust
-// client.list_datapoints("dataset-name", None, Some(100), Some(0), None);
 // ```
 //
 // In these cases, using the request type directly makes the code much more readable:
 // ```rust
-// client.list_datapoints("dataset-name", ListDatapointsRequest {
 //     function_name: None,
 //     limit: Some(100),
 //     offset: Some(0),
@@ -226,201 +124,18 @@ pub trait ClientExt {
     async fn clickhouse_health(&self) -> Result<(), TensorZeroError>;
 
     // ================================================================
-    // Dataset operations
     // ================================================================
 
-    /// Creates new datapoints in the dataset.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to create the datapoints in.
-    /// * `datapoints` - The datapoints to create.
-    ///
-    /// # Returns
-    ///
-    /// A `CreateDatapointsResponse` containing the IDs of the newly-created datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn create_datapoints(
-        &self,
-        dataset_name: String,
-        datapoints: Vec<CreateDatapointRequest>,
-    ) -> Result<CreateDatapointsResponse, TensorZeroError>;
 
-    /// Lists datapoints in the dataset.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to list the datapoints from.
-    /// * `request` - The request to list the datapoints.
-    ///
-    /// # Returns
-    ///
-    /// A `GetDatapointsResponse` containing the datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn list_datapoints(
-        &self,
-        dataset_name: String,
-        request: ListDatapointsRequest,
-    ) -> Result<GetDatapointsResponse, TensorZeroError>;
 
-    /// Updates datapoints in the dataset.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to update the datapoints in.
-    /// * `datapoints` - The datapoints to update.
-    ///
-    /// # Returns
-    ///
-    /// A `UpdateDatapointsResponse` containing the IDs of the updated datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn update_datapoints(
-        &self,
-        dataset_name: String,
-        datapoints: Vec<UpdateDatapointRequest>,
-    ) -> Result<UpdateDatapointsResponse, TensorZeroError>;
 
-    /// Gets datapoints by their IDs and dataset name.
-    /// Including the dataset name improves query performance because the dataset is part of the
-    /// sorting key for datapoints.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset containing the datapoints.
-    /// * `datapoint_ids` - The IDs of the datapoints to get.
-    ///
-    /// # Returns
-    ///
-    /// A `GetDatapointsResponse` containing the datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn get_datapoints(
-        &self,
-        dataset_name: Option<String>,
-        datapoint_ids: Vec<Uuid>,
-    ) -> Result<GetDatapointsResponse, TensorZeroError>;
 
-    /// Updates the metadata of datapoints in the dataset.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to update the metadata of.
-    /// * `datapoints` - The datapoints to update the metadata of.
-    ///
-    /// # Returns
-    ///
-    /// A `UpdateDatapointsResponse` containing the IDs of the updated datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn update_datapoints_metadata(
-        &self,
-        dataset_name: String,
-        datapoints: Vec<UpdateDatapointMetadataRequest>,
-    ) -> Result<UpdateDatapointsResponse, TensorZeroError>;
 
-    /// Deletes datapoints from the dataset.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to delete the datapoints from.
-    /// * `datapoint_ids` - The IDs of the datapoints to delete.
-    ///
-    /// # Returns
-    ///
-    /// A `DeleteDatapointsResponse` containing the number of deleted datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn delete_datapoints(
-        &self,
-        dataset_name: String,
-        datapoint_ids: Vec<Uuid>,
-    ) -> Result<DeleteDatapointsResponse, TensorZeroError>;
 
-    /// Deletes a dataset.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to delete.
-    ///
-    /// # Returns
-    ///
-    /// A `DeleteDatapointsResponse` containing the number of deleted datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn delete_dataset(
-        &self,
-        dataset_name: String,
-    ) -> Result<DeleteDatapointsResponse, TensorZeroError>;
 
-    /// Creates datapoints from inferences.
-    ///
-    /// # Arguments
-    ///
-    /// * `dataset_name` - The name of the dataset to create the datapoints from.
-    /// * `params` - The parameters for the creation.
-    /// * `output_source` - The output source for the creation.
-    ///
-    /// # Returns
-    ///
-    /// A `CreateDatapointsResponse` containing the IDs of the newly-created datapoints.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn create_datapoints_from_inferences(
-        &self,
-        dataset_name: String,
-        params: CreateDatapointsFromInferenceRequestParams,
-    ) -> Result<CreateDatapointsResponse, TensorZeroError>;
 
-    /// Lists all datasets with optional filtering and pagination.
-    ///
-    /// # Arguments
-    ///
-    /// * `request` - The request parameters for listing datasets.
-    ///
-    /// # Returns
-    ///
-    /// A `ListDatasetsResponse` containing metadata for matching datasets.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `TensorZeroError` if the request fails.
-    async fn list_datasets(
-        &self,
-        request: ListDatasetsRequest,
-    ) -> Result<ListDatasetsResponse, TensorZeroError>;
 
-    // ================================================================
-    // Workflow evaluation operations
-    // ================================================================
-    async fn workflow_evaluation_run(
-        &self,
-        params: WorkflowEvaluationRunParams,
-    ) -> Result<WorkflowEvaluationRunResponse, TensorZeroError>;
 
-    async fn workflow_evaluation_run_episode(
-        &self,
-        run_id: Uuid,
-        params: WorkflowEvaluationRunEpisodeParams,
-    ) -> Result<WorkflowEvaluationRunEpisodeResponse, TensorZeroError>;
 
     // ================================================================
     // Inference operations
@@ -496,15 +211,7 @@ pub trait ClientExt {
         request: ListEpisodesRequest,
     ) -> Result<ListEpisodesResponse, TensorZeroError>;
 
-    // ================================================================
-    // Optimization operations
-    // ================================================================
-    async fn gepa_launch(
-        &self,
-        request: GepaLaunchRequest,
-    ) -> Result<GepaLaunchResponse, TensorZeroError>;
 
-    async fn gepa_get(&self, task_id: &str) -> Result<GepaGetResponse, TensorZeroError>;
 
     async fn experimental_render_samples<T: StoredSample + Send>(
         &self,
@@ -513,28 +220,9 @@ pub trait ClientExt {
         concurrency: Option<usize>,
     ) -> Result<Vec<RenderedSample>, TensorZeroError>;
 
-    async fn experimental_launch_optimization(
-        &self,
-        params: LaunchOptimizationParams,
-    ) -> Result<OptimizationJobHandle, TensorZeroError>;
 
-    async fn experimental_launch_optimization_workflow(
-        &self,
-        params: LaunchOptimizationWorkflowParams,
-    ) -> Result<OptimizationJobHandle, TensorZeroError>;
 
-    async fn experimental_poll_optimization(
-        &self,
-        handle: &OptimizationJobHandle,
-    ) -> Result<OptimizationJobInfo, TensorZeroError>;
 
-    // ================================================================
-    // Variant sampling operations
-    // ================================================================
-    async fn get_variant_sampling_probabilities(
-        &self,
-        function_name: &str,
-    ) -> Result<HashMap<String, f64>, TensorZeroError>;
 
     // ================================================================
     // Config access
@@ -582,15 +270,6 @@ pub trait ClientExt {
         request: WriteConfigRequest,
     ) -> Result<WriteConfigResponse, TensorZeroError>;
 
-    /// Runs an evaluation over HTTP via the SSE endpoint.
-    ///
-    /// This method is only available in HTTPGateway mode. It POSTs to
-    /// `internal/evaluations/run` and streams SSE events back, converting them
-    /// into `EvaluationUpdate` messages on an mpsc channel.
-    async fn run_evaluation_sse(
-        &self,
-        params: RunEvaluationHttpParams,
-    ) -> Result<ClientEvaluationStreamResult, TensorZeroError>;
 
     #[cfg(any(feature = "e2e_tests", feature = "pyo3"))]
     #[expect(
@@ -669,400 +348,16 @@ impl ClientExt for Client {
         }
     }
 
-    async fn workflow_evaluation_run(
-        &self,
-        mut params: WorkflowEvaluationRunParams,
-    ) -> Result<WorkflowEvaluationRunResponse, TensorZeroError> {
-        // We validate the tags here since we're going to add git information to the tags afterwards and set internal to true
-        validate_tags(&params.tags, false)
-            .map_err(|e| TensorZeroError::Other { source: e.into() })?;
 
-        // Set internal to true so we don't validate the tags again
-        params.internal = true;
 
-        // Automatically add internal tag when internal=true
-        params
-            .tags
-            .insert("tensorzero::internal".to_string(), "true".to_string());
 
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join("workflow_evaluation_run").map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /workflow_evaluation_run endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.post(url).json(&params);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Ok(with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::workflow_evaluation_run::workflow_evaluation_run(
-                        gateway.handle.app_state.load_latest(),
-                        params,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await?)
-            }
-        }
-    }
 
-    async fn workflow_evaluation_run_episode(
-        &self,
-        run_id: Uuid,
-        params: WorkflowEvaluationRunEpisodeParams,
-    ) -> Result<WorkflowEvaluationRunEpisodeResponse, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("workflow_evaluation_run/{run_id}/episode")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /workflow_evaluation_run/{run_id}/episode endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.post(url).json(&params);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Ok(with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::workflow_evaluation_run::workflow_evaluation_run_episode(
-                        gateway.handle.app_state.load_latest(),
-                        run_id,
-                        params,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await?)
-            }
-        }
-    }
 
-    async fn create_datapoints(
-        &self,
-        dataset_name: String,
-        datapoints: Vec<CreateDatapointRequest>,
-    ) -> Result<CreateDatapointsResponse, TensorZeroError> {
-        let request = CreateDatapointsRequest { datapoints };
-        match self.mode() {
-            ClientMode::HTTPGateway(http_client) => {
-                let url = http_client.base_url.join(&format!("v1/datasets/{dataset_name}/datapoints")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name}/datapoints endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = http_client.http_client.post(url).json(&request);
-                Ok(http_client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    let config = gateway.handle.app_state.config().load();
-                    let http_client = gateway.handle.app_state.http_client();
-                    tensorzero_core::endpoints::datasets::v1::create_datapoints(
-                        &config,
-                        &http_client,
-                        &gateway.handle.app_state.get_delegating_database(),
-                        &dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
 
-    async fn update_datapoints(
-        &self,
-        dataset_name: String,
-        datapoints: Vec<UpdateDatapointRequest>,
-    ) -> Result<UpdateDatapointsResponse, TensorZeroError> {
-        let request = UpdateDatapointsRequest { datapoints };
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("v1/datasets/{dataset_name}/datapoints")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name}/datapoints endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.patch(url).json(&request);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    let app_state = gateway.handle.app_state.load_latest();
-                    tensorzero_core::endpoints::datasets::v1::update_datapoints(
-                        &app_state,
-                        &dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
 
-    async fn get_datapoints(
-        &self,
-        dataset_name: Option<String>,
-        datapoint_ids: Vec<Uuid>,
-    ) -> Result<GetDatapointsResponse, TensorZeroError> {
-        let request = GetDatapointsRequest { ids: datapoint_ids };
-        match self.mode() {
-            ClientMode::HTTPGateway(http_client) => {
-                let url = match dataset_name.as_ref() {
-                    Some(dataset_name) => http_client
-                        .base_url
-                        .join(&format!("v1/datasets/{dataset_name}/get_datapoints"))
-                        .map_err(|e| TensorZeroError::Other {
-                            source: Error::new(ErrorDetails::InvalidBaseUrl {
-                                message: format!(
-                                    "Failed to join base URL with /v1/datasets/{dataset_name}/get_datapoints endpoint: {e}"
-                                ),
-                            })
-                            .into(),
-                        })?,
-                    None => http_client.base_url.join("v1/datasets/get_datapoints").map_err(|e| TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!("Failed to join base URL with /v1/datasets/get_datapoints endpoint: {e}"),
-                        })
-                        .into(),
-                    })?,
-                };
-                let builder = http_client.http_client.post(url).json(&request);
-                Ok(http_client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::datasets::v1::get_datapoints(
-                        &gateway.handle.app_state.get_delegating_database(),
-                        dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
 
-    async fn list_datapoints(
-        &self,
-        dataset_name: String,
-        request: ListDatapointsRequest,
-    ) -> Result<GetDatapointsResponse, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("v1/datasets/{dataset_name}/list_datapoints")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name}/list_datapoints endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.post(url).json(&request);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::datasets::v1::list_datapoints(
-                        &gateway.handle.app_state.get_delegating_database(),
-                        dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
 
-    async fn update_datapoints_metadata(
-        &self,
-        dataset_name: String,
-        datapoints: Vec<UpdateDatapointMetadataRequest>,
-    ) -> Result<UpdateDatapointsResponse, TensorZeroError> {
-        let request = UpdateDatapointsMetadataRequest { datapoints };
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("v1/datasets/{dataset_name}/datapoints/metadata")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name}/datapoints/metadata endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.patch(url).json(&request);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::datasets::v1::update_datapoints_metadata(
-                        &gateway.handle.app_state.get_delegating_database(),
-                        &dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
 
-    async fn delete_datapoints(
-        &self,
-        dataset_name: String,
-        datapoint_ids: Vec<Uuid>,
-    ) -> Result<DeleteDatapointsResponse, TensorZeroError> {
-        let request = DeleteDatapointsRequest { ids: datapoint_ids };
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("v1/datasets/{dataset_name}/datapoints")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name}/datapoints endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.delete(url).json(&request);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::datasets::v1::delete_datapoints(
-                        &gateway.handle.app_state.get_delegating_database(),
-                        &dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
-
-    async fn delete_dataset(
-        &self,
-        dataset_name: String,
-    ) -> Result<DeleteDatapointsResponse, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("v1/datasets/{dataset_name}")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name} endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.delete(url);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::datasets::v1::delete_dataset(
-                        &gateway.handle.app_state.get_delegating_database(),
-                        &dataset_name,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
-
-    async fn create_datapoints_from_inferences(
-        &self,
-        dataset_name: String,
-        params: CreateDatapointsFromInferenceRequestParams,
-    ) -> Result<CreateDatapointsResponse, TensorZeroError> {
-        let request = CreateDatapointsFromInferenceRequest { params };
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join(&format!("v1/datasets/{dataset_name}/from_inferences")).map_err(|e| TensorZeroError::Other {
-                    source: Error::new(ErrorDetails::InvalidBaseUrl {
-                        message: format!("Failed to join base URL with /v1/datasets/{dataset_name}/from_inferences endpoint: {e}"),
-                    })
-                    .into(),
-                })?;
-                let builder = client.http_client.post(url).json(&request);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Ok(with_embedded_timeout(*timeout, async {
-                    let config = gateway.handle.app_state.config().load();
-                    tensorzero_core::endpoints::datasets::v1::create_from_inferences(
-                        &config,
-                        &gateway.handle.app_state.get_delegating_database(),
-                        dataset_name,
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await?)
-            }
-        }
-    }
-
-    async fn list_datasets(
-        &self,
-        request: ListDatasetsRequest,
-    ) -> Result<ListDatasetsResponse, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let ListDatasetsRequest {
-                    function_name,
-                    limit,
-                    offset,
-                } = &request;
-                let mut url = client.base_url.join("internal/datasets").map_err(|e| {
-                    TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!(
-                                "Failed to join base URL with /internal/datasets endpoint: {e}"
-                            ),
-                        })
-                        .into(),
-                    }
-                })?;
-                // Add query params
-                if let Some(function_name) = function_name {
-                    url.query_pairs_mut()
-                        .append_pair("function_name", function_name);
-                }
-                if let Some(limit) = limit {
-                    url.query_pairs_mut()
-                        .append_pair("limit", &limit.to_string());
-                }
-                if let Some(offset) = offset {
-                    url.query_pairs_mut()
-                        .append_pair("offset", &offset.to_string());
-                }
-                let builder = client.http_client.get(url);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                with_embedded_timeout(*timeout, async {
-                    tensorzero_core::endpoints::datasets::v1::list_datasets(
-                        &gateway.handle.app_state.get_delegating_database(),
-                        request,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await
-            }
-        }
-    }
 
     async fn get_inferences(
         &self,
@@ -1180,70 +475,13 @@ impl ClientExt for Client {
         }
     }
 
-    async fn gepa_launch(
-        &self,
-        request: GepaLaunchRequest,
-    ) -> Result<GepaLaunchResponse, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client.base_url.join("v1/optimization/gepa").map_err(|e| {
-                    TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!(
-                                "Failed to join base URL with /v1/optimization/gepa endpoint: {e}"
-                            ),
-                        })
-                        .into(),
-                    }
-                })?;
-                let builder = client.http_client.post(url).json(&request);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { .. } => Err(TensorZeroError::Other {
-                source: Error::new(ErrorDetails::InvalidClientMode {
-                    mode: "Embedded".to_string(),
-                    message: "GEPA requires HTTP gateway with Postgres for durable execution"
-                        .to_string(),
-                })
-                .into(),
-            }),
-        }
-    }
 
-    async fn gepa_get(&self, task_id: &str) -> Result<GepaGetResponse, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let url = client
-                    .base_url
-                    .join(&format!("v1/optimization/gepa/{task_id}"))
-                    .map_err(|e| TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!(
-                                "Failed to join base URL with /v1/optimization/gepa/{task_id} endpoint: {e}"
-                            ),
-                        })
-                        .into(),
-                    })?;
-                let builder = client.http_client.get(url);
-                Ok(client.send_and_parse_http_response(builder).await?.0)
-            }
-            ClientMode::EmbeddedGateway { .. } => Err(TensorZeroError::Other {
-                source: Error::new(ErrorDetails::InvalidClientMode {
-                    mode: "Embedded".to_string(),
-                    message: "GEPA requires HTTP gateway with Postgres for durable execution"
-                        .to_string(),
-                })
-                .into(),
-            }),
-        }
-    }
 
     /// There are two things that need to happen in this function:
     /// 1. We need to resolve all network resources (e.g. images) in the inference examples.
     /// 2. We need to prepare all messages into "simple" messages that have been templated for a particular variant.
     ///    To do this, we need to know what variant to use for each function that might appear in the data.
     ///
-    /// IMPORTANT: For now, this function drops datapoints which are bad, e.g. ones where templating fails, the function
     ///            has no variant specified, or where the process of downloading resources fails.
     ///            In future we will make this behavior configurable by the caller.
     async fn experimental_render_samples<T: StoredSample + Send>(
@@ -1271,123 +509,8 @@ impl ClientExt for Client {
         .map_err(err_to_http)
     }
 
-    /// Launch an optimization job.
-    async fn experimental_launch_optimization(
-        &self,
-        params: LaunchOptimizationParams,
-    ) -> Result<OptimizationJobHandle, TensorZeroError> {
-        match self.mode() {
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Ok(Box::pin(with_embedded_timeout(*timeout, async {
-                    let db: Arc<dyn DelegatingDatabaseQueries + Send + Sync> =
-                        Arc::new(gateway.handle.app_state.get_delegating_database());
-                    let http_client = gateway.handle.app_state.http_client();
-                    launch_optimization(
-                        &http_client,
-                        params,
-                        db,
-                        gateway.handle.app_state.config().load(),
-                    )
-                    .await
-                    .map_err(err_to_http)
-                }))
-                .await?)
-            }
-            ClientMode::HTTPGateway(_) => Err(TensorZeroError::Other {
-                source: Error::new(ErrorDetails::InvalidClientMode {
-                    mode: "Http".to_string(),
-                    message: "This function is only available in EmbeddedGateway mode".to_string(),
-                })
-                .into(),
-            }),
-        }
-    }
 
-    /// Start an optimization job.
-    /// NOTE: This queries data (inferences or datapoints), renders samples, and launches the optimization.
-    async fn experimental_launch_optimization_workflow(
-        &self,
-        params: LaunchOptimizationWorkflowParams,
-    ) -> Result<OptimizationJobHandle, TensorZeroError> {
-        match self.mode() {
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Box::pin(with_embedded_timeout(*timeout, async {
-                    let db: Arc<dyn DelegatingDatabaseQueries + Send + Sync> =
-                        Arc::new(gateway.handle.app_state.get_delegating_database());
-                    let http_client = gateway.handle.app_state.http_client();
-                    launch_optimization_workflow(
-                        &http_client,
-                        gateway.handle.app_state.config().load(),
-                        &db,
-                        params,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                }))
-                .await
-            }
-            ClientMode::HTTPGateway(client) => {
-                let url = client
-                    .base_url
-                    .join("experimental_optimization_workflow")
-                    .map_err(|e| TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!(
-                                "Failed to join base URL with /experimental_optimization_workflow endpoint: {e}"
-                            ),
-                        })
-                        .into(),
-                    })?;
-                let builder = client.http_client.post(url).json(&params);
-                let encoded_handle = client.send_request(builder).await?;
-                let job_handle = OptimizationJobHandle::from_base64_urlencoded(&encoded_handle)
-                    .map_err(|e| TensorZeroError::Other { source: e.into() })?;
-                Ok(job_handle)
-            }
-        }
-    }
 
-    /// Poll an optimization job for status.
-    async fn experimental_poll_optimization(
-        &self,
-        job_handle: &OptimizationJobHandle,
-    ) -> Result<OptimizationJobInfo, TensorZeroError> {
-        match self.mode() {
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Ok(with_embedded_timeout(*timeout, async {
-                    let config = gateway.handle.app_state.config().load();
-                    let http_client = gateway.handle.app_state.http_client();
-                    poll_optimization(
-                        &http_client,
-                        job_handle,
-                        &config.models.default_credentials,
-                        &config.provider_types,
-                    )
-                    .await
-                    .map_err(err_to_http)
-                })
-                .await?)
-            }
-            ClientMode::HTTPGateway(client) => {
-                let encoded_job_handle = job_handle
-                    .to_base64_urlencoded()
-                    .map_err(|e| TensorZeroError::Other { source: e.into() })?;
-                let url = client
-                    .base_url
-                    .join(&format!("experimental_optimization/{encoded_job_handle}"))
-                    .map_err(|e| TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!("Failed to join base URL with /optimization/{encoded_job_handle} endpoint: {e}"),
-                        })
-                        .into(),
-                    })?;
-                let builder = client.http_client.get(url);
-                let resp: OptimizationJobInfo =
-                    client.send_and_parse_http_response(builder).await?.0;
-                Ok(resp)
-            }
-        }
-    }
 
     fn get_config(&self) -> Result<Arc<Config>, TensorZeroError> {
         match self.mode() {
@@ -1509,220 +632,7 @@ impl ClientExt for Client {
         }
     }
 
-    async fn get_variant_sampling_probabilities(
-        &self,
-        function_name: &str,
-    ) -> Result<HashMap<String, f64>, TensorZeroError> {
-        match self.mode() {
-            ClientMode::HTTPGateway(client) => {
-                let endpoint = format!("internal/functions/{function_name}/variant_sampling_probabilities");
-                let url = client
-                    .base_url
-                    .join(&endpoint)
-                    .map_err(|e| TensorZeroError::Other {
-                        source: Error::new(ErrorDetails::InvalidBaseUrl {
-                            message: format!(
-                                "Failed to join base URL with /internal/functions/{function_name}/variant_sampling_probabilities endpoint: {e}"
-                            ),
-                        })
-                        .into(),
-                    })?;
-                let builder = client.http_client.get(url);
-                let response: GetVariantSamplingProbabilitiesResponse =
-                    client.send_and_parse_http_response(builder).await?.0;
-                Ok(response.probabilities)
-            }
-            ClientMode::EmbeddedGateway { gateway, timeout } => {
-                Ok(with_embedded_timeout(*timeout, async {
-                    let config = gateway.handle.app_state.config().load();
-                    let postgres_connection_info = gateway.handle.app_state.postgres_connection_info();
-                    let response = tensorzero_core::endpoints::variant_probabilities::get_variant_sampling_probabilities(
-                        &config,
-                        &postgres_connection_info,
-                        GetVariantSamplingProbabilitiesParams {
-                            function_name: function_name.to_string(),
-                        },
-                    )
-                    .await
-                    .map_err(err_to_http)?;
-                    Ok(response.probabilities)
-                })
-                .await?)
-            }
-        }
-    }
 
-    async fn run_evaluation_sse(
-        &self,
-        params: RunEvaluationHttpParams,
-    ) -> Result<ClientEvaluationStreamResult, TensorZeroError> {
-        let ClientMode::HTTPGateway(client) = self.mode() else {
-            return Err(TensorZeroError::Other {
-                source: Error::new(ErrorDetails::InternalError {
-                    message:
-                        "`run_evaluation_sse` is only supported in HTTPGateway mode. Use `run_evaluation_core_streaming` for embedded mode."
-                            .to_string(),
-                })
-                .into(),
-            });
-        };
-
-        let url = client
-            .base_url
-            .join("internal/evaluations/run")
-            .map_err(|e| TensorZeroError::Other {
-                source: Error::new(ErrorDetails::InvalidBaseUrl {
-                    message: format!(
-                        "Failed to join base URL with /internal/evaluations/run endpoint: {e}"
-                    ),
-                })
-                .into(),
-            })?;
-
-        let builder = client.http_client.post(url).json(&params);
-        // Use no-timeout builder: evaluation streams are long-running and should not
-        // be subject to the per-request HTTP timeout.
-        let mut event_source = match client
-            .customize_builder_no_timeout(builder)
-            .eventsource()
-            .await
-        {
-            Ok(es) => es,
-            Err(reqwest_sse_stream::ReqwestSseStreamError::InvalidStatusCode(code, resp)) => {
-                return Err(TensorZeroError::Http {
-                    status_code: code.as_u16(),
-                    text: resp.text().await.ok(),
-                    source: Error::new(ErrorDetails::EvaluationRun {
-                        message: "Failed to start evaluation SSE stream".to_string(),
-                    })
-                    .into(),
-                });
-            }
-            Err(other) => {
-                return Err(evaluation_run_error(format!(
-                    "Failed to open evaluation SSE stream: {other:?}"
-                )));
-            }
-        };
-
-        let start_event = wait_for_start_event(&mut event_source).await?;
-
-        let run_info = RunInfo {
-            evaluation_run_id: start_event.evaluation_run_id,
-            evaluation_name: start_event.evaluation_name,
-            num_datapoints: start_event.num_datapoints,
-        };
-
-        let evaluation_config = start_event.evaluation_config.ok_or_else(|| {
-            evaluation_run_error(
-                "Server did not include `evaluation_config` in the Start event. \
-                 Ensure the server is up to date.",
-            )
-        })?;
-        let EvaluationConfig::Inference(inference_config) = evaluation_config;
-        let evaluators = inference_config.evaluators;
-
-        let (sender, receiver) = mpsc::channel(128);
-        let verbose_errors = self.verbose_errors;
-
-        // Spawn a background task to consume remaining SSE events.
-        // This task only reads from the SSE stream and forwards to the mpsc channel;
-        // it is safe for the gateway to shut down without waiting for it.
-        #[expect(clippy::disallowed_methods)]
-        tokio::spawn(async move {
-            let mut completed = false;
-            while let Some(event_result) = event_source.next().await {
-                let message = match event_result {
-                    Err(e) => {
-                        tracing::error!("Evaluation SSE stream error: {e:?}");
-                        // Propagate the transport error to the consumer so it doesn't
-                        // silently treat a broken stream as normal completion.
-                        let _ = sender
-                            .send(EvaluationUpdate::FatalError(format!(
-                                "SSE stream error: {e}"
-                            )))
-                            .await;
-                        return;
-                    }
-                    Ok(reqwest_sse_stream::Event::Open) => continue,
-                    Ok(reqwest_sse_stream::Event::Message(m)) => m,
-                };
-
-                let event: EvaluationRunEvent = match serde_json::from_str(&message.data) {
-                    Ok(e) => e,
-                    Err(e) => {
-                        let raw = if verbose_errors {
-                            message.data.as_str()
-                        } else {
-                            "<hidden>"
-                        };
-                        tracing::error!(
-                            "Failed to deserialize evaluation SSE event: {e}, raw: {raw}"
-                        );
-                        let _ = sender
-                            .send(EvaluationUpdate::FatalError(format!(
-                                "Failed to deserialize SSE event: {e}"
-                            )))
-                            .await;
-                        return;
-                    }
-                };
-
-                let update = match event {
-                    EvaluationRunEvent::Success(success) => match convert_success_event(success) {
-                        Ok(update) => update,
-                        Err(e) => {
-                            tracing::error!("Failed to convert success event: {e}");
-                            let _ = sender
-                                .send(EvaluationUpdate::FatalError(format!(
-                                    "Failed to convert success event: {e}"
-                                )))
-                                .await;
-                            return;
-                        }
-                    },
-                    EvaluationRunEvent::Error(error) => EvaluationUpdate::Error(EvaluationError {
-                        datapoint_id: error.datapoint_id,
-                        message: error.message,
-                    }),
-                    EvaluationRunEvent::FatalError(fatal) => {
-                        tracing::error!("Evaluation fatal error: {}", fatal.message);
-                        // Propagate the fatal error to the consumer so it doesn't
-                        // silently treat early termination as normal completion.
-                        let _ = sender
-                            .send(EvaluationUpdate::FatalError(fatal.message))
-                            .await;
-                        return;
-                    }
-                    EvaluationRunEvent::Complete(_) => {
-                        completed = true;
-                        break;
-                    }
-                    EvaluationRunEvent::Start(_) => continue, // unexpected second Start event
-                };
-
-                if sender.send(update).await.is_err() {
-                    return; // receiver dropped
-                }
-            }
-
-            if !completed {
-                tracing::error!("Evaluation SSE stream ended unexpectedly before Complete event");
-                let _ = sender
-                    .send(EvaluationUpdate::FatalError(
-                        "SSE stream ended unexpectedly before receiving a Complete event"
-                            .to_string(),
-                    ))
-                    .await;
-            }
-        });
-
-        Ok(ClientEvaluationStreamResult {
-            receiver,
-            run_info,
-            evaluators,
-        })
-    }
 
     #[cfg(any(feature = "e2e_tests", feature = "pyo3"))]
     #[expect(
@@ -1739,85 +649,5 @@ impl ClientExt for Client {
     }
 }
 
-/// Reads SSE events from the stream until the `Start` event is received.
-async fn wait_for_start_event(
-    event_source: &mut TensorZeroEventSource,
-) -> Result<EvaluationRunStartEvent, TensorZeroError> {
-    loop {
-        let Some(event_result) = event_source.next().await else {
-            return Err(evaluation_run_error(
-                "SSE stream ended before receiving Start event",
-            ));
-        };
-        let message = match event_result {
-            Err(e) => {
-                return match *e {
-                    reqwest_sse_stream::ReqwestSseStreamError::InvalidStatusCode(code, resp) => {
-                        let text = resp.text().await.ok();
-                        Err(TensorZeroError::Http {
-                            status_code: code.as_u16(),
-                            text,
-                            source: Error::new(ErrorDetails::EvaluationRun {
-                                message: "Failed to start evaluation SSE stream".to_string(),
-                            })
-                            .into(),
-                        })
-                    }
-                    other => Err(evaluation_run_error(format!("SSE stream error: {other}"))),
-                };
-            }
-            Ok(reqwest_sse_stream::Event::Open) => continue,
-            Ok(reqwest_sse_stream::Event::Message(m)) => m,
-        };
 
-        let event: EvaluationRunEvent =
-            serde_json::from_str(&message.data).map_err(|e| TensorZeroError::Other {
-                source: Error::new(ErrorDetails::Serialization {
-                    message: format!("Failed to deserialize evaluation SSE event: {e}"),
-                })
-                .into(),
-            })?;
 
-        match event {
-            EvaluationRunEvent::Start(start) => return Ok(start),
-            EvaluationRunEvent::FatalError(fatal) => {
-                return Err(evaluation_run_error(format!(
-                    "Evaluation fatal error: {}",
-                    fatal.message
-                )));
-            }
-            _ => {
-                return Err(evaluation_run_error(
-                    "Expected Start event as first evaluation SSE event",
-                ));
-            }
-        }
-    }
-}
-
-/// Constructs a `TensorZeroError::Other` with an `EvaluationRun` error detail.
-fn evaluation_run_error(message: impl Into<String>) -> TensorZeroError {
-    TensorZeroError::Other {
-        source: Error::new(ErrorDetails::EvaluationRun {
-            message: message.into(),
-        })
-        .into(),
-    }
-}
-
-/// Converts an `EvaluationRunSuccessEvent` (with JSON `Value` fields) back into
-/// an `EvaluationUpdate::Success` with deserialized `Datapoint` and `InferenceResponse`.
-fn convert_success_event(
-    success: EvaluationRunSuccessEvent,
-) -> Result<EvaluationUpdate, serde_json::Error> {
-    let datapoint: Datapoint = serde_json::from_value(success.datapoint)?;
-    let response: InferenceResponse = serde_json::from_value(success.response)?;
-
-    Ok(EvaluationUpdate::Success(EvaluationInfo {
-        datapoint,
-        response,
-        evaluations: success.evaluations,
-        evaluator_errors: success.evaluator_errors,
-        processing_time_ms: success.processing_time_ms,
-    }))
-}

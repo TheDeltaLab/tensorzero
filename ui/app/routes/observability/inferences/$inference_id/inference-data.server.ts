@@ -41,17 +41,6 @@ export async function fetchUsedVariants(
   return tensorZeroClient.getUsedVariants(functionName);
 }
 
-export async function fetchHasDemonstration(
-  inference_id: string,
-): Promise<boolean> {
-  const tensorZeroClient = getTensorZeroClient();
-  const demonstrationFeedback = await tensorZeroClient.getDemonstrationFeedback(
-    inference_id,
-    { limit: 1 },
-  );
-  return demonstrationFeedback.length > 0;
-}
-
 export async function fetchInput(
   inference: StoredInference,
 ): Promise<Input | undefined> {

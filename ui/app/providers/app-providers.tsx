@@ -6,7 +6,6 @@ import { TooltipProvider } from "~/components/ui/tooltip";
 import { Toaster } from "~/components/ui/toaster";
 import { EntitySheetProvider } from "~/context/entity-sheet";
 import { ReadOnlyProvider } from "~/context/read-only";
-import { AutopilotAvailableProvider } from "~/context/autopilot-available";
 import { ConfigProvider, EMPTY_CONFIG } from "~/context/config";
 import {
   FeatureFlagsProvider,
@@ -22,7 +21,6 @@ import type { UiConfig } from "~/types/tensorzero";
 
 export interface AppProvidersLoaderData {
   isReadOnly?: boolean;
-  autopilotAvailable?: boolean;
   config?: UiConfig;
   featureFlags?: FeatureFlags;
   dashboardSession?: DashboardSession;
@@ -42,27 +40,21 @@ export function AppProviders({ children, loaderData }: AppProvidersProps) {
     <ReactQueryProvider>
       <GlobalToastProvider>
         <ReadOnlyProvider value={loaderData?.isReadOnly ?? false}>
-          <AutopilotAvailableProvider
-            value={loaderData?.autopilotAvailable ?? false}
+          <FeatureFlagsProvider
+            value={loaderData?.featureFlags ?? DEFAULT_FEATURE_FLAGS}
           >
-            <FeatureFlagsProvider
-              value={loaderData?.featureFlags ?? DEFAULT_FEATURE_FLAGS}
+            <DashboardSessionProvider
+              value={loaderData?.dashboardSession ?? DISABLED_DASHBOARD_SESSION}
             >
-              <DashboardSessionProvider
-                value={
-                  loaderData?.dashboardSession ?? DISABLED_DASHBOARD_SESSION
-                }
-              >
-                <ConfigProvider value={loaderData?.config ?? EMPTY_CONFIG}>
-                  <SidebarProvider>
-                    <TooltipProvider delayDuration={250}>
-                      <EntitySheetProvider>{children}</EntitySheetProvider>
-                    </TooltipProvider>
-                  </SidebarProvider>
-                </ConfigProvider>
-              </DashboardSessionProvider>
-            </FeatureFlagsProvider>
-          </AutopilotAvailableProvider>
+              <ConfigProvider value={loaderData?.config ?? EMPTY_CONFIG}>
+                <SidebarProvider>
+                  <TooltipProvider delayDuration={250}>
+                    <EntitySheetProvider>{children}</EntitySheetProvider>
+                  </TooltipProvider>
+                </SidebarProvider>
+              </ConfigProvider>
+            </DashboardSessionProvider>
+          </FeatureFlagsProvider>
         </ReadOnlyProvider>
         <Toaster />
       </GlobalToastProvider>

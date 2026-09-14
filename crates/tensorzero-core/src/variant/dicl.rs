@@ -964,7 +964,6 @@ mod tests {
     use super::*;
     use crate::config::SchemaData;
     use crate::endpoints::inference::{ChatCompletionInferenceParams, InferenceIds};
-    use crate::experimentation::ExperimentationConfigWithNamespaces;
     use crate::inference::types::StoredInputMessage;
     use crate::inference::types::System;
     use crate::inference::types::file::ObjectStoragePointer;
@@ -1482,8 +1481,6 @@ mod tests {
             parallel_tool_calls: None,
             description: None,
             all_explicit_templates_names: Default::default(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         }));
 
         // Call prepare_request with EMPTY examples
@@ -1614,8 +1611,6 @@ mod tests {
             parallel_tool_calls: None,
             description: None,
             all_explicit_templates_names: Default::default(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         }));
 
         // Call prepare_request with examples

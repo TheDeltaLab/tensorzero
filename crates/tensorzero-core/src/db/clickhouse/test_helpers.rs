@@ -6,35 +6,12 @@
 )]
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 
 use crate::config::BatchWritesConfig;
-use crate::db::stored_datapoint::StoredChatInferenceDatapoint;
 #[cfg(feature = "e2e_tests")]
 use crate::db::test_helpers::TestDatabaseHelpers;
-use crate::endpoints::datasets::JsonInferenceDatapoint;
 
 use super::ClickHouseConnectionInfo;
-
-/// Database row type for workflow evaluation run (used in test helpers).
-#[derive(Debug, Deserialize, Serialize)]
-pub struct WorkflowEvaluationRunRow {
-    pub run_id: Uuid,
-    pub variant_pins: HashMap<String, String>,
-    pub tags: HashMap<String, String>,
-    pub project_name: Option<String>,
-    pub run_display_name: Option<String>,
-}
-
-/// Database row type for workflow evaluation run episode (used in test helpers).
-#[derive(Debug, Deserialize, Serialize)]
-pub struct WorkflowEvaluationRunEpisodeRow {
-    pub run_id: Uuid,
-    pub episode_id: Uuid,
-    pub variant_pins: HashMap<String, String>,
-    pub task_name: Option<String>,
-    pub tags: HashMap<String, String>,
-}
 #[cfg(feature = "e2e_tests")]
 use super::escape_string_for_clickhouse_literal;
 #[cfg(feature = "e2e_tests")]
@@ -71,160 +48,6 @@ pub async fn get_clickhouse_replica() -> Option<ClickHouseConnectionInfo> {
         .expect("Failed to connect to ClickHouse");
     println!("Connected to ClickHouse in {:?}", start.elapsed());
     Some(res)
-}
-
-pub async fn select_chat_datapoint_clickhouse(
-    clickhouse_connection_info: &ClickHouseConnectionInfo,
-    inference_id: Uuid,
-) -> Option<Value> {
-    #[cfg(feature = "e2e_tests")]
-    clickhouse_connection_info.flush_pending_writes().await;
-
-    let query = format!(
-        "SELECT
-            dataset_name,
-            function_name,
-            id,
-            name,
-            episode_id,
-            input,
-            output,
-            tool_params,
-            dynamic_tools,
-            dynamic_provider_tools,
-            tool_choice,
-            parallel_tool_calls,
-            allowed_tools,
-            tags,
-            auxiliary,
-            is_deleted,
-            is_custom,
-            source_inference_id,
-            staled_at,
-            updated_at,
-            snapshot_hash
-        FROM ChatInferenceDatapoint FINAL
-        WHERE id = '{inference_id}'
-        LIMIT 1
-        FORMAT JSONEachRow"
-    );
-
-    let text = clickhouse_connection_info
-        .run_query_synchronous_no_params(query)
-        .await
-        .unwrap();
-    let json: Value = serde_json::from_str(&text.response).ok()?;
-    Some(json)
-}
-
-pub async fn select_json_datapoint_clickhouse(
-    clickhouse_connection_info: &ClickHouseConnectionInfo,
-    inference_id: Uuid,
-) -> Option<Value> {
-    #[cfg(feature = "e2e_tests")]
-    clickhouse_connection_info.flush_pending_writes().await;
-
-    let query = format!(
-        "SELECT * FROM JsonInferenceDatapoint FINAL WHERE id = '{inference_id}' LIMIT 1 FORMAT JSONEachRow"
-    );
-
-    let text = clickhouse_connection_info
-        .run_query_synchronous_no_params(query)
-        .await
-        .unwrap();
-    let json: Value = serde_json::from_str(&text.response).ok()?;
-    Some(json)
-}
-
-pub async fn select_chat_dataset_clickhouse(
-    clickhouse_connection_info: &ClickHouseConnectionInfo,
-    dataset_name: &str,
-) -> Option<Vec<StoredChatInferenceDatapoint>> {
-    #[cfg(feature = "e2e_tests")]
-    clickhouse_connection_info.flush_pending_writes().await;
-
-    let query = format!(
-        "SELECT
-            dataset_name,
-            function_name,
-            id,
-            name,
-            episode_id,
-            input,
-            output,
-            tool_params,
-            dynamic_tools,
-            dynamic_provider_tools,
-            tool_choice,
-            parallel_tool_calls,
-            allowed_tools,
-            tags,
-            auxiliary,
-            is_deleted,
-            is_custom,
-            source_inference_id,
-            staled_at,
-            formatDateTime(updated_at, '%Y-%m-%dT%H:%i:%SZ') AS updated_at,
-            snapshot_hash
-        FROM ChatInferenceDatapoint FINAL
-        WHERE dataset_name = '{dataset_name}' AND staled_at IS NULL
-        FORMAT JSONEachRow"
-    );
-
-    let text = clickhouse_connection_info
-        .run_query_synchronous_no_params(query)
-        .await
-        .unwrap();
-    let lines = text.response.lines();
-    let mut chat_rows: Vec<StoredChatInferenceDatapoint> = Vec::new();
-    for line in lines {
-        let chat_row: StoredChatInferenceDatapoint = serde_json::from_str(line).unwrap();
-        chat_rows.push(chat_row);
-    }
-    Some(chat_rows)
-}
-
-pub async fn select_json_dataset_clickhouse(
-    clickhouse_connection_info: &ClickHouseConnectionInfo,
-    dataset_name: &str,
-) -> Option<Vec<JsonInferenceDatapoint>> {
-    #[cfg(feature = "e2e_tests")]
-    clickhouse_connection_info.flush_pending_writes().await;
-
-    let query = format!(
-        "SELECT
-            dataset_name,
-            function_name,
-            id,
-            name,
-            episode_id,
-            input,
-            output,
-            output_schema,
-            tags,
-            auxiliary,
-            is_deleted,
-            is_custom,
-            source_inference_id,
-            staled_at,
-            formatDateTime(updated_at, '%Y-%m-%dT%H:%i:%SZ') AS updated_at
-        FROM JsonInferenceDatapoint FINAL
-        WHERE dataset_name = '{dataset_name}' AND staled_at IS NULL
-        FORMAT JSONEachRow"
-    );
-
-    let text = clickhouse_connection_info
-        .run_query_synchronous_no_params(query)
-        .await
-        .unwrap();
-    let lines = text.response.lines();
-    let mut json_rows: Vec<JsonInferenceDatapoint> = Vec::new();
-    for line in lines {
-        let json_row: JsonInferenceDatapoint = serde_json::from_str(line).unwrap();
-        json_rows.push(json_row);
-    }
-
-    Some(json_rows)
 }
 
 pub async fn select_chat_inferences_clickhouse(
@@ -494,46 +317,6 @@ pub async fn select_feedback_by_target_id_clickhouse(
         .unwrap();
     let json: Value = serde_json::from_str(&text.response).ok()?;
     Some(json)
-}
-
-pub async fn select_workflow_evaluation_run_clickhouse(
-    clickhouse_connection_info: &ClickHouseConnectionInfo,
-    run_id: Uuid,
-) -> Option<WorkflowEvaluationRunRow> {
-    let query = format!(
-        "SELECT
-            uint_to_uuid(run_id_uint) as run_id,
-            variant_pins,
-            tags,
-            project_name,
-            run_display_name
-        FROM DynamicEvaluationRun
-        WHERE run_id_uint = toUInt128(toUUID('{run_id}'))
-        FORMAT JSONEachRow",
-    );
-
-    let text = clickhouse_connection_info
-        .run_query_synchronous_no_params(query)
-        .await
-        .unwrap();
-
-    Some(serde_json::from_str(&text.response).unwrap())
-}
-
-pub async fn select_workflow_evaluation_run_episode_clickhouse(
-    clickhouse_connection_info: &ClickHouseConnectionInfo,
-    run_id: Uuid,
-    episode_id: Uuid,
-) -> Option<WorkflowEvaluationRunEpisodeRow> {
-    let query = format!(
-        "SELECT run_id, uint_to_uuid(episode_id_uint) as episode_id, variant_pins, datapoint_name AS task_name, tags FROM DynamicEvaluationRunEpisode WHERE run_id = '{run_id}' AND episode_id_uint = toUInt128(toUUID('{episode_id}')) FORMAT JSONEachRow",
-    );
-
-    let text = clickhouse_connection_info
-        .run_query_synchronous_no_params(query)
-        .await
-        .unwrap();
-    Some(serde_json::from_str(&text.response).unwrap())
 }
 
 #[cfg(feature = "e2e_tests")]

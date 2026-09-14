@@ -442,16 +442,6 @@ export class TensorZeroServerError extends Error {
       super(message, { status: HttpStatusCode.INTERNAL_SERVER_ERROR });
     }
   };
-  static InvalidDatasetName = class InvalidDatasetName extends TensorZeroServerError {
-    constructor(message: string) {
-      super(message, { status: HttpStatusCode.BAD_REQUEST });
-    }
-  };
-  static InvalidWorkflowEvaluationRun = class InvalidWorkflowEvaluationRun extends TensorZeroServerError {
-    constructor(message: string) {
-      super(message, { status: HttpStatusCode.BAD_REQUEST });
-    }
-  };
   static InvalidFunctionVariants = class InvalidFunctionVariants extends TensorZeroServerError {
     constructor(message: string) {
       super(message, { status: HttpStatusCode.INTERNAL_SERVER_ERROR });

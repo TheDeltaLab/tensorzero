@@ -1,14 +1,6 @@
 [workspace]
 members = [
-    "async-inference",
-    "autopilot-client",
-    "autopilot-tools",
-    "autopilot-worker",
-    "bip39-uuid-substitution",
     "config-applier",
-    "durable-tools",
-    "durable-tools-spawn",
-    "evaluations",
     "gateway",
     "googletest-matchers",
     "minijinja-utils",
@@ -18,17 +10,13 @@ members = [
     "tensorzero-client",
     "tensorzero-config-paths",
     "tensorzero-core",
-    "tensorzero-core/tests/load/feedback",
     "tensorzero-core/tests/load/postgres-inference-load-test",
     "tensorzero-core/tests/load/rate-limit-load-test",
     "tensorzero-core/tests/mock-provider-api",
     "tensorzero-derive",
-    "tensorzero-mcp",
     "tensorzero-node",
-    "tensorzero-optimizers",
     "tensorzero-providers",
     "tensorzero-stored-config",
-    "tensorzero-python",  # TODO: remove from workspace when we migrate to Stainless
     "tensorzero-ts-types",
     "tensorzero-types",
     "tensorzero-types-providers",
@@ -38,7 +26,6 @@ members = [
     "tensorzero-otel",
     "tensorzero-overhead",
     "tensorzero-unsafe-helpers",
-    "ts-executor-pool",
 ]
 resolver = "2"
 
@@ -145,8 +132,6 @@ serde_arrow = { version = "0.14", features = ["arrow-58"] }
 blake3 = "1.8.5"
 moka = { version = "0.12.15", features = ["sync"] }
 durable = { git = "https://github.com/tensorzero/durable", rev = "b5f2664bc12e154a3ed00281c1a14a8c7406eae1" }
-durable-tools-spawn = { path = "durable-tools-spawn" }
-tensorzero = { path = "tensorzero-client" }
 tensorzero-core = { path = "tensorzero-core" }
 tensorzero-http = { path = "tensorzero-http", features = ["ts-rs"] }
 regex = "1.12.2"

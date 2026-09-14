@@ -5,7 +5,6 @@
     reason = "definition and implementation module for SwappableAppStateData"
 )]
 
-use std::collections::HashSet;
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -50,8 +49,6 @@ use crate::error::{DelayedError, Error, ErrorDetails};
 use crate::howdy::{get_deployment_id, setup_howdy};
 use crate::http::TensorzeroHttpClient;
 use crate::rate_limiting::{RateLimitingConfig, RateLimitingManager};
-use autopilot_client::AutopilotClient;
-use durable_tools_spawn::SpawnClient;
 
 #[cfg(test)]
 use crate::db::clickhouse::ClickHouseClient;
@@ -243,13 +240,6 @@ pub struct AppStateData {
     pub auth_cache: Option<Cache<String, AuthResult>>,
     /// Optional cache for historical config snapshots loaded from ClickHouse
     pub config_snapshot_cache: Option<Cache<SnapshotHash, Arc<Config>>>,
-    /// Optional Autopilot API client for proxying requests to the Autopilot API
-    pub autopilot_client: Option<Arc<AutopilotClient>>,
-    /// Optional durable task spawning client for GEPA workflows
-    pub spawn_client: Option<Arc<SpawnClient>>,
-    /// Optional durable task spawning client for the async inference API,
-    /// targeting the `gateway.async_inference.queue_name` queue.
-    pub async_inference_spawn_client: Option<Arc<SpawnClient>>,
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     /// Token pool manager for rate limiting pre-borrowing
@@ -282,13 +272,6 @@ pub struct SwappableAppStateData {
     pub auth_cache: Option<Cache<String, AuthResult>>,
     /// Optional cache for historical config snapshots loaded from ClickHouse
     pub config_snapshot_cache: Option<Cache<SnapshotHash, Arc<Config>>>,
-    /// Optional Autopilot API client for proxying requests to the Autopilot API
-    pub autopilot_client: Option<Arc<AutopilotClient>>,
-    /// Optional durable task spawning client for GEPA workflows
-    pub spawn_client: Option<Arc<SpawnClient>>,
-    /// Optional durable task spawning client for the async inference API,
-    /// targeting the `gateway.async_inference.queue_name` queue.
-    pub async_inference_spawn_client: Option<Arc<SpawnClient>>,
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     pub shutdown_token: CancellationToken,
@@ -423,9 +406,6 @@ impl SwappableAppStateData {
             deferred_tasks: self.deferred_tasks.clone(),
             auth_cache: self.auth_cache.clone(),
             config_snapshot_cache: self.config_snapshot_cache.clone(),
-            autopilot_client: self.autopilot_client.clone(),
-            spawn_client: self.spawn_client.clone(),
-            async_inference_spawn_client: self.async_inference_spawn_client.clone(),
             deployment_id: self.deployment_id.clone(),
             rate_limiting_manager: live_state.rate_limiting_manager.clone(),
             shutdown_token: self.shutdown_token.clone(),
@@ -506,8 +486,6 @@ fn create_auth_cache_from_config(config: &Config) -> Option<Cache<String, AuthRe
 impl GatewayHandle {
     pub async fn new(
         config: UnwrittenConfig,
-        available_tools: HashSet<String>,
-        tool_whitelist: HashSet<String>,
         config_in_database: bool,
     ) -> Result<Self, DelayedError> {
         let clickhouse_url = std::env::var("TENSORZERO_CLICKHOUSE_URL").ok();
@@ -520,8 +498,6 @@ impl GatewayHandle {
             postgres_url,
             valkey_url,
             valkey_cache_url,
-            available_tools,
-            tool_whitelist,
             config_in_database,
         ))
         .await
@@ -534,8 +510,6 @@ impl GatewayHandle {
         postgres_url: Option<String>,
         valkey_url: Option<String>,
         valkey_cache_url: Option<String>,
-        available_tools: HashSet<String>,
-        tool_whitelist: HashSet<String>,
         config_in_database: bool,
     ) -> Result<Self, DelayedError> {
         let clickhouse_connection_info = setup_clickhouse(&config, clickhouse_url.clone()).await?;
@@ -571,8 +545,6 @@ impl GatewayHandle {
                 valkey_cache_url,
             },
             None,
-            available_tools,
-            tool_whitelist,
             config_in_database,
         )
         .await
@@ -628,9 +600,6 @@ impl GatewayHandle {
                 deferred_tasks,
                 auth_cache,
                 config_snapshot_cache: None,
-                autopilot_client: None,
-                spawn_client: None,
-                async_inference_spawn_client: None,
                 deployment_id: None,
                 shutdown_token: cancel_token,
                 config_in_database: false,
@@ -650,8 +619,6 @@ impl GatewayHandle {
         valkey_cache_connection_info: ValkeyConnectionInfo,
         http_client: TensorzeroHttpClient,
         drop_wrapper: Option<DropWrapper>,
-        available_tools: HashSet<String>,
-        tool_whitelist: HashSet<String>,
         config_in_database: bool,
     ) -> Result<Self, DelayedError> {
         Self::new_with_database_and_http_client_and_urls(
@@ -664,8 +631,6 @@ impl GatewayHandle {
             http_client,
             ConnectionUrls::default(),
             drop_wrapper,
-            available_tools,
-            tool_whitelist,
             config_in_database,
         )
         .await
@@ -682,8 +647,6 @@ impl GatewayHandle {
         http_client: TensorzeroHttpClient,
         connection_urls: ConnectionUrls,
         drop_wrapper: Option<DropWrapper>,
-        available_tools: HashSet<String>,
-        tool_whitelist: HashSet<String>,
         config_in_database: bool,
     ) -> Result<Self, DelayedError> {
         let rate_limiting_manager = Arc::new(RateLimitingManager::new_from_connections(
@@ -724,33 +687,11 @@ impl GatewayHandle {
             .ok()
         };
 
-        let db = Arc::new(DelegatingDatabaseConnection::new(
+        let _db = Arc::new(DelegatingDatabaseConnection::new(
             clickhouse_connection_info.clone(),
             postgres_connection_info.clone(),
             primary_datastore,
         ));
-        for (function_name, function_config) in &config.functions {
-            let experimentation = function_config.experimentation_with_namespaces();
-            experimentation
-                .base
-                .setup(
-                    db.clone(),
-                    function_name,
-                    &postgres_connection_info,
-                    cancel_token.clone(),
-                )
-                .await?;
-            for namespace_config in experimentation.namespaces.values() {
-                namespace_config
-                    .setup(
-                        db.clone(),
-                        function_name,
-                        &postgres_connection_info,
-                        cancel_token.clone(),
-                    )
-                    .await?;
-            }
-        }
         let auth_cache = create_auth_cache_from_config(&config);
 
         let config_snapshot_cache = Some(
@@ -760,70 +701,6 @@ impl GatewayHandle {
                 .build(),
         );
 
-        let unknown_whitelist_tools: Vec<&str> = tool_whitelist
-            .iter()
-            .filter(|name| !available_tools.contains(name.as_str()))
-            .map(|s| s.as_str())
-            .collect();
-        if !unknown_whitelist_tools.is_empty() {
-            return Err(DelayedError::new(ErrorDetails::AppState {
-                message: format!(
-                    "Unknown tool names in `autopilot.tool_whitelist`: {unknown_whitelist_tools:?}. \
-                     These tools do not exist and will never be auto-approved. \
-                     Check for typos in your configuration."
-                ),
-            }));
-        }
-
-        let spawn_client = if let Some(pool) = postgres_connection_info.get_pool() {
-            let queue_name = std::env::var("TENSORZERO_AUTOPILOT_QUEUE_NAME")
-                .unwrap_or_else(|_| "autopilot".to_string());
-            match SpawnClient::builder()
-                .pool(pool.clone())
-                .queue_name(&queue_name)
-                .build()
-                .await
-            {
-                Ok(client) => Some(Arc::new(client)),
-                Err(e) => {
-                    tracing::warn!("Failed to create `SpawnClient`: {e}");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let async_inference_spawn_client = if !config.gateway.async_inference.enabled {
-            None
-        } else if let Some(pool) = postgres_connection_info.get_pool() {
-            match SpawnClient::builder()
-                .pool(pool.clone())
-                .queue_name(&config.gateway.async_inference.queue_name)
-                .build()
-                .await
-            {
-                Ok(client) => Some(Arc::new(client)),
-                Err(e) => {
-                    tracing::warn!("Failed to create async inference `SpawnClient`: {e}");
-                    None
-                }
-            }
-        } else {
-            tracing::warn!(
-                "`gateway.async_inference.enabled` is set but Postgres is not enabled; \
-                 async inference endpoints will return an error"
-            );
-            None
-        };
-
-        let autopilot_client = setup_autopilot_client(
-            &postgres_connection_info,
-            deployment_id.as_ref(),
-            available_tools,
-            tool_whitelist,
-        )
-        .await?;
 
         if config.gateway.auth.enabled
             && matches!(postgres_connection_info, PostgresConnectionInfo::Disabled)
@@ -859,9 +736,6 @@ impl GatewayHandle {
                 deferred_tasks,
                 auth_cache,
                 config_snapshot_cache,
-                autopilot_client,
-                spawn_client,
-                async_inference_spawn_client,
                 deployment_id,
                 shutdown_token: cancel_token,
                 config_in_database,
@@ -902,9 +776,6 @@ impl SwappableAppStateData {
             deferred_tasks: TaskTracker::new(),
             auth_cache: None,
             config_snapshot_cache: None,
-            autopilot_client: None,
-            spawn_client: None,
-            async_inference_spawn_client: None,
             deployment_id: None,
             shutdown_token: CancellationToken::new(),
             config_in_database: self.config_in_database,
@@ -953,7 +824,7 @@ impl AppStateData {
     }
 
     /// Create an AppStateData for use with a historical config snapshot.
-    /// This version does not include auth_cache, config_snapshot_cache, autopilot_client,
+    /// This version does not include auth_cache, config_snapshot_cache,
     /// or deployment_id since those are specific to the live gateway.
     #[expect(clippy::too_many_arguments)]
     pub fn new_for_snapshot(
@@ -995,9 +866,6 @@ impl AppStateData {
             postgres_connection_info,
             auth_cache: None,
             config_snapshot_cache: None,
-            autopilot_client: None,
-            spawn_client: None,
-            async_inference_spawn_client: None,
             deployment_id: None,
             rate_limiting_manager,
             shutdown_token,
@@ -1273,72 +1141,6 @@ pub async fn setup_valkey_cache(
 /// - `TENSORZERO_AUTOPILOT_API_KEY`: Required to enable the client
 /// - `TENSORZERO_AUTOPILOT_BASE_URL`: Optional custom base URL (for testing)
 /// - `TENSORZERO_AUTOPILOT_QUEUE_NAME`: Optional queue name for tool dispatching
-async fn setup_autopilot_client(
-    postgres_connection_info: &PostgresConnectionInfo,
-    deployment_id: Option<&String>,
-    available_tools: HashSet<String>,
-    tool_whitelist: HashSet<String>,
-) -> Result<Option<Arc<AutopilotClient>>, DelayedError> {
-    match std::env::var("TENSORZERO_AUTOPILOT_API_KEY") {
-        Ok(api_key) => {
-            let pool = postgres_connection_info.get_pool().ok_or_else(|| {
-                DelayedError::new(ErrorDetails::AppState {
-                    message: "Autopilot client requires Postgres; set `TENSORZERO_POSTGRES_URL`."
-                        .to_string(),
-                })
-            })?;
-
-            // Require `deployment_id` (from ClickHouse) for autopilot
-            if deployment_id.is_none() {
-                return Err(DelayedError::new(ErrorDetails::AppState {
-                    message:
-                        "Failed to fetch the deployment ID from ClickHouse. Please make sure that ClickHouse is running and accessible."
-                            .to_string(),
-                }));
-            }
-            let queue_name = std::env::var("TENSORZERO_AUTOPILOT_QUEUE_NAME")
-                .unwrap_or_else(|_| "autopilot".to_string());
-
-            let mut builder = AutopilotClient::builder()
-                .api_key(api_key)
-                .spawn_pool(pool.clone())
-                .spawn_queue_name(queue_name)
-                .available_tools(available_tools)
-                .tool_whitelist(tool_whitelist)
-                .deployment_id(deployment_id.cloned().unwrap_or_default())
-                .tensorzero_version(crate::endpoints::status::TENSORZERO_VERSION.to_string());
-
-            // Allow custom base URL for testing
-            if let Ok(base_url) = std::env::var("TENSORZERO_AUTOPILOT_BASE_URL") {
-                let url = base_url.parse().map_err(|e| {
-                    DelayedError::new(ErrorDetails::AppState {
-                        message: format!("Invalid TENSORZERO_AUTOPILOT_BASE_URL: {e}"),
-                    })
-                })?;
-                builder = builder.base_url(url);
-                tracing::info!("Autopilot client using custom base URL: {}", base_url);
-            }
-
-            let client = builder.build().await.map_err(|e| {
-                DelayedError::new(ErrorDetails::AppState {
-                    message: format!("Failed to build autopilot client: {e}"),
-                })
-            })?;
-            // TODO: Handshake with API to validate credentials
-            tracing::info!("Autopilot client initialized");
-            Ok(Some(Arc::new(client)))
-        }
-        Err(std::env::VarError::NotPresent) => {
-            tracing::debug!(
-                "Autopilot client not configured: TENSORZERO_AUTOPILOT_API_KEY not set"
-            );
-            Ok(None)
-        }
-        Err(std::env::VarError::NotUnicode(_)) => Err(DelayedError::new(ErrorDetails::AppState {
-            message: "TENSORZERO_AUTOPILOT_API_KEY contains invalid UTF-8".to_string(),
-        })),
-    }
-}
 
 /// Custom Axum extractor that validates the JSON body and deserializes it into a custom type
 ///
@@ -1449,8 +1251,6 @@ pub async fn start_openai_compatible_gateway(
         postgres_url,
         valkey_url,
         None, // Embedded gateways use the same Valkey instance for rate limiting and caching
-        HashSet::new(), // available_tools
-        HashSet::new(), // tool_whitelist
         false,
     ))
     .await
@@ -1853,8 +1653,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await;
@@ -1891,8 +1689,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await;
@@ -1927,8 +1723,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await
@@ -1957,8 +1751,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await
@@ -1990,8 +1782,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(), // available_tools
-            HashSet::new(), // tool_whitelist
             false,
         )
         .await
@@ -2020,8 +1810,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await;
@@ -2056,8 +1844,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await
@@ -2086,8 +1872,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await
@@ -2183,8 +1967,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await;
@@ -2217,8 +1999,6 @@ mod tests {
             ValkeyConnectionInfo::Disabled,
             http_client,
             None,
-            HashSet::new(),
-            HashSet::new(),
             false,
         )
         .await

@@ -1,6 +1,5 @@
 // Modified by Delta-AI under Apache 2.0
 pub mod schema_dispatch;
-mod stored_autopilot_config;
 mod stored_clickhouse_config;
 mod stored_cost;
 mod stored_credential_location;
@@ -24,7 +23,6 @@ pub mod stored_variant_config;
 
 pub mod postgres;
 
-pub use stored_autopilot_config::{STORED_AUTOPILOT_CONFIG_SCHEMA_REVISION, StoredAutopilotConfig};
 pub use stored_clickhouse_config::{
     STORED_CLICKHOUSE_CONFIG_SCHEMA_REVISION, StoredClickHouseConfig,
 };

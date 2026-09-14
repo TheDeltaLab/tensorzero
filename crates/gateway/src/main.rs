@@ -19,18 +19,12 @@ use tokio::signal;
 use tokio_stream::wrappers::IntervalStream;
 use tracing::Level;
 
-use async_inference::{
-    AsyncInferenceState, AsyncInferenceWorkerConfig, spawn_async_inference_worker,
-};
-use autopilot_worker::{AutopilotWorkerConfig, AutopilotWorkerHandle, spawn_autopilot_worker};
-use durable_tools::{EmbeddedClient, WorkerOptions};
 use tensorzero_auth::constants::{DEFAULT_ORGANIZATION, DEFAULT_WORKSPACE};
 use tensorzero_core::config::{Config, ConfigFileGlob, unwritten::UnwrittenConfig};
 use tensorzero_core::db::clickhouse::migration_manager::manual_run_clickhouse_migrations;
 use tensorzero_core::db::delegating_connection::PrimaryDatastore;
 use tensorzero_core::db::postgres::postgres_setup::{
-    check_pgcron_configured_correctly, check_pgvector_configured_correctly,
-    check_trigram_indexes_configured_correctly,
+    check_pgcron_configured_correctly, check_trigram_indexes_configured_correctly,
 };
 use tensorzero_core::db::postgres::{PostgresConnectionInfo, manual_run_postgres_migrations};
 use tensorzero_core::db::valkey::ValkeyConnectionInfo;
@@ -307,39 +301,6 @@ async fn handle_import_synapse_api_key(
     Ok(())
 }
 
-async fn run_optimization_postgres_migrations() -> Result<(), Error> {
-    let postgres_url = std::env::var("TENSORZERO_POSTGRES_URL").map_err(|_| {
-        Error::new(ErrorDetails::PostgresConnectionInitialization {
-            message: "Failed to read TENSORZERO_POSTGRES_URL environment variable".to_string(),
-        })
-    })?;
-    let pool = sqlx::PgPool::connect(&postgres_url).await.map_err(|e| {
-        Error::new(ErrorDetails::PostgresConnectionInitialization {
-            message: e.to_string(),
-        })
-    })?;
-
-    // The migration error is silently swallowed, because we don't want to require pgvector yet.
-    // TODO(#6912): require optimization migrations to run correctly soon.
-    if let Err(e) = tensorzero_optimizers::postgres::make_migrator()
-        .run(&pool)
-        .await
-    {
-        tracing::warn!(
-            "Failed to run Postgres migrations for optimization: {e}. This is non-fatal, but TensorZero will require them soon."
-        );
-    }
-
-    if let Err(e) = check_pgvector_configured_correctly(&pool).await {
-        let msg = e.suppress_logging_of_error_message();
-        tracing::warn!(
-            "pgvector extension is not configured correctly for your Postgres setup: {msg}. TensorZero will start requiring pgvector soon.",
-        );
-    }
-
-    Ok(())
-}
-
 async fn handle_disable_api_key(public_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let postgres_url = std::env::var("TENSORZERO_POSTGRES_URL")
         .map_err(|_| "TENSORZERO_POSTGRES_URL environment variable not set")?;
@@ -366,10 +327,9 @@ async fn validate_postgres_extensions_for_postgres_primary(
         return Err(ExitCode::FAILURE);
     };
 
-    let (pgcron_result, trigram_result, pgvector_result) = tokio::join!(
+    let (pgcron_result, trigram_result) = tokio::join!(
         check_pgcron_configured_correctly(pgpool),
         check_trigram_indexes_configured_correctly(pgpool),
-        check_pgvector_configured_correctly(pgpool),
     );
 
     let mut has_fatal_error = false;
@@ -382,10 +342,6 @@ async fn validate_postgres_extensions_for_postgres_primary(
     if let Err(e) = trigram_result {
         e.log_at_level("Postgres is configured to be the primary observability backend, but trigram indices are not configured correctly: ", Level::ERROR);
         has_fatal_error = true;
-    }
-
-    if let Err(e) = pgvector_result {
-        e.log_at_level("TensorZero will require pgvector soon for deployments with Postgres, and pgvector is not configured correctly: ", Level::WARN);
     }
 
     if has_fatal_error {
@@ -452,10 +408,6 @@ async fn run() -> Result<(), ExitCode> {
         manual_run_postgres_migrations()
             .await
             .log_err_pretty("Failed to run Postgres migrations")?;
-
-        run_optimization_postgres_migrations()
-            .await
-            .log_err_pretty("Failed to run optimization Postgres migrations.")?;
 
         tracing::info!("Postgres is ready.");
         return Ok(());
@@ -635,47 +587,15 @@ async fn run() -> Result<(), ExitCode> {
         );
     }
 
-    // Collect available tool names for autopilot (single source of truth)
-    let available_tools = autopilot_tools::collect_tool_names()
-        .await
-        .log_err_pretty("Failed to collect autopilot tool names")?;
-
-    // Resolve tool whitelist from config
-    let tool_whitelist: std::collections::HashSet<String> =
-        match &unwritten_config.autopilot.tool_whitelist {
-            Some(list) => list.iter().cloned().collect(),
-            None => autopilot_tools::default_whitelisted_tool_names(),
-        };
-
     // Initialize GatewayHandle
-    let gateway_handle = gateway::GatewayHandle::new(
-        unwritten_config,
-        available_tools,
-        tool_whitelist,
-        config_in_database,
-    )
-    .await
-    .map_err(|e| {
-        e.log_at_level("Failed to initialize AppState: ", tracing::Level::ERROR);
-        ExitCode::FAILURE
-    })?;
+    let gateway_handle = gateway::GatewayHandle::new(unwritten_config, config_in_database)
+        .await
+        .map_err(|e| {
+            e.log_at_level("Failed to initialize AppState: ", tracing::Level::ERROR);
+            ExitCode::FAILURE
+        })?;
 
     validate_postgres_extensions_for_postgres_primary(&gateway_handle).await?;
-
-    // Start autopilot worker if configured
-    let autopilot_worker_handle = spawn_autopilot_worker_if_configured(&gateway_handle).await?;
-
-    // Start async inference worker if `[gateway.async_inference]` is enabled
-    spawn_async_inference_worker_if_configured(&gateway_handle).await?;
-
-    // Start tool whitelist approver if configured
-    if let Some(client) = gateway_handle.app_state.autopilot_client.clone() {
-        let token = gateway_handle.app_state.shutdown_token.clone();
-        gateway_handle
-            .app_state
-            .deferred_tasks
-            .spawn(async move { client.run_tool_whitelist_approver(token).await });
-    }
 
     // Create a new observability_enabled_pretty string for the log message below
     let postgres_enabled_pretty =
@@ -705,10 +625,7 @@ async fn run() -> Result<(), ExitCode> {
         delayed_log_config.otel_tracer.clone(),
         gateway_handle.app_state.clone(),
         metrics_handle,
-        gateway_handle.app_state.shutdown_token.clone(),
-    )
-    .await
-    .log_err_pretty("Failed to build router")?;
+    );
 
     // Bind to the socket address specified in the CLI, config, or default to 0.0.0.0:3000
     if args.bind_address.is_some() && config.gateway.bind_address.is_some() {
@@ -815,25 +732,6 @@ async fn run() -> Result<(), ExitCode> {
         tracing::info!("├ Relay mode: enabled (gateway_url = {gateway_url})");
     } else {
         tracing::info!("├ Relay mode: disabled");
-    }
-
-    // Print whether Autopilot Worker is enabled
-    if autopilot_worker_handle.is_some() {
-        tracing::info!("├ Autopilot Worker: enabled");
-    } else {
-        tracing::info!("├ Autopilot Worker: disabled");
-    }
-
-    // Print whether Autopilot Tool Whitelist Approver is enabled
-    if let Some(client) = gateway_handle.app_state.autopilot_client.as_ref() {
-        let count = client.tool_whitelist.len();
-        if count > 0 {
-            tracing::info!("├ Autopilot Tool Whitelist Approver: enabled ({count} tools)");
-        } else {
-            tracing::info!("├ Autopilot Tool Whitelist Approver: disabled (empty whitelist)");
-        }
-    } else {
-        tracing::info!("├ Autopilot Tool Whitelist Approver: disabled");
     }
 
     // Print whether OpenTelemetry is enabled
@@ -1028,131 +926,6 @@ pub async fn shutdown_signal() {
             tracing::info!("Received SIGHUP signal");
         }
     };
-}
-
-/// Spawn the durable worker if Postgres is configured.
-///
-/// The worker processes tasks from the durable queue. It starts whenever Postgres
-/// is available, regardless of whether the autopilot API key is set. This allows
-/// standalone durable tools (e.g. GEPA) to run without autopilot credentials.
-async fn spawn_autopilot_worker_if_configured(
-    gateway_handle: &gateway::GatewayHandle,
-) -> Result<Option<AutopilotWorkerHandle>, ExitCode> {
-    // Only start if Postgres is enabled (needed for durable task queue)
-    let pool = match gateway_handle.app_state.postgres_connection_info() {
-        PostgresConnectionInfo::Enabled { pool, .. } => pool.clone(),
-        PostgresConnectionInfo::Disabled => {
-            if std::env::var("TENSORZERO_AUTOPILOT_API_KEY").is_ok() {
-                tracing::error!(
-                    "`TENSORZERO_AUTOPILOT_API_KEY` is set, but Postgres is not enabled."
-                );
-                return Err(ExitCode::FAILURE);
-            }
-            return Ok(None);
-        }
-        #[cfg(test)]
-        #[expect(unreachable_patterns)]
-        _ => return Ok(None),
-    };
-
-    // Create an embedded TensorZero client using the gateway's state
-    let t0_client =
-        std::sync::Arc::new(EmbeddedClient::new(gateway_handle.app_state.load_latest()));
-
-    // TODO: decide how we want to do autopilot config.
-    let default_max_attempts = 5;
-    let worker_options = WorkerOptions {
-        poll_interval: Duration::from_secs(1),
-        concurrency: 8,
-        ..Default::default()
-    };
-    let config = AutopilotWorkerConfig::new(pool, t0_client, default_max_attempts, worker_options);
-
-    Ok(Some(
-        spawn_autopilot_worker(
-            &gateway_handle.app_state.deferred_tasks,
-            gateway_handle.app_state.shutdown_token.clone(),
-            config,
-        )
-        .await
-        .log_err_pretty("Failed to spawn autopilot worker")?,
-    ))
-}
-
-/// Spawn the async inference worker if `[gateway.async_inference]` is enabled.
-///
-/// The worker executes tasks from the durable queue shared with the submit
-/// endpoints. Async inference requires Postgres (durable task queue) and
-/// Valkey (per-task SSE event streams); enabled config without either is a
-/// startup error.
-async fn spawn_async_inference_worker_if_configured(
-    gateway_handle: &gateway::GatewayHandle,
-) -> Result<(), ExitCode> {
-    let async_config = gateway_handle
-        .app_state
-        .config()
-        .load()
-        .gateway
-        .async_inference
-        .clone();
-    if !async_config.enabled {
-        return Ok(());
-    }
-
-    let pool = match gateway_handle.app_state.postgres_connection_info() {
-        PostgresConnectionInfo::Enabled { pool, .. } => pool,
-        PostgresConnectionInfo::Disabled => {
-            tracing::error!(
-                "`gateway.async_inference.enabled` is set, but Postgres is not enabled. \
-                 Async inference requires Postgres for the durable task queue."
-            );
-            return Err(ExitCode::FAILURE);
-        }
-        #[cfg(test)]
-        #[expect(unreachable_patterns)]
-        _ => return Err(ExitCode::FAILURE),
-    };
-
-    let valkey = match gateway_handle
-        .app_state
-        .valkey_connection_info()
-        .get_connection()
-    {
-        Some(connection) => connection.clone(),
-        None => {
-            tracing::error!(
-                "`gateway.async_inference.enabled` is set, but Valkey is not configured. \
-                 Async inference requires Valkey for task event streams."
-            );
-            return Err(ExitCode::FAILURE);
-        }
-    };
-
-    let state = AsyncInferenceState {
-        app_state: gateway_handle.app_state.clone(),
-        valkey,
-        stream_ttl: Duration::from_secs(async_config.stream_ttl_seconds),
-    };
-    let worker_options = WorkerOptions {
-        poll_interval: Duration::from_millis(500),
-        concurrency: async_config.concurrency,
-        ..Default::default()
-    };
-    let config = AsyncInferenceWorkerConfig {
-        pool,
-        queue_name: async_config.queue_name,
-        state,
-        worker_options,
-    };
-
-    spawn_async_inference_worker(
-        &gateway_handle.app_state.deferred_tasks,
-        gateway_handle.app_state.shutdown_token.clone(),
-        config,
-    )
-    .await
-    .log_err_pretty("Failed to spawn async inference worker")?;
-    Ok(())
 }
 
 /// ┌──────────────────────────────────────────────────────────────────────────┐

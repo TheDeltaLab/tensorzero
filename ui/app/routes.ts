@@ -14,28 +14,6 @@ export default [
     route("auth/set_gateway_key", "routes/api/auth/set_gateway_key.route.ts"),
 
     route(
-      "curated_inferences/count",
-      "routes/api/curated_inferences/count.route.ts",
-    ),
-
-    route("inferences/count", "routes/api/inferences/count.route.ts"),
-
-    ...prefix("datasets", [
-      route("counts", "routes/api/datasets/counts.route.ts"),
-    ]),
-
-    route(
-      "workflow_evaluations/search_runs",
-      "routes/api/workflow_evaluations/search_runs/route.ts",
-    ),
-    route(
-      "evaluations/search_runs",
-      "routes/api/evaluations/search_runs/route.ts",
-    ),
-
-    route("evaluations/cancel", "routes/api/evaluations/cancel.route.ts"),
-
-    route(
       "function/:function_name/feedback_counts",
       "routes/api/function/$function_name/feedback_counts.route.ts",
     ),
@@ -67,99 +45,11 @@ export default [
       "routes/api/inference/$inference_id/protection/route.ts",
     ),
 
-    route(
-      "datasets/datapoints/from-inference",
-      "routes/api/datasets/datapoints/from-inference/route.ts",
-    ),
-
     route("feedback", "routes/api/feedback/route.ts"),
-
-    route(
-      "autopilot/sessions/:session_id/events",
-      "routes/api/autopilot/sessions/$session_id/events/route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/events/stream",
-      "routes/api/autopilot/sessions/$session_id/events/stream.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/events/authorize",
-      "routes/api/autopilot/sessions/$session_id/events/authorize.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/events/answer-questions",
-      "routes/api/autopilot/sessions/$session_id/events/answer-questions.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/events/message",
-      "routes/api/autopilot/sessions/$session_id/events/message.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/actions/interrupt",
-      "routes/api/autopilot/sessions/$session_id/actions/interrupt.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/config-apply/apply",
-      "routes/api/autopilot/sessions/$session_id/config-apply/apply.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/config-apply/apply-all",
-      "routes/api/autopilot/sessions/$session_id/config-apply/apply-all.route.ts",
-    ),
-    route(
-      "autopilot/sessions/:session_id/actions/approve_all",
-      "routes/api/autopilot/sessions/$session_id/actions/approve_all.route.ts",
-    ),
-  ]),
-
-  // Datasets
-  route("datasets", "routes/datasets/layout.tsx", [
-    index("routes/datasets/route.tsx"),
-    route("builder", "routes/datasets/builder/route.tsx"),
-    route(":dataset_name", "routes/datasets/$dataset_name/layout.tsx", [
-      index("routes/datasets/$dataset_name/route.tsx"),
-      route(
-        "datapoint/:id",
-        "routes/datasets/$dataset_name/datapoint/$id/route.tsx",
-      ),
-    ]),
-  ]),
-
-  // Datapoints
-  route("datapoints", "routes/datapoints/layout.tsx", [
-    route("new", "routes/datapoints/new/route.tsx"),
-  ]),
-
-  // Evaluations
-  route("evaluations", "routes/evaluations/layout.tsx", [
-    index("routes/evaluations/route.tsx"),
-    route("runs", "routes/evaluations/runs.tsx"),
-    route("results/:datapoint_id", "routes/evaluations/results/route.tsx"),
-  ]),
-
-  // Workflow Evaluations (formerly Dynamic Evaluations)
-  route("workflow-evaluations", "routes/workflow-evaluations/layout.tsx", [
-    index("routes/workflow-evaluations/route.tsx"),
-    route("runs/:run_id", "routes/workflow-evaluations/runs/$run_id/route.tsx"),
-    route(
-      "projects/:project_name",
-      "routes/workflow-evaluations/projects/$project_name/route.tsx",
-    ),
-  ]),
-
-  // Autopilot
-  route("autopilot", "routes/autopilot/layout.tsx", [
-    index("routes/autopilot/route.tsx"),
-    route("sessions", "routes/autopilot/sessions/layout.tsx", [
-      index("routes/autopilot/sessions/route.tsx"),
-      // "new" is handled as a special case in the $session_id route
-      route(":session_id", "routes/autopilot/sessions/$session_id/route.tsx"),
-    ]),
   ]),
 
   // Playground
   route("playground", "routes/playground/route.tsx"),
-  route("playground/functions", "routes/playground/functions.tsx"),
   route("playground/embeddings", "routes/playground/embeddings.tsx"),
   route("playground/rerank", "routes/playground/rerank.tsx"),
 
@@ -198,21 +88,11 @@ export default [
     route("analysis", "routes/observability/analysis/route.tsx"),
   ]),
 
-  // Optimization
-  route(
-    "optimization/supervised-fine-tuning/:job_id?",
-    "routes/optimization/supervised-fine-tuning/route.tsx",
-  ),
-
   // API Keys
   route("api-keys", "routes/api-keys/route.tsx"),
 
   // Inference storage management
   route("storage", "routes/storage/route.tsx"),
-
-  // Async Tasks
-  route("async-tasks", "routes/async-tasks/route.tsx"),
-  route("async-tasks/:taskId", "routes/async-tasks/$taskId/route.tsx"),
 
   // Dashboard users (Azure allowlist)
   route("users", "routes/users/route.tsx"),

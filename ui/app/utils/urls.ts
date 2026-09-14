@@ -58,57 +58,6 @@ export function toEpisodeUrl(episodeId: string): string {
 }
 
 // ============================================================================
-// Datasets
-// ============================================================================
-
-export function toDatasetUrl(datasetName: string): string {
-  return `/datasets/${encodeURIComponent(datasetName)}`;
-}
-
-export function toDatapointUrl(
-  datasetName: string,
-  datapointId: string,
-): string {
-  return `/datasets/${encodeURIComponent(datasetName)}/datapoint/${encodeURIComponent(datapointId)}`;
-}
-
-// ============================================================================
-// Evaluations
-// ============================================================================
-
-export function toEvaluationRunsUrl(runIds: string | string[]): string {
-  const ids = Array.isArray(runIds) ? runIds.join(",") : runIds;
-  return `/evaluations/runs?evaluation_run_ids=${encodeURIComponent(ids)}`;
-}
-
-export function toEvaluationDatapointUrl(
-  datapointId: string,
-  queryParams: { evaluation_run_ids: string },
-): string {
-  return `/evaluations/results/${encodeURIComponent(datapointId)}?evaluation_run_ids=${encodeURIComponent(queryParams.evaluation_run_ids)}`;
-}
-
-// ============================================================================
-// Workflow Evaluations
-// ============================================================================
-
-export function toWorkflowEvaluationRunUrl(runId: string): string {
-  return `/workflow-evaluations/runs/${encodeURIComponent(runId)}`;
-}
-
-export function toWorkflowEvaluationProjectUrl(projectName: string): string {
-  return `/workflow-evaluations/projects/${encodeURIComponent(projectName)}`;
-}
-
-// ============================================================================
-// Optimization
-// ============================================================================
-
-export function toSupervisedFineTuningJobUrl(jobId: string): string {
-  return `/optimization/supervised-fine-tuning/${encodeURIComponent(jobId)}`;
-}
-
-// ============================================================================
 // Resolved Object URLs
 // ============================================================================
 
@@ -123,7 +72,6 @@ export function toResolvedObjectUrl(
       return toEpisodeUrl(uuid);
     case "chat_datapoint":
     case "json_datapoint":
-      return toDatapointUrl(obj.dataset_name, uuid);
     case "model_inference":
     case "boolean_feedback":
     case "float_feedback":

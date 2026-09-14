@@ -9,18 +9,16 @@ use serde::de::DeserializeOwned;
 use sqlx::{PgPool, Row};
 
 use tensorzero_core::config::{
-    AutopilotConfig, ClickHouseConfig, MetricConfig, MetricConfigLevel, MetricConfigOptimize,
-    MetricConfigType, PostgresConfig, UninitializedConfig, UninitializedFunctionConfig,
+    ClickHouseConfig, MetricConfig, MetricConfigLevel, MetricConfigOptimize,
+    MetricConfigType, PostgresConfig, UninitializedConfig,
     UninitializedToolConfig, path::ResolvedTomlPathData,
 };
 use tensorzero_core::db::postgres::PostgresConnectionInfo;
 use tensorzero_core::db::postgres::stored_config_queries::load_config_from_db;
 use tensorzero_core::db::postgres::stored_config_writes::WriteStoredConfigParams;
 use tensorzero_core::embeddings::UninitializedEmbeddingModelConfig;
-use tensorzero_core::evaluations::UninitializedEvaluationConfig;
 use tensorzero_core::inference::types::storage::StorageKind;
 use tensorzero_core::model::UninitializedModelConfig;
-use tensorzero_core::optimization::UninitializedOptimizerInfo;
 use tensorzero_core::rate_limiting::UninitializedRateLimitingConfig;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -93,14 +91,11 @@ async fn write_stored_config_empty_config_writes_no_rows(pool: PgPool) {
         "postgres_configs",
         "object_storage_configs",
         "rate_limiting_configs",
-        "autopilot_configs",
         "provider_types_configs",
         "models_configs",
         "embedding_models_configs",
         "metrics_configs",
-        "optimizers_configs",
         "tools_configs",
-        "evaluations_configs",
         "function_configs",
         "stored_files",
     ] {
@@ -111,7 +106,7 @@ async fn write_stored_config_empty_config_writes_no_rows(pool: PgPool) {
 // ── Tests: singleton tables ───────────────────────────────────────────────────
 
 /// Populate every singleton-backed config field (gateway, clickhouse, postgres,
-/// object_storage, rate_limiting, autopilot, provider_types) and assert that
+/// object_storage, rate_limiting, provider_types) and assert that
 /// one row is written to each singleton table with the expected contents.
 #[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
 async fn write_stored_config_persists_singleton_configs(pool: PgPool) {
@@ -163,9 +158,6 @@ async fn write_stored_config_persists_singleton_configs(pool: PgPool) {
         }),
         object_storage: Some(StorageKind::Disabled),
         rate_limiting: Some(rate_limiting),
-        autopilot: Some(AutopilotConfig {
-            tool_whitelist: Some(vec!["ls".to_string(), "cat".to_string()]),
-        }),
         provider_types: Some(provider_types),
         ..Default::default()
     };
@@ -237,11 +229,6 @@ async fn write_stored_config_persists_singleton_configs(pool: PgPool) {
         })
     );
 
-    assert_that!(
-        fetch_latest_singleton_config(&pool, "autopilot_configs").await,
-        matches_json_literal!({ "tool_whitelist": ["ls", "cat"] })
-    );
-
     // Provider types: `CredentialLocationWithFallback` is internally tagged, so
     // the stored JSON nests `type: single` around a `StoredCredentialLocation`.
     assert_that!(
@@ -287,7 +274,7 @@ async fn write_stored_config_singletons_are_append_only(pool: PgPool) {
 
 // ── Tests: named-collection tables ────────────────────────────────────────────
 
-/// Populate models, embedding models, metrics, and optimizers and assert that
+/// Populate models, embedding models, metrics and assert that
 /// each named-collection table receives one row per entry with the expected
 /// values.
 #[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
@@ -313,13 +300,6 @@ async fn write_stored_config_persists_named_collections(pool: PgPool) {
                 }
             }
         }));
-    let dicl_optimizer: UninitializedOptimizerInfo = deserialize_from_json(serde_json::json!({
-        "type": "dicl",
-        "embedding_model": "embed_provider",
-        "variant_name": "variant_a",
-        "function_name": "function_a",
-        "k": 5
-    }));
 
     let config = UninitializedConfig {
         models: Some(HashMap::from([(
@@ -338,10 +318,6 @@ async fn write_stored_config_persists_named_collections(pool: PgPool) {
                 level: MetricConfigLevel::Inference,
                 description: Some("Quality score".to_string()),
             },
-        )])),
-        optimizers: Some(HashMap::from([(
-            "dicl_optimizer".to_string(),
-            dicl_optimizer,
         )])),
         ..Default::default()
     };
@@ -391,116 +367,6 @@ async fn write_stored_config_persists_named_collections(pool: PgPool) {
         })
     );
 
-    // Optimizers.
-    assert_that!(count_rows(&pool, "optimizers_configs").await, eq(1));
-    assert_that!(
-        fetch_named_config(&pool, "optimizers_configs", "dicl_optimizer").await,
-        partially(matches_json_literal!({
-            "type": "dicl",
-            "embedding_model": "embed_provider",
-            "variant_name": "variant_a",
-            "function_name": "function_a",
-            "k": 5,
-        }))
-    );
-}
-
-/// Upserting a named-collection config with the same name should replace the
-/// prior row rather than insert a duplicate.
-#[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
-async fn write_stored_config_named_collections_upsert_by_name(pool: PgPool) {
-    let postgres = PostgresConnectionInfo::new_with_pool(pool.clone());
-
-    let config_v1 = UninitializedConfig {
-        metrics: Some(HashMap::from([(
-            "quality".to_string(),
-            MetricConfig {
-                r#type: MetricConfigType::Boolean,
-                optimize: MetricConfigOptimize::Min,
-                level: MetricConfigLevel::Episode,
-                description: Some("v1".to_string()),
-            },
-        )])),
-        ..Default::default()
-    };
-    postgres
-        .write_stored_config(default_write_params(&config_v1))
-        .await
-        .expect("first write should succeed");
-
-    let config_v2 = UninitializedConfig {
-        metrics: Some(HashMap::from([(
-            "quality".to_string(),
-            MetricConfig {
-                r#type: MetricConfigType::Float,
-                optimize: MetricConfigOptimize::Max,
-                level: MetricConfigLevel::Inference,
-                description: Some("v2".to_string()),
-            },
-        )])),
-        ..Default::default()
-    };
-    postgres
-        .write_stored_config(default_write_params(&config_v2))
-        .await
-        .expect("second write should succeed");
-
-    assert_that!(count_rows(&pool, "metrics_configs").await, eq(1));
-    assert_that!(
-        fetch_named_config(&pool, "metrics_configs", "quality").await,
-        matches_json_literal!({
-            "type": "float",
-            "optimize": "max",
-            "level": "inference",
-            "description": "v2",
-        })
-    );
-}
-
-// ── Tests: tools with stored files ────────────────────────────────────────────
-
-/// Writing a tool should persist the tool row referencing a stored file
-/// row that contains the tool's parameters schema.
-#[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
-async fn write_stored_config_persists_tool_with_file(pool: PgPool) {
-    let postgres = PostgresConnectionInfo::new_with_pool(pool.clone());
-
-    let tool = UninitializedToolConfig {
-        description: "Look up weather".to_string(),
-        parameters: fake_template(
-            "tools.get_weather.parameters",
-            "{\"type\":\"object\",\"properties\":{\"city\":{\"type\":\"string\"}}}",
-        ),
-        name: Some("get_weather".to_string()),
-        strict: true,
-    };
-    let config = UninitializedConfig {
-        tools: Some(HashMap::from([("get_weather".to_string(), tool)])),
-        ..Default::default()
-    };
-
-    postgres
-        .write_stored_config(default_write_params(&config))
-        .await
-        .expect("tool write should succeed");
-
-    assert_that!(count_rows(&pool, "tools_configs").await, eq(1));
-    assert_that!(count_rows(&pool, "stored_files").await, eq(1));
-
-    // The tool's `parameters.file_version_id` is a freshly-generated UUID,
-    // so we only assert on the fields we can predict.
-    assert_that!(
-        fetch_named_config(&pool, "tools_configs", "get_weather").await,
-        partially(matches_json_literal!({
-            "description": "Look up weather",
-            "name": "get_weather",
-            "strict": true,
-            "parameters": {
-                "file_path": "tools.get_weather.parameters",
-            },
-        }))
-    );
-
     // Verify the stored file row exists for the referenced path and points
     // back to the same `file_version_id` the tool stored.
     let stored_tool = fetch_named_config(&pool, "tools_configs", "get_weather").await;
@@ -521,114 +387,6 @@ async fn write_stored_config_persists_tool_with_file(pool: PgPool) {
     assert_that!(template_id.to_string(), eq(template_version_id));
     let source_body: String = template_row.get("source_body");
     assert_that!(source_body, contains_substring("\"city\""));
-}
-
-// ── Tests: evaluations with stored files ──────────────────────────────────────
-
-/// Writing an evaluation with an LLM-judge variant should persist the
-/// evaluation row and one stored file row per variant.
-#[sqlx::test(migrator = "tensorzero_stored_config::postgres::MIGRATOR")]
-async fn write_stored_config_persists_evaluation_with_file(pool: PgPool) {
-    let postgres = PostgresConnectionInfo::new_with_pool(pool.clone());
-
-    // `UninitializedEvaluationConfig` has a custom deserializer that reads
-    // `type = "inference"` and the evaluator keys inline, so JSON is the
-    // cleanest way to build one from an integration test.
-    let evaluation: UninitializedEvaluationConfig = deserialize_from_json(serde_json::json!({
-        "type": "inference",
-        "function_name": "basic_test",
-        "description": "End-to-end evaluation",
-        "evaluators": {
-            "judge": {
-                "type": "llm_judge",
-                "input_format": "serialized",
-                "output_type": "boolean",
-                "optimize": "max",
-                "variants": {
-                    "judge_chat": {
-                        "type": "chat_completion",
-                        "active": true,
-                        "model": "openai::gpt-5-mini",
-                        "system_instructions": {
-                            "__tensorzero_remapped_path":
-                                "evaluations.my_eval.evaluators.judge.variants.judge_chat.system_instructions",
-                            "__data": "Judge this response carefully"
-                        },
-                        "json_mode": "strict"
-                    }
-                }
-            }
-        }
-    }));
-
-    // The evaluation references `basic_test`, so the full-config validation
-    // performed at the top of `write_stored_config` requires the function to
-    // exist. A minimal chat function with a shortcut-model variant is enough.
-    let basic_test: UninitializedFunctionConfig = deserialize_from_json(serde_json::json!({
-        "type": "chat",
-        "variants": {
-            "default": {
-                "type": "chat_completion",
-                "model": "dummy::good",
-            }
-        }
-    }));
-
-    let config = UninitializedConfig {
-        functions: Some(HashMap::from([("basic_test".to_string(), basic_test)])),
-        evaluations: Some(HashMap::from([("my_eval".to_string(), evaluation)])),
-        ..Default::default()
-    };
-
-    postgres
-        .write_stored_config(default_write_params(&config))
-        .await
-        .expect("evaluation write should succeed");
-
-    assert_that!(count_rows(&pool, "evaluations_configs").await, eq(1));
-    assert_that!(count_rows(&pool, "stored_files").await, eq(1));
-
-    assert_that!(
-        fetch_named_config(&pool, "evaluations_configs", "my_eval").await,
-        partially(matches_json_literal!({
-            "type": "inference",
-            "function_name": "basic_test",
-            "description": "End-to-end evaluation",
-            "evaluators": {
-                "judge": {
-                    "type": "llm_judge",
-                    "input_format": "serialized",
-                    "output_type": "boolean",
-                    "optimize": "max",
-                    "variants": {
-                        "judge_chat": {
-                            "variant": {
-                                "type": "chat_completion",
-                                "active": true,
-                                "model": "openai::gpt-5-mini",
-                                "json_mode": "strict",
-                                "system_instructions": {
-                                    "file_path": "evaluations.my_eval.evaluators.judge.variants.judge_chat.system_instructions",
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        }))
-    );
-
-    let template_row = sqlx::query("SELECT file_path, source_body FROM tensorzero.stored_files")
-        .fetch_one(&pool)
-        .await
-        .expect("stored file row should exist");
-    let file_path: String = template_row.get("file_path");
-    assert_that!(
-        file_path,
-        eq("evaluations.my_eval.evaluators.judge.variants.judge_chat.system_instructions")
-    );
-    let source_body: String = template_row.get("source_body");
-    assert_that!(source_body, eq("Judge this response carefully"));
 }
 
 // ── Tests: read-back via load_config_from_db ──────────────────────────────────
@@ -687,9 +445,6 @@ async fn write_stored_config_round_trips_via_load_config_from_db(pool: PgPool) {
             inference_data_retention_days: Some(7),
         }),
         object_storage: Some(StorageKind::Disabled),
-        autopilot: Some(AutopilotConfig {
-            tool_whitelist: Some(vec!["ls".to_string(), "cat".to_string()]),
-        }),
         models: Some(HashMap::from([(
             std::sync::Arc::<str>::from("model_a"),
             model.clone(),
@@ -731,14 +486,6 @@ async fn write_stored_config_round_trips_via_load_config_from_db(pool: PgPool) {
     assert_that!(
         loaded.config.object_storage.as_ref(),
         some(eq(&StorageKind::Disabled))
-    );
-    assert_that!(
-        loaded
-            .config
-            .autopilot
-            .as_ref()
-            .and_then(|a| a.tool_whitelist.as_deref()),
-        some(elements_are![eq("ls"), eq("cat")])
     );
     assert_that!(
         loaded

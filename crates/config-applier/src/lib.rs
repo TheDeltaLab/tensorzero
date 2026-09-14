@@ -10,7 +10,7 @@ mod path_resolver;
 mod toml_writer;
 
 pub use edit::{
-    EditPayload, UpsertEvaluationPayload, UpsertEvaluatorPayload, UpsertExperimentationPayload,
+    EditPayload,
     UpsertVariantPayload,
 };
 pub use error::ConfigApplierError;
@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use locator::LoadedConfigFile;
 use path_resolver::FileToWrite;
 use tensorzero_core::config::{ConfigFileGlob, UninitializedVariantConfig};
-use tensorzero_core::evaluations::{UninitializedEvaluationConfig, UninitializedEvaluatorConfig};
 use tensorzero_core::utils::retries::RetryConfig;
 use toml_edit::DocumentMut;
 
@@ -29,17 +28,6 @@ use toml_edit::DocumentMut;
 /// `strip_empty_tables` removes empty inline tables like `variants = {}`, but some evaluator
 /// types (e.g. `llm_judge`) require `variants` to be present. We reject these early so we
 /// never write invalid config.
-fn validate_evaluator(evaluator: &UninitializedEvaluatorConfig) -> Result<(), ConfigApplierError> {
-    if let UninitializedEvaluatorConfig::LLMJudge(config) = evaluator
-        && config.variants.is_empty()
-    {
-        return Err(ConfigApplierError::InvalidEvaluatorConfig {
-            message: "LLM judge evaluator must have at least one variant".to_string(),
-        });
-    }
-    Ok(())
-}
-
 /// Convert subtables to inline tables, strip the given keys, and remove empty tables.
 ///
 /// This must be called after `extract_resolved_paths` (which needs regular tables)
@@ -105,11 +93,6 @@ impl ConfigApplier {
     ) -> Result<Vec<PathBuf>, ConfigApplierError> {
         let files_to_write = match edit {
             EditPayload::UpsertVariant(payload) => self.apply_upsert_variant(payload)?,
-            EditPayload::UpsertExperimentation(payload) => {
-                self.apply_upsert_experimentation(payload)?
-            }
-            EditPayload::UpsertEvaluation(payload) => self.apply_upsert_evaluation(payload)?,
-            EditPayload::UpsertEvaluator(payload) => self.apply_upsert_evaluator(payload)?,
         };
 
         // Write all files (TOML and any extracted template/schema files)
@@ -197,140 +180,6 @@ impl ConfigApplier {
         Ok(files)
     }
 
-    fn apply_upsert_experimentation(
-        &mut self,
-        payload: &UpsertExperimentationPayload,
-    ) -> Result<Vec<FileToWrite>, ConfigApplierError> {
-        path_resolver::validate_path_component(&payload.function_name, "function_name")?;
-
-        let location = locator::locate_function(&mut self.files, &payload.function_name)?;
-
-        // Serialize the experimentation config to a TOML item
-        let mut experimentation_item = toml_writer::serialize_to_item(&payload.experimentation)?;
-
-        // Convert subtables to inline and remove empty tables
-        clean_serialized_item(&mut experimentation_item, &[]);
-
-        // Apply the edit to the document
-        toml_writer::upsert_experimentation(
-            &mut location.file.document,
-            &payload.function_name,
-            experimentation_item,
-        )?;
-
-        // Prepare files to write (just the TOML file, no templates for experimentation)
-        let files = vec![FileToWrite {
-            absolute_path: location.file.path.clone(),
-            content: location.file.document.to_string(),
-        }];
-
-        Ok(files)
-    }
-
-    fn apply_upsert_evaluation(
-        &mut self,
-        payload: &UpsertEvaluationPayload,
-    ) -> Result<Vec<FileToWrite>, ConfigApplierError> {
-        // Validate all evaluators in the evaluation before writing
-        let UninitializedEvaluationConfig::Inference(config) = &payload.evaluation;
-        for evaluator in config.evaluators.values() {
-            validate_evaluator(evaluator)?;
-        }
-        path_resolver::validate_path_component(&payload.evaluation_name, "evaluation_name")?;
-
-        let (location, _is_new) =
-            locator::locate_evaluation(&mut self.files, &payload.evaluation_name)?;
-        let toml_file_dir = location
-            .file
-            .path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
-
-        // Serialize the evaluation to a TOML item
-        let mut evaluation_item = toml_writer::serialize_to_item(&payload.evaluation)?;
-
-        // Extract any ResolvedTomlPathData fields from evaluator variants in this evaluation
-        let template_files = path_resolver::extract_resolved_paths(
-            &mut evaluation_item,
-            &self.glob_base,
-            &toml_file_dir,
-            &["evaluations", &payload.evaluation_name],
-        )?;
-
-        // Convert subtables to inline and remove empty tables
-        clean_serialized_item(&mut evaluation_item, &[]);
-
-        // Apply the edit to the document
-        toml_writer::upsert_evaluation(
-            &mut location.file.document,
-            &payload.evaluation_name,
-            evaluation_item,
-        )?;
-
-        // Prepare files to write
-        let mut files = template_files;
-        files.push(FileToWrite {
-            absolute_path: location.file.path.clone(),
-            content: location.file.document.to_string(),
-        });
-
-        Ok(files)
-    }
-
-    fn apply_upsert_evaluator(
-        &mut self,
-        payload: &UpsertEvaluatorPayload,
-    ) -> Result<Vec<FileToWrite>, ConfigApplierError> {
-        validate_evaluator(&payload.evaluator)?;
-        path_resolver::validate_path_component(&payload.evaluation_name, "evaluation_name")?;
-        path_resolver::validate_path_component(&payload.evaluator_name, "evaluator_name")?;
-
-        let location =
-            locator::locate_evaluation_required(&mut self.files, &payload.evaluation_name)?;
-        let toml_file_dir = location
-            .file
-            .path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .to_path_buf();
-
-        // Serialize the evaluator to a TOML item
-        let mut evaluator_item = toml_writer::serialize_to_item(&payload.evaluator)?;
-
-        // Extract any ResolvedTomlPathData fields from evaluator variants
-        let template_files = path_resolver::extract_resolved_paths(
-            &mut evaluator_item,
-            &self.glob_base,
-            &toml_file_dir,
-            &[
-                "evaluations",
-                &payload.evaluation_name,
-                "evaluators",
-                &payload.evaluator_name,
-            ],
-        )?;
-
-        // Convert subtables to inline and remove empty tables
-        clean_serialized_item(&mut evaluator_item, &[]);
-
-        // Apply the edit to the document
-        toml_writer::upsert_evaluator(
-            &mut location.file.document,
-            &payload.evaluation_name,
-            &payload.evaluator_name,
-            evaluator_item,
-        )?;
-
-        // Prepare files to write
-        let mut files = template_files;
-        files.push(FileToWrite {
-            absolute_path: location.file.path.clone(),
-            content: location.file.document.to_string(),
-        });
-
-        Ok(files)
-    }
 
     /// Get the base directory extracted from the glob pattern.
     pub fn glob_base(&self) -> &Path {
@@ -346,21 +195,14 @@ impl ConfigApplier {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tensorzero_core::config::path::ResolvedTomlPathData;
+    
     use tensorzero_core::config::{UninitializedVariantConfig, UninitializedVariantInfo};
-    use tensorzero_core::evaluations::{
-        ExactMatchConfig, LLMJudgeInputFormat, LLMJudgeOptimize, LLMJudgeOutputType,
-        UninitializedEvaluationConfig, UninitializedEvaluatorConfig,
-        UninitializedInferenceEvaluationConfig, UninitializedLLMJudgeChatCompletionVariantConfig,
-        UninitializedLLMJudgeConfig, UninitializedLLMJudgeVariantConfig,
-        UninitializedLLMJudgeVariantInfo,
-    };
     use tensorzero_core::utils::retries::RetryConfig;
-    use tensorzero_core::variant::JsonMode;
+    
     use tensorzero_core::variant::chat_completion::UninitializedChatCompletionConfig;
 
     fn setup_test_config(dir: &Path) {
@@ -377,26 +219,6 @@ model = "gpt-4"
         .expect("failed to write test config");
     }
 
-    fn setup_test_config_with_evaluation(dir: &Path) {
-        fs::write(
-            dir.join("tensorzero.toml"),
-            r#"[functions.my_function]
-type = "chat"
-
-[functions.my_function.variants.baseline]
-type = "chat_completion"
-model = "gpt-4"
-
-[evaluations.my_evaluation]
-type = "inference"
-function_name = "my_function"
-
-[evaluations.my_evaluation.evaluators.exact_match]
-type = "exact_match"
-"#,
-        )
-        .expect("failed to write test config");
-    }
 
     #[tokio::test]
     async fn test_config_writer_new() {
@@ -446,32 +268,6 @@ type = "exact_match"
     }
 
     #[tokio::test]
-    async fn test_locate_evaluation() {
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        setup_test_config_with_evaluation(tmp.path());
-
-        let glob = format!("{}/**/*.toml", tmp.path().display());
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-
-        // Test that we can find an existing evaluation
-        let (location, is_new) = locator::locate_evaluation(&mut writer.files, "my_evaluation")
-            .expect("failed to locate");
-        assert!(!is_new);
-        assert!(location.file.path.ends_with("tensorzero.toml"));
-
-        // Test that a new evaluation returns is_new=true and uses the first file
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-        let (location, is_new) = locator::locate_evaluation(&mut writer.files, "new_evaluation")
-            .expect("failed to locate");
-        assert!(is_new);
-        assert!(location.file.path.ends_with("tensorzero.toml"));
-    }
-
-    #[tokio::test]
     async fn test_config_writer_base_path_for_single_file_glob() {
         let tmp = TempDir::new().expect("failed to create temp dir");
         setup_test_config(tmp.path());
@@ -490,235 +286,6 @@ type = "exact_match"
         assert!(
             writer.glob_base().is_dir(),
             "expected glob_base to be a directory path"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_apply_upsert_evaluation_extracts_templates() {
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        setup_test_config(tmp.path());
-
-        let glob = format!("{}/tensorzero.toml", tmp.path().display());
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-
-        let system_instructions = ResolvedTomlPathData::new_fake_path(
-            "inline".to_string(),
-            "You are a friendly judge.".to_string(),
-        );
-        let variant = UninitializedLLMJudgeVariantInfo {
-            inner: UninitializedLLMJudgeVariantConfig::ChatCompletion(
-                UninitializedLLMJudgeChatCompletionVariantConfig {
-                    active: Some(true),
-                    model: Arc::from("gpt-4"),
-                    system_instructions,
-                    temperature: None,
-                    top_p: None,
-                    max_tokens: None,
-                    presence_penalty: None,
-                    frequency_penalty: None,
-                    seed: None,
-                    json_mode: JsonMode::Strict,
-                    stop_sequences: None,
-                    reasoning_effort: None,
-                    service_tier: None,
-                    thinking_budget_tokens: None,
-                    verbosity: None,
-                    retries: RetryConfig::default(),
-                    extra_body: None,
-                    extra_headers: None,
-                },
-            ),
-            timeouts: None,
-        };
-
-        let mut variants = HashMap::new();
-        variants.insert("v1".to_string(), variant);
-
-        #[expect(deprecated)]
-        let evaluator = UninitializedEvaluatorConfig::LLMJudge(UninitializedLLMJudgeConfig {
-            input_format: Some(LLMJudgeInputFormat::Messages),
-            variants,
-            output_type: LLMJudgeOutputType::Boolean,
-            optimize: LLMJudgeOptimize::Max,
-            include: None,
-            cutoff: None,
-            description: None,
-        });
-
-        let mut evaluators = HashMap::new();
-        evaluators.insert("judge".to_string(), evaluator);
-
-        let evaluation =
-            UninitializedEvaluationConfig::Inference(UninitializedInferenceEvaluationConfig {
-                evaluators,
-                function_name: "my_function".to_string(),
-                description: None,
-            });
-
-        let edit = EditPayload::UpsertEvaluation(UpsertEvaluationPayload {
-            evaluation_name: "my_evaluation".to_string(),
-            evaluation,
-        });
-
-        let written_paths = writer
-            .apply_edit(&edit)
-            .await
-            .expect("failed to apply evaluation edit");
-
-        let expected_template_path = tmp
-            .path()
-            .join("evaluations")
-            .join("my_evaluation")
-            .join("evaluators")
-            .join("judge")
-            .join("variants")
-            .join("v1")
-            .join("system_instructions.txt");
-
-        assert!(
-            expected_template_path.exists(),
-            "expected evaluator system_instructions template to be written"
-        );
-        let template_contents =
-            fs::read_to_string(&expected_template_path).expect("failed to read template file");
-        assert_eq!(
-            template_contents, "You are a friendly judge.",
-            "expected template file to contain system_instructions data"
-        );
-        assert!(
-            written_paths
-                .iter()
-                .any(|path| path == &expected_template_path),
-            "expected written_paths to include evaluator template path"
-        );
-
-        let toml_contents =
-            fs::read_to_string(tmp.path().join("tensorzero.toml")).expect("failed to read config");
-        let doc: toml_edit::DocumentMut =
-            toml_contents.parse().expect("failed to parse updated TOML");
-        let system_instructions = doc
-            .get("evaluations")
-            .and_then(|v| v.get("my_evaluation"))
-            .and_then(|v| v.get("evaluators"))
-            .and_then(|v| v.get("judge"))
-            .and_then(|v| v.get("variants"))
-            .and_then(|v| v.get("v1"))
-            .and_then(|v| v.get("system_instructions"))
-            .and_then(|v| v.as_str())
-            .expect("expected system_instructions to be a string");
-        assert_eq!(
-            system_instructions,
-            "evaluations/my_evaluation/evaluators/judge/variants/v1/system_instructions.txt",
-            "expected TOML to reference the extracted system_instructions path"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_upsert_evaluation_with_empty_evaluators() {
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        setup_test_config(tmp.path());
-
-        let glob = format!("{}/tensorzero.toml", tmp.path().display());
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-
-        let evaluation =
-            UninitializedEvaluationConfig::Inference(UninitializedInferenceEvaluationConfig {
-                evaluators: HashMap::new(),
-                function_name: "my_function".to_string(),
-                description: None,
-            });
-
-        let edit = EditPayload::UpsertEvaluation(UpsertEvaluationPayload {
-            evaluation_name: "empty_eval".to_string(),
-            evaluation,
-        });
-
-        writer
-            .apply_edit(&edit)
-            .await
-            .expect("failed to apply evaluation edit");
-
-        let toml_contents =
-            fs::read_to_string(tmp.path().join("tensorzero.toml")).expect("failed to read config");
-
-        // Verify the TOML round-trips: deserializing should succeed even though
-        // `clean_serialized_item` strips the empty `evaluators` table.
-        // Re-parse the full config as a toml::Value and extract the evaluation section.
-        let full: toml::Value =
-            toml::from_str(&toml_contents).expect("failed to parse updated TOML");
-        let eval_value = full
-            .get("evaluations")
-            .and_then(|v| v.get("empty_eval"))
-            .expect("expected evaluation to exist in TOML");
-
-        let eval_toml = toml::to_string(eval_value).expect("failed to serialize evaluation");
-        let _parsed: UninitializedEvaluationConfig =
-            toml::from_str(&eval_toml).expect("empty evaluators should deserialize successfully");
-    }
-
-    #[tokio::test]
-    async fn test_upsert_evaluator_after_upsert_evaluation() {
-        // Regression test: upsert_evaluation converts evaluator sub-tables to inline tables.
-        // A subsequent upsert_evaluator must still be able to traverse the evaluators path
-        // even though it was stored as an inline table.
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        setup_test_config(tmp.path());
-
-        let glob = format!("{}/tensorzero.toml", tmp.path().display());
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-
-        // First: upsert an evaluation with an exact_match evaluator
-        let mut evaluators = HashMap::new();
-        #[expect(deprecated)]
-        let exact_match_evaluator =
-            UninitializedEvaluatorConfig::ExactMatch(ExactMatchConfig { cutoff: None });
-        evaluators.insert("exact_match".to_string(), exact_match_evaluator);
-
-        let evaluation =
-            UninitializedEvaluationConfig::Inference(UninitializedInferenceEvaluationConfig {
-                evaluators,
-                function_name: "my_function".to_string(),
-                description: None,
-            });
-
-        let edit = EditPayload::UpsertEvaluation(UpsertEvaluationPayload {
-            evaluation_name: "my_eval".to_string(),
-            evaluation,
-        });
-
-        writer
-            .apply_edit(&edit)
-            .await
-            .expect("failed to apply evaluation edit");
-
-        // Second: upsert another evaluator into the same evaluation.
-        // This should succeed even though the evaluators table was inlined.
-        #[expect(deprecated)]
-        let new_evaluator =
-            UninitializedEvaluatorConfig::ExactMatch(ExactMatchConfig { cutoff: Some(0.5) });
-
-        let edit = EditPayload::UpsertEvaluator(UpsertEvaluatorPayload {
-            evaluation_name: "my_eval".to_string(),
-            evaluator_name: "second_match".to_string(),
-            evaluator: new_evaluator,
-        });
-
-        writer
-            .apply_edit(&edit)
-            .await
-            .expect("upsert_evaluator should succeed after upsert_evaluation");
-
-        let toml_contents =
-            fs::read_to_string(tmp.path().join("tensorzero.toml")).expect("failed to read config");
-        assert!(
-            toml_contents.contains("second_match"),
-            "expected new evaluator to appear in TOML, got:\n{toml_contents}"
         );
     }
 
@@ -866,84 +433,5 @@ type = "exact_match"
     }
 
     #[tokio::test]
-    async fn test_upsert_evaluator_rejects_llm_judge_with_empty_variants() {
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        setup_test_config_with_evaluation(tmp.path());
-
-        let glob = format!("{}/tensorzero.toml", tmp.path().display());
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-
-        #[expect(deprecated)]
-        let evaluator = UninitializedEvaluatorConfig::LLMJudge(UninitializedLLMJudgeConfig {
-            input_format: Some(LLMJudgeInputFormat::Messages),
-            variants: HashMap::new(),
-            output_type: LLMJudgeOutputType::Boolean,
-            optimize: LLMJudgeOptimize::Max,
-            include: None,
-            cutoff: None,
-            description: None,
-        });
-
-        let edit = EditPayload::UpsertEvaluator(UpsertEvaluatorPayload {
-            evaluation_name: "my_evaluation".to_string(),
-            evaluator_name: "empty_judge".to_string(),
-            evaluator,
-        });
-
-        let result = writer.apply_edit(&edit).await;
-        assert!(
-            result.is_err(),
-            "should reject LLM judge evaluator with empty variants"
-        );
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("at least one variant"),
-            "error should mention missing variants, got: {err}"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_upsert_evaluation_rejects_llm_judge_with_empty_variants() {
-        let tmp = TempDir::new().expect("failed to create temp dir");
-        setup_test_config(tmp.path());
-
-        let glob = format!("{}/tensorzero.toml", tmp.path().display());
-        let mut writer = ConfigApplier::new(&glob)
-            .await
-            .expect("failed to create writer");
-
-        #[expect(deprecated)]
-        let evaluator = UninitializedEvaluatorConfig::LLMJudge(UninitializedLLMJudgeConfig {
-            input_format: Some(LLMJudgeInputFormat::Messages),
-            variants: HashMap::new(),
-            output_type: LLMJudgeOutputType::Boolean,
-            optimize: LLMJudgeOptimize::Max,
-            include: None,
-            cutoff: None,
-            description: None,
-        });
-
-        let mut evaluators = HashMap::new();
-        evaluators.insert("empty_judge".to_string(), evaluator);
-
-        let evaluation =
-            UninitializedEvaluationConfig::Inference(UninitializedInferenceEvaluationConfig {
-                evaluators,
-                function_name: "my_function".to_string(),
-                description: None,
-            });
-
-        let edit = EditPayload::UpsertEvaluation(UpsertEvaluationPayload {
-            evaluation_name: "bad_eval".to_string(),
-            evaluation,
-        });
-
-        let result = writer.apply_edit(&edit).await;
-        assert!(
-            result.is_err(),
-            "should reject evaluation containing LLM judge with empty variants"
-        );
-    }
+    async fn noop_placeholder() {}
 }

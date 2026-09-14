@@ -23,7 +23,7 @@ import type { VariantResponseInfo } from "~/routes/api/tensorzero/inference.util
 import { formatCost } from "~/utils/cost";
 import { Link } from "react-router";
 import { toInferenceUrl } from "~/utils/urls";
-import type { Datapoint, InferenceResponse } from "~/types/tensorzero";
+import type { InferenceResponse } from "~/types/tensorzero";
 
 interface ResponseColumnProps {
   title: string;
@@ -122,13 +122,10 @@ interface VariantResponseModalProps {
   isOpen: boolean;
   isLoading: boolean;
   onClose: () => void;
-  // Use a union type to accept either inference or datapoint
-  item: StoredInference | Datapoint;
-  // Make inferenceUsage optional since datasets don't have it by default
+  item: StoredInference;
   inferenceUsage?: InferenceUsage;
   selectedVariant: string;
-  // Add a source property to determine what type of item we're dealing with
-  source: "inference" | "datapoint";
+  source: "inference";
   error?: string | null;
   variantResponse: VariantResponseInfo | null;
   rawResponse: InferenceResponse | null;
@@ -153,7 +150,6 @@ export function VariantResponseModal({
   const [showRawResponse, setShowRawResponse] = useState(false);
 
   // Set up baseline response based on source type
-  // Datapoint has `type`, ParsedInferenceRow has `function_type`
   const itemType =
     "type" in item ? item.type : (item as ParsedInferenceRow).function_type;
   const baselineResponse: VariantResponseInfo =

@@ -2,14 +2,7 @@ import * as React from "react";
 import { useFetcher, type FetcherFormProps } from "react-router";
 import type { SubmitTarget, FetcherSubmitOptions } from "react-router";
 import { DEFAULT_FUNCTION } from "~/utils/constants";
-import type {
-  PathWithContents,
-  UninitializedVariantInfo,
-  VariantInfo,
-  ChatTemplates,
-  ResolvedTomlPathData,
-  StoredInference,
-} from "~/types/tensorzero";
+import type { StoredInference } from "~/types/tensorzero";
 import type { InferenceUsage } from "~/utils/clickhouse/helpers";
 import { logger } from "~/utils/logger";
 import type {
@@ -17,11 +10,8 @@ import type {
   Input,
   ContentBlockChatOutput,
   JsonInferenceOutput,
-  ChatInferenceDatapoint,
-  JsonInferenceDatapoint,
   InferenceResponse,
 } from "~/types/tensorzero";
-import { v7 } from "uuid";
 
 interface InferenceActionError {
   message: string;
@@ -187,18 +177,7 @@ interface InferenceDefaultFunctionActionArgs {
   model_name: string;
 }
 
-interface T0DatapointActionArgs {
-  source: "t0_datapoint";
-  resource: ChatInferenceDatapoint | JsonInferenceDatapoint;
-  variant?: string;
-  model_name?: string;
-  editedVariantInfo?: VariantInfo;
-}
-
-type ActionArgs =
-  | InferenceActionArgs
-  | InferenceDefaultFunctionActionArgs
-  | T0DatapointActionArgs;
+type ActionArgs = InferenceActionArgs | InferenceDefaultFunctionActionArgs;
 
 function isDefaultFunctionArgs(
   args: ActionArgs,
@@ -252,49 +231,22 @@ export function prepareInferenceActionRequest(
       args.model_name,
     );
     return { ...baseParams, ...defaultRequest };
-  } else if (args.source === "t0_datapoint") {
-    // Handle datapoints from tensorzero-node (with StoredInput)
-    const dynamicVariantInfo = args.editedVariantInfo
-      ? variantInfoToUninitializedVariantInfo(args.editedVariantInfo)
-      : undefined;
-
-    // Handle default function: use model_name instead of variant_name
-    if (args.resource.function_name === DEFAULT_FUNCTION) {
-      return {
-        ...baseParams,
-        model_name: args.model_name || undefined,
-        input: args.resource.input,
-        internal_dynamic_variant_config: dynamicVariantInfo,
-      };
-    }
-
-    return {
-      ...baseParams,
-      function_name: args.resource.function_name,
-      input: args.resource.input,
-      variant_name: args.variant || undefined,
-      internal_dynamic_variant_config: dynamicVariantInfo,
-    };
-  } else {
-    // For other sources, the input is already a DisplayInput
-    if (
-      args.source === "inference" &&
-      args.resource.extra_body &&
-      args.resource.extra_body.length > 0
-    ) {
-      throw new Error("Extra body is not supported for inference in UI.");
-    }
-    // TODO: this is unsupported in Node bindings for now
-    // const extra_body =
-    //   args.source === "inference" ? args.resource.extra_body : undefined;
-
-    return {
-      ...baseParams,
-      function_name: args.resource.function_name,
-      input: args.input,
-      variant_name: args.variant,
-    };
   }
+
+  if (
+    args.source === "inference" &&
+    args.resource.extra_body &&
+    args.resource.extra_body.length > 0
+  ) {
+    throw new Error("Extra body is not supported for inference in UI.");
+  }
+
+  return {
+    ...baseParams,
+    function_name: args.resource.function_name,
+    input: args.input,
+    variant_name: args.variant,
+  };
 }
 
 function prepareDefaultFunctionRequest(
@@ -371,195 +323,4 @@ export function prepareDemonstrationFromVariantOutput(
     return undefined;
   }
   return extractDemonstrationValue(output);
-}
-
-function convertTemplate(
-  template: PathWithContents | null,
-): ResolvedTomlPathData | null {
-  if (!template) return null;
-  return {
-    __tensorzero_remapped_path: `template_${v7()}`,
-    __data: template.contents,
-  };
-}
-
-function stringToTemplate(
-  template: string | null,
-): ResolvedTomlPathData | null {
-  if (!template) return null;
-  return {
-    __tensorzero_remapped_path: `template_${v7()}`,
-    __data: template,
-  };
-}
-
-function convertTemplatesToRecord(
-  templates: ChatTemplates,
-): Record<string, { path: ResolvedTomlPathData }> {
-  const result: Record<string, { path: ResolvedTomlPathData }> = {};
-  for (const [name, templateData] of Object.entries(templates)) {
-    const converted = convertTemplate(templateData?.template || null);
-    if (converted) {
-      result[name] = { path: converted };
-    }
-  }
-  return result;
-}
-
-function variantInfoToUninitializedVariantInfo(
-  variantInfo: VariantInfo,
-): UninitializedVariantInfo {
-  const baseUninitialized = {
-    timeouts: variantInfo.timeouts,
-  };
-
-  const inner = variantInfo.inner;
-
-  switch (inner.type) {
-    case "chat_completion": {
-      // Convert all templates
-      const templates = convertTemplatesToRecord(inner.templates);
-
-      return {
-        ...baseUninitialized,
-        type: "chat_completion" as const,
-        weight: inner.weight,
-        model: inner.model,
-        input_wrappers: null,
-        // Set legacy fields to null when using new templates format
-        system_template: null,
-        user_template: null,
-        assistant_template: null,
-        // New templates field with all templates
-        templates,
-        temperature: inner.temperature,
-        max_tokens: inner.max_tokens,
-        seed: inner.seed,
-        top_p: inner.top_p,
-        presence_penalty: inner.presence_penalty,
-        frequency_penalty: inner.frequency_penalty,
-        stop_sequences: inner.stop_sequences,
-        json_mode: inner.json_mode,
-        retries: inner.retries,
-      };
-    }
-
-    case "best_of_n_sampling": {
-      // Convert all evaluator templates
-      const evaluatorTemplates = convertTemplatesToRecord(
-        inner.evaluator.templates,
-      );
-
-      return {
-        ...baseUninitialized,
-        type: "experimental_best_of_n_sampling" as const,
-        weight: inner.weight ?? undefined,
-        candidates: inner.candidates,
-        evaluator: {
-          weight: inner.evaluator.weight,
-          model: inner.evaluator.model,
-          input_wrappers: null,
-          // Set legacy fields to null when using new templates format
-          system_template: null,
-          user_template: null,
-          assistant_template: null,
-          // New templates field with all templates
-          templates: evaluatorTemplates,
-          temperature: inner.evaluator.temperature,
-          top_p: inner.evaluator.top_p,
-          max_tokens: inner.evaluator.max_tokens,
-          presence_penalty: inner.evaluator.presence_penalty,
-          frequency_penalty: inner.evaluator.frequency_penalty,
-          seed: inner.evaluator.seed,
-          stop_sequences: inner.evaluator.stop_sequences,
-          json_mode: inner.evaluator.json_mode,
-          retries: inner.evaluator.retries,
-        },
-      };
-    }
-
-    case "dicl":
-      return {
-        ...baseUninitialized,
-        type: "experimental_dynamic_in_context_learning" as const,
-        weight: inner.weight,
-        embedding_model: inner.embedding_model,
-        k: inner.k,
-        model: inner.model,
-        system_instructions: stringToTemplate(inner.system_instructions.__data),
-        temperature: inner.temperature,
-        top_p: inner.top_p,
-        stop_sequences: inner.stop_sequences,
-        presence_penalty: inner.presence_penalty,
-        frequency_penalty: inner.frequency_penalty,
-        max_tokens: inner.max_tokens,
-        seed: inner.seed,
-        json_mode: inner.json_mode,
-        retries: inner.retries,
-        max_distance: inner.max_distance,
-      };
-
-    case "mixture_of_n": {
-      // Convert all fuser templates
-      const fuserTemplates = convertTemplatesToRecord(inner.fuser.templates);
-
-      return {
-        ...baseUninitialized,
-        type: "experimental_mixture_of_n" as const,
-        weight: inner.weight ?? undefined,
-        candidates: inner.candidates,
-        fuser: {
-          weight: inner.fuser.weight,
-          model: inner.fuser.model,
-          input_wrappers: null,
-          // Set legacy fields to null when using new templates format
-          system_template: null,
-          user_template: null,
-          assistant_template: null,
-          // New templates field with all templates
-          templates: fuserTemplates,
-          temperature: inner.fuser.temperature,
-          top_p: inner.fuser.top_p,
-          max_tokens: inner.fuser.max_tokens,
-          presence_penalty: inner.fuser.presence_penalty,
-          frequency_penalty: inner.fuser.frequency_penalty,
-          seed: inner.fuser.seed,
-          stop_sequences: inner.fuser.stop_sequences,
-          json_mode: inner.fuser.json_mode,
-          retries: inner.fuser.retries,
-        },
-      };
-    }
-
-    case "chain_of_thought": {
-      // Convert all templates
-      const templates = convertTemplatesToRecord(inner.templates);
-
-      return {
-        ...baseUninitialized,
-        type: "experimental_chain_of_thought" as const,
-        weight: inner.weight,
-        model: inner.model,
-        input_wrappers: null,
-        // Set legacy fields to null when using new templates format
-        system_template: null,
-        user_template: null,
-        assistant_template: null,
-        // New templates field with all templates
-        templates,
-        temperature: inner.temperature,
-        top_p: inner.top_p,
-        max_tokens: inner.max_tokens,
-        presence_penalty: inner.presence_penalty,
-        frequency_penalty: inner.frequency_penalty,
-        seed: inner.seed,
-        stop_sequences: inner.stop_sequences,
-        json_mode: inner.json_mode,
-        retries: inner.retries,
-      };
-    }
-
-    default:
-      throw new Error(`Unknown variant type`);
-  }
 }

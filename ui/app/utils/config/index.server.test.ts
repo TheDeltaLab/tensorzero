@@ -77,7 +77,6 @@ function createMockConfig(hash: string): UiConfig {
     functions: {},
     metrics: {},
     tools: {},
-    evaluations: {},
     model_names: [],
     embedding_model_names: [],
     model_providers: {},

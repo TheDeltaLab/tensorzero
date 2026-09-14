@@ -9,10 +9,7 @@ import { ChatOutputElement } from "~/components/input_output/ChatOutputElement";
 import { JsonOutputElement } from "~/components/input_output/JsonOutputElement";
 import { Link } from "react-router";
 import { Button } from "~/components/ui/button";
-import {
-  filterMetricsByLevel,
-  filterInferenceEvaluationMetrics,
-} from "~/utils/config/feedback";
+import { filterMetricsByLevel } from "~/utils/config/feedback";
 import BooleanFeedbackInput from "./BooleanFeedbackInput";
 import FloatFeedbackInput from "./FloatFeedbackInput";
 import CommentFeedbackInput from "./CommentFeedbackInput";
@@ -41,11 +38,10 @@ export function HumanFeedbackForm({
   const config = useConfig();
   // If there is no inference output this is likely an episode-level feedback and
   // we should filter demonstration out of the list of metrics.
-  const metrics = filterInferenceEvaluationMetrics(
+  const metrics =
     inferenceOutput === undefined
       ? filterMetricsByLevel(config.metrics, "episode")
-      : filterMetricsByLevel(config.metrics, "inference"),
-  );
+      : filterMetricsByLevel(config.metrics, "inference");
   const [selectedMetricName, setSelectedMetricName] = useState<string>("");
   const selectedMetric = metrics[selectedMetricName];
   const selectedMetricType = selectedMetric?.type;

@@ -15,10 +15,7 @@ import { EMPTY_CONFIG } from "./context/config";
 import type { UiConfig } from "./types/tensorzero";
 import type { Route } from "./+types/root";
 import "./tailwind.css";
-import {
-  getConfig,
-  checkAutopilotAvailable,
-} from "./utils/config/index.server";
+import { getConfig } from "./utils/config/index.server";
 import { AppSidebar } from "./components/layout/app.sidebar";
 import {
   ErrorAppShell,
@@ -37,7 +34,6 @@ import {
   type ClassifiedError,
 } from "./utils/tensorzero/errors";
 import { ContentLayout } from "./components/layout/ContentLayout";
-import { startPeriodicCleanup } from "./utils/evaluations.server";
 import { AppProviders } from "./providers/app-providers";
 import { EntitySheet } from "./components/entity-sheet/EntitySheet";
 import { isReadOnlyMode, readOnlyMiddleware } from "./utils/read-only.server";
@@ -95,7 +91,6 @@ export const middleware: Route.MiddlewareFunction[] = [
 interface LoaderData {
   config: UiConfig;
   isReadOnly: boolean;
-  autopilotAvailable: boolean;
   featureFlags: FeatureFlags;
   infraError: ClassifiedError | null;
   dashboardSession: DashboardSession;
@@ -121,8 +116,6 @@ async function loadDashboardSession(
 }
 
 export async function loader({ request }: Route.LoaderArgs) {
-  // Initialize evaluation cleanup when the app loads
-  startPeriodicCleanup();
   const isReadOnly = isReadOnlyMode();
   const featureFlags = loadFeatureFlags();
   const logoutUrl = getAzureLogoutUrl();
@@ -141,22 +134,16 @@ export async function loader({ request }: Route.LoaderArgs) {
       return {
         config: EMPTY_CONFIG,
         isReadOnly,
-        autopilotAvailable: false,
         featureFlags,
         infraError: null,
         dashboardSession,
       };
     }
 
-    // Fetch config and autopilot availability in parallel
-    const [config, autopilotAvailable] = await Promise.all([
-      getConfig(),
-      checkAutopilotAvailable(),
-    ]);
+    const config = await getConfig();
     return {
       config,
       isReadOnly,
-      autopilotAvailable,
       featureFlags,
       infraError: null,
       dashboardSession,
@@ -169,7 +156,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       return {
         config: EMPTY_CONFIG,
         isReadOnly,
-        autopilotAvailable: false,
         featureFlags,
         infraError: { type: InfraErrorType.GatewayUnavailable },
         dashboardSession: fallbackSession,
@@ -179,7 +165,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       const loaderData: LoaderData = {
         config: EMPTY_CONFIG,
         isReadOnly,
-        autopilotAvailable: false,
         featureFlags,
         infraError: { type: InfraErrorType.GatewayAuthFailed },
         dashboardSession: fallbackSession,
@@ -202,7 +187,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       return {
         config: EMPTY_CONFIG,
         isReadOnly,
-        autopilotAvailable: false,
         featureFlags,
         infraError: {
           type: InfraErrorType.ClickHouseUnavailable,

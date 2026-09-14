@@ -42,7 +42,6 @@ use crate::endpoints::openai_compatible::synapse::{
     apply_request_id_header, request_id_from_headers_or_generate,
 };
 use crate::error::{Error, ErrorDetails, IMPOSSIBLE_ERROR_MESSAGE};
-use crate::experimentation::ExperimentationConfigWithNamespaces;
 use crate::function::{
     DEFAULT_FUNCTION_NAME, FunctionConfig, FunctionConfigChat, FunctionConfigType,
 };
@@ -91,7 +90,6 @@ use crate::endpoints::namespace::{
     validate_model_namespace, validate_variant_namespace_at_inference,
 };
 use crate::endpoints::validate_tags;
-use crate::endpoints::workflow_evaluation_run::validate_inference_episode_id_and_apply_workflow_evaluation_run;
 
 /// The expected payload is a JSON object with the following fields:
 #[derive(Debug, Default, Deserialize, Serialize)]
@@ -405,19 +403,11 @@ pub async fn inference(
     // Retrieve or generate the episode ID
     let episode_id = params.episode_id.unwrap_or_else(Uuid::now_v7);
 
-    let db = DelegatingDatabaseConnection::new(
+    let _db = DelegatingDatabaseConnection::new(
         clickhouse_connection_info.clone(),
         postgres_connection_info.clone(),
         primary_datastore,
     );
-    validate_inference_episode_id_and_apply_workflow_evaluation_run(
-        episode_id,
-        params.function_name.as_ref(),
-        &mut params.variant_name,
-        &mut params.tags,
-        &db,
-    )
-    .await?;
     // Record the episode id if we didn't already have one
     if params.episode_id.is_none() {
         tracing::Span::current().record("episode_id", episode_id.to_string());
@@ -650,16 +640,8 @@ pub async fn inference(
     // Keep sampling variants until one succeeds
     let mut already_sampled = false;
     while !candidate_variants.is_empty() {
-        // Use namespace-specific experimentation config if available
-        let result = function
-            .experimentation_for_namespace(namespace)
-            .sample(
-                &function_name,
-                episode_id,
-                &mut candidate_variants,
-                &postgres_connection_info,
-            )
-            .await;
+        let result =
+            crate::variant::sampling::sample_variant(&function_name, &episode_id, &mut candidate_variants);
         let (variant_name, variant) = match result {
             Ok((variant_name, variant)) => (variant_name, variant),
             Err(e) => {
@@ -1175,8 +1157,6 @@ async fn find_function(
                     parallel_tool_calls: None,
                     description: None,
                     all_explicit_templates_names: HashSet::new(),
-                    experimentation: ExperimentationConfigWithNamespaces::default(),
-                    evaluators: HashMap::new(),
                 })),
                 DEFAULT_FUNCTION_NAME.to_string(),
             ))

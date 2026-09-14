@@ -12,11 +12,3 @@
  * GOOD: `import type { StoredInput } from "~/types/tensorzero";`
  */
 export type * from "@tensorzero/tensorzero-node";
-
-/**
- * Response for the autopilot status endpoint.
- * Indicates whether autopilot is configured on the gateway.
- */
-export interface AutopilotStatusResponse {
-  enabled: boolean;
-}

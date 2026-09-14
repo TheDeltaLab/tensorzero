@@ -50,7 +50,6 @@ const mockConfig: UiConfig = {
       strict: true,
     },
   },
-  evaluations: {},
   model_names: [],
   embedding_model_names: [],
   model_providers: {},

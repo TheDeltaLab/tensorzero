@@ -29,11 +29,9 @@ mod batching;
 mod cache_queries;
 pub mod clickhouse_client;
 pub mod config_queries;
-pub mod dataset_queries;
 mod deployment_queries;
 pub mod dicl_queries;
 mod episode_queries;
-pub mod evaluation_queries;
 pub mod feedback;
 mod howdy_queries;
 pub mod inference_queries;
@@ -43,7 +41,6 @@ pub mod query_builder;
 mod resolve_uuid;
 mod table_name;
 mod variant_statistics;
-pub mod workflow_evaluation_queries;
 
 #[cfg(test)]
 mod mock_clickhouse_connection_info;

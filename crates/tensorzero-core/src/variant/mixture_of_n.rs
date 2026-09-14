@@ -1033,7 +1033,6 @@ mod tests {
         config::{SchemaData, UninitializedSchemas, provider_types::ProviderTypesConfig},
         db::{clickhouse::ClickHouseConnectionInfo, postgres::PostgresConnectionInfo},
         endpoints::inference::{InferenceCredentials, InferenceIds},
-        experimentation::ExperimentationConfigWithNamespaces,
         function::{FunctionConfigChat, FunctionConfigJson},
         http::TensorzeroHttpClient,
         inference::types::{
@@ -1467,8 +1466,6 @@ mod tests {
             json_mode_tool_call_config: ToolCallConfig::default(),
             description: None,
             all_explicit_template_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         }));
         // Prepare some candidate InferenceResults
         let model_inference_response0 = ModelInferenceResponseWithMetadata {
@@ -1825,8 +1822,6 @@ mod tests {
             parallel_tool_calls: None,
             description: None,
             all_explicit_templates_names: HashSet::new(),
-            experimentation: ExperimentationConfigWithNamespaces::default(),
-            evaluators: HashMap::new(),
         }));
 
         let models_arc = Arc::new(models);

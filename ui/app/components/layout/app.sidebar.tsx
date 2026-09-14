@@ -4,13 +4,8 @@ import {
   Inferences,
   Episodes,
   Functions,
-  SupervisedFineTuning,
-  Dataset,
-  GridCheck,
-  SequenceChecks,
   Playground,
   Model,
-  Chat,
   SidebarCollapse,
   SidebarExpand,
 } from "~/components/icons/Icons";
@@ -20,9 +15,7 @@ import {
   HardDrive,
   KeyRound,
   LayoutGrid,
-  ListChecks,
   LogOut,
-  Plus,
   Users,
 } from "lucide-react";
 import {
@@ -40,7 +33,6 @@ import {
   useSidebar,
 } from "~/components/ui/sidebar";
 import { useActivePath } from "~/hooks/use-active-path";
-import { useAutopilotAvailable } from "~/context/autopilot-available";
 import { useConfig } from "~/context/config";
 import { TensorZeroLogo } from "~/components/icons/Icons";
 import { Link } from "react-router";
@@ -84,39 +76,9 @@ const navigation: NavigationSection[] = [
         icon: Model,
       },
       {
-        title: "Async Tasks",
-        url: "/async-tasks",
-        icon: ListChecks,
-      },
-      {
         title: "Analysis",
         url: "/observability/analysis",
         icon: BarChart3,
-      },
-    ],
-  },
-  {
-    title: "Evaluations",
-    items: [
-      {
-        title: "Inference Evaluations",
-        url: "/evaluations",
-        icon: GridCheck,
-      },
-      {
-        title: "Workflow Evaluations",
-        url: "/workflow-evaluations",
-        icon: SequenceChecks,
-      },
-    ],
-  },
-  {
-    title: "Optimization",
-    items: [
-      {
-        title: "Supervised Fine-Tuning",
-        url: "/optimization/supervised-fine-tuning",
-        icon: SupervisedFineTuning,
       },
     ],
   },
@@ -127,11 +89,6 @@ const navigation: NavigationSection[] = [
         title: "Playground",
         url: "/playground",
         icon: Playground,
-      },
-      {
-        title: "Datasets",
-        url: "/datasets",
-        icon: Dataset,
       },
       {
         title: "API Keys",
@@ -155,7 +112,6 @@ const navigation: NavigationSection[] = [
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   const { state, toggleSidebar } = useSidebar();
   const activePathUtils = useActivePath();
-  const autopilotAvailable = useAutopilotAvailable();
   const config = useConfig();
   const session = useDashboardSession();
 
@@ -195,31 +151,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>
-            {autopilotAvailable && (
-              <SidebarMenuItem className="relative list-none">
-                <SidebarMenuButton
-                  asChild
-                  tooltip={state === "collapsed" ? "Autopilot" : undefined}
-                  isActive={activePathUtils.isActive("/autopilot")}
-                >
-                  <Link to="/autopilot" className="flex items-center gap-2">
-                    <Chat className="h-4 w-4" />
-                    <span className="whitespace-nowrap transition-opacity duration-200 group-data-[collapsible=icon]:opacity-0">
-                      Autopilot
-                    </span>
-                  </Link>
-                </SidebarMenuButton>
-                {state === "expanded" && (
-                  <Link
-                    to="/autopilot/sessions/new"
-                    className="text-fg-muted hover:text-fg-primary absolute top-1/2 right-2 z-10 -translate-y-1/2 rounded p-0.5 transition-colors"
-                    aria-label="New session"
-                  >
-                    <Plus className="h-4 w-4" />
-                  </Link>
-                )}
-              </SidebarMenuItem>
-            )}
             {config.config_in_database && (
               <SidebarMenuItem className="list-none">
                 <SidebarMenuButton

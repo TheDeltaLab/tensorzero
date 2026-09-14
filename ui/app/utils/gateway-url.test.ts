@@ -6,10 +6,10 @@ describe("buildGatewayUrl", () => {
     expect(
       buildGatewayUrl(
         "http://tensorzero-gateway:3000/tensorzero/api/v1",
-        "/internal/autopilot/v1/sessions/session-1/events/stream",
+        "/internal/models/usage",
       ).toString(),
     ).toBe(
-      "http://tensorzero-gateway:3000/tensorzero/api/v1/internal/autopilot/v1/sessions/session-1/events/stream",
+      "http://tensorzero-gateway:3000/tensorzero/api/v1/internal/models/usage",
     );
   });
 
@@ -17,10 +17,10 @@ describe("buildGatewayUrl", () => {
     expect(
       buildGatewayUrl(
         "http://tensorzero-gateway:3000/tensorzero/api/v1/",
-        "/internal/autopilot/v1/sessions/session-1/events/stream",
+        "/internal/models/usage",
       ).toString(),
     ).toBe(
-      "http://tensorzero-gateway:3000/tensorzero/api/v1/internal/autopilot/v1/sessions/session-1/events/stream",
+      "http://tensorzero-gateway:3000/tensorzero/api/v1/internal/models/usage",
     );
   });
 
@@ -39,10 +39,10 @@ describe("buildGatewayUrl", () => {
     expect(
       buildGatewayUrl(
         "http://tensorzero-gateway:3000/tensorzero/api/v1/",
-        "/internal/autopilot/v1/sessions/session-1/events?before=cursor-1&limit=21",
+        "/internal/models/usage?time_window=day&max_periods=30",
       ).toString(),
     ).toBe(
-      "http://tensorzero-gateway:3000/tensorzero/api/v1/internal/autopilot/v1/sessions/session-1/events?before=cursor-1&limit=21",
+      "http://tensorzero-gateway:3000/tensorzero/api/v1/internal/models/usage?time_window=day&max_periods=30",
     );
   });
 

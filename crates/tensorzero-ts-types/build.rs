@@ -11,91 +11,15 @@ use std::process::Command;
 /// - const_name: The Rust constant name (e.g., "INFERENCE_TOOL_PARAMS")
 /// - type_name: The TypeScript type name matching the .ts filename (e.g., "InferenceToolParams")
 const ROOT_TYPES: &[(&str, &str)] = &[
-    // LlmParams types
-    ("AUTO_REJECT_TOOL_CALL_PARAMS", "AutoRejectToolCallParams"),
-    (
-        "CREATE_DATAPOINTS_TOOL_PARAMS",
-        "CreateDatapointsToolParams",
-    ),
-    (
-        "CREATE_DATAPOINTS_FROM_INFERENCES_TOOL_PARAMS",
-        "CreateDatapointsFromInferencesToolParams",
-    ),
-    (
-        "DELETE_DATAPOINTS_TOOL_PARAMS",
-        "DeleteDatapointsToolParams",
-    ),
-    ("FEEDBACK_TOOL_PARAMS", "FeedbackToolParams"),
-    ("GET_CONFIG_TOOL_PARAMS", "GetConfigToolParams"),
-    ("GET_DATAPOINTS_TOOL_PARAMS", "GetDatapointsToolParams"),
-    (
-        "GET_FEEDBACK_BY_TARGET_ID_TOOL_PARAMS",
-        "GetFeedbackByTargetIdToolParams",
-    ),
-    (
-        "GET_FEEDBACK_BY_VARIANT_TOOL_PARAMS",
-        "GetFeedbackByVariantToolParams",
-    ),
-    ("GET_INFERENCES_TOOL_PARAMS", "GetInferencesToolParams"),
-    (
-        "GET_LATEST_FEEDBACK_BY_METRIC_TOOL_PARAMS",
-        "GetLatestFeedbackByMetricToolParams",
-    ),
-    ("INFERENCE_TOOL_PARAMS", "InferenceToolParams"),
-    (
-        "LAUNCH_OPTIMIZATION_WORKFLOW_TOOL_PARAMS",
-        "LaunchOptimizationWorkflowToolParams",
-    ),
-    ("LIST_DATAPOINTS_TOOL_PARAMS", "ListDatapointsToolParams"),
-    ("LIST_DATASETS_TOOL_PARAMS", "ListDatasetsToolParams"),
-    ("LIST_EPISODES_TOOL_PARAMS", "ListEpisodesToolParams"),
-    ("LIST_INFERENCES_TOOL_PARAMS", "ListInferencesToolParams"),
-    ("RUN_EVALUATION_TOOL_PARAMS", "RunEvaluationToolParams"),
-    ("UPLOAD_DATASET_TOOL_PARAMS", "UploadDatasetToolParams"),
-    (
-        "UPDATE_DATAPOINTS_TOOL_PARAMS",
-        "UpdateDatapointsToolParams",
-    ),
-    ("WRITE_CONFIG_TOOL_PARAMS", "WriteConfigToolParams"),
-    ("GEPA_TOOL_PARAMS", "GepaToolParams"),
-    (
-        "GET_VARIANT_STATISTICS_TOOL_PARAMS",
-        "GetVariantStatisticsToolParams",
-    ),
-    // Output types
-    ("CREATE_DATAPOINTS_RESPONSE", "CreateDatapointsResponse"),
-    ("DELETE_DATAPOINTS_RESPONSE", "DeleteDatapointsResponse"),
     ("FEEDBACK_RESPONSE", "FeedbackResponse"),
-    (
-        "GET_FEEDBACK_BY_TARGET_ID_RESPONSE",
-        "GetFeedbackByTargetIdResponse",
-    ),
-    ("GET_DATAPOINTS_RESPONSE", "GetDatapointsResponse"),
+    ("GET_FEEDBACK_BY_TARGET_ID_RESPONSE", "GetFeedbackByTargetIdResponse"),
     ("GET_INFERENCES_RESPONSE", "GetInferencesResponse"),
     ("INFERENCE_RESPONSE", "InferenceResponse"),
-    (
-        "LAUNCH_OPTIMIZATION_WORKFLOW_TOOL_OUTPUT",
-        "LaunchOptimizationWorkflowToolOutput",
-    ),
-    (
-        "LATEST_FEEDBACK_ID_BY_METRIC_RESPONSE",
-        "LatestFeedbackIdByMetricResponse",
-    ),
-    ("LIST_DATASETS_RESPONSE", "ListDatasetsResponse"),
+    ("LATEST_FEEDBACK_ID_BY_METRIC_RESPONSE", "LatestFeedbackIdByMetricResponse"),
     ("LIST_EPISODES_RESPONSE", "ListEpisodesResponse"),
-    ("RUN_EVALUATION_RESPONSE", "RunEvaluationResponse"),
-    ("UPDATE_DATAPOINTS_RESPONSE", "UpdateDatapointsResponse"),
-    ("UPLOAD_DATASET_TOOL_OUTPUT", "UploadDatasetToolOutput"),
-    ("GEPA_TOOL_OUTPUT", "GepaToolOutput"),
     ("WRITE_CONFIG_RESPONSE", "WriteConfigResponse"),
-    ("GET_CONFIG_RESPONSE", "GetConfigResponse"),
     ("FEEDBACK_BY_VARIANT", "FeedbackByVariant"),
-    (
-        "GET_VARIANT_STATISTICS_RESPONSE",
-        "GetVariantStatisticsResponse",
-    ),
-    // Types exposed to TypeScript judge evaluators (the fields of the
-    // `EvaluatorParams` argument to `tensorzero_evaluator`).
+    ("GET_VARIANT_STATISTICS_RESPONSE", "GetVariantStatisticsResponse"),
     ("INPUT", "Input"),
     ("CONTENT_BLOCK_CHAT_OUTPUT", "ContentBlockChatOutput"),
 ];

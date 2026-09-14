@@ -39,26 +39,6 @@ test-e2e-fast = [
     "0",
     "--no-fail-fast",
 ]
-test-optimization = [
-    "nextest",
-    "run",
-    "--package",
-    "tensorzero-optimizers",
-    "--features",
-    "optimization_tests,e2e_tests",
-    "--profile",
-    "optimization",
-]
-test-optimization-mock = [
-    "nextest",
-    "run",
-    "--package",
-    "tensorzero-optimizers",
-    "--features",
-    "e2e_tests",
-    "--profile",
-    "optimization-mock",
-]
 # Runs Clickhouse-related e2e tests that don't require any inference credentials available.
 # This is useful for both running on PR CI (where we don't have creds at all),
 # and for testing against several different ClickHouse versions (to avoid spending lots of money on inference).
@@ -89,20 +69,6 @@ test-endpoints = [
     "--profile",
     "endpoints",
 ]
-test-rate-limit-load = [
-    "run",
-    "--release",
-    "--package",
-    "rate-limit-load-test",
-    "--",
-]
-test-feedback-load = [
-    "run",
-    "--release",
-    "--package",
-    "feedback-load-test",
-    "--",
-]
 test-postgres-inference-load = [
     "run",
     "--release",
@@ -124,26 +90,12 @@ tsbuild = [
     "-p",
     "tensorzero-core",
     "-p",
-    "tensorzero",
-    "-p",
     "tensorzero-node",
     "-p",
     "tensorzero-auth",
-    "-p",
-    "tensorzero-optimizers",
-    "-p",
-    "autopilot-client",
     "-p",
     "tensorzero-types",
     "-p",
     "config-applier",
     "-p",
-    "autopilot-tools",
-    "-p",
-    "durable-tools",
-    "-p",
-    "evaluations",
-    # TODO(shuyangli): Remove `gateway` when we redesign evaluations crate.
-    "-p",
-    "gateway",
 ] # Export Typescript bindings for TensorZero

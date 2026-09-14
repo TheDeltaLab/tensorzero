@@ -80,8 +80,6 @@ fn get_hello_chat_function() -> Result<UninitializedFunctionConfig, Error> {
             description: Some(
                 "Built-in hello chat function - a simple greeting function with template variable support".to_string(),
             ),
-            experimentation: None,
-            evaluators: HashMap::new(),
         },
     ))
 }
@@ -103,8 +101,6 @@ fn get_hello_json_function() -> UninitializedFunctionConfig {
         description: Some(
             "Built-in hello JSON function - a simple JSON response function".to_string(),
         ),
-        experimentation: None,
-        evaluators: HashMap::new(),
     })
 }
 
@@ -188,8 +184,6 @@ fn get_gepa_analyze_function() -> Result<UninitializedFunctionConfig, Error> {
             description: Some(
                 "Built-in GEPA analyze function - analyzes inference outputs and provides structured XML feedback for optimization".to_string(),
             ),
-            experimentation: None,
-            evaluators: HashMap::new(),
         },
     ))
 }
@@ -315,8 +309,6 @@ fn get_gepa_mutate_function() -> Result<UninitializedFunctionConfig, Error> {
             description: Some(
                 "Built-in GEPA mutate function - generates improved message templates based on analysis feedback".to_string(),
             ),
-            experimentation: None,
-            evaluators: HashMap::new(),
         },
     ))
 }
@@ -412,9 +404,7 @@ mod tests {
                 loaded.err()
             );
             // Built-in functions should not have evaluators
-            let loaded = loaded.unwrap();
-            assert!(loaded.evaluator_functions.is_empty());
-            assert!(loaded.evaluator_metrics.is_empty());
+            let _ = loaded.unwrap();
         }
     }
 }

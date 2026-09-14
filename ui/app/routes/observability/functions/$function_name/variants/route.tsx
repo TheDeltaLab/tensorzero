@@ -27,8 +27,6 @@ import type { TimeWindow, UiConfig } from "~/types/tensorzero";
 import { VariantPerformance } from "~/components/function/variant/VariantPerformance";
 import { MetricSelector } from "~/components/function/variant/MetricSelector";
 import type { Route } from "./+types/route";
-import { AskAutopilotButton } from "~/components/autopilot/AskAutopilotButton";
-import { useAutopilotAvailable } from "~/context/autopilot-available";
 import {
   PageHeader,
   PageLayout,
@@ -343,7 +341,6 @@ function VariantDetailPageHeader({
   functionName: string;
   variantName: string;
 }) {
-  const autopilotAvailable = useAutopilotAvailable();
   const snapshotHash = useSnapshotHash();
 
   return (
@@ -363,13 +360,7 @@ function VariantDetailPageHeader({
         />
       }
       name={variantName}
-    >
-      {autopilotAvailable && (
-        <AskAutopilotButton
-          message={`Variant: ${variantName}\nFunction: ${functionName}\n\n`}
-        />
-      )}
-    </PageHeader>
+    />
   );
 }
 

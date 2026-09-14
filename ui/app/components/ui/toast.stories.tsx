@@ -14,8 +14,8 @@ function ToastDemo({ variant }: { variant: "info" | "success" | "error" }) {
       });
     } else if (variant === "success") {
       toast.success({
-        title: "Datapoint added",
-        description: "Successfully added to dataset.",
+        title: "Feedback submitted",
+        description: "Your feedback has been recorded.",
       });
     } else {
       toast.info({

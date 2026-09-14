@@ -31,12 +31,10 @@ import {
 } from "~/routes/api/tensorzero/inference.utils";
 import { ActionBar } from "~/components/layout/ActionBar";
 import { TryWithSelect } from "~/components/inference/TryWithSelect";
-import { AddToDatasetButton } from "~/components/dataset/AddToDatasetButton";
 import { HumanFeedbackButton } from "~/components/feedback/HumanFeedbackButton";
 import { HumanFeedbackModal } from "~/components/feedback/HumanFeedbackModal";
 import { HumanFeedbackForm } from "~/components/feedback/HumanFeedbackForm";
 import { DemonstrationFeedbackButton } from "~/components/feedback/DemonstrationFeedbackButton";
-import { AskAutopilotButton } from "~/components/autopilot/AskAutopilotButton";
 import { logger } from "~/utils/logger";
 import { useFetcherWithReset } from "~/hooks/use-fetcher-with-reset";
 import { DEFAULT_FUNCTION } from "~/utils/constants";
@@ -61,7 +59,6 @@ export interface InferenceDetailData {
   model_inferences: ParsedModelInferenceRow[];
   feedback: FeedbackRow[];
   feedback_bounds: FeedbackBounds;
-  hasDemonstration: boolean;
   latestFeedbackByMetric: Record<string, string>;
   usedVariants: string[];
 }
@@ -106,7 +103,6 @@ export function InferenceDetailContent({
     model_inferences,
     feedback,
     feedback_bounds,
-    hasDemonstration,
     latestFeedbackByMetric,
     usedVariants,
   } = data;
@@ -315,15 +311,6 @@ export function InferenceDetailContent({
           isDefaultFunction={isDefault}
         />
       )}
-      {!standalone && (
-        <AddToDatasetButton
-          inferenceId={inference.inference_id}
-          functionName={inference.function_name}
-          variantName={inference.variant_name}
-          episodeId={inference.episode_id}
-          hasDemonstration={hasDemonstration}
-        />
-      )}
       <HumanFeedbackModal
         onOpenChange={(isOpen) => {
           if (humanFeedbackState !== "idle") {
@@ -350,9 +337,6 @@ export function InferenceDetailContent({
           />
         </humanFeedbackFetcher.Form>
       </HumanFeedbackModal>
-      <AskAutopilotButton
-        message={`Inference ID: ${inference.inference_id}\n\n`}
-      />
       {!standalone && (
         <CopyMessagesButton input={input} output={inference.output} />
       )}

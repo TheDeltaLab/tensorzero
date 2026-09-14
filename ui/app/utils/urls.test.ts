@@ -6,11 +6,6 @@ import {
   toInferenceUrl,
   toInferencesListUrl,
   toEpisodeUrl,
-  toDatasetUrl,
-  toDatapointUrl,
-  toEvaluationDatapointUrl,
-  toWorkflowEvaluationRunUrl,
-  toWorkflowEvaluationProjectUrl,
 } from "./urls";
 
 describe("URL helper functions", () => {
@@ -84,64 +79,6 @@ describe("URL helper functions", () => {
     it("should encode episode IDs", () => {
       expect(toEpisodeUrl("456")).toBe("/observability/episodes/456");
       expect(toEpisodeUrl("ep#123")).toBe("/observability/episodes/ep%23123");
-    });
-  });
-
-  describe("toDatasetUrl", () => {
-    it("should encode dataset names", () => {
-      expect(toDatasetUrl("my_dataset")).toBe("/datasets/my_dataset");
-      expect(toDatasetUrl("dataset/test")).toBe("/datasets/dataset%2Ftest");
-    });
-  });
-
-  describe("toDatapointUrl", () => {
-    it("should encode both dataset name and datapoint ID", () => {
-      expect(toDatapointUrl("my_dataset", "point_1")).toBe(
-        "/datasets/my_dataset/datapoint/point_1",
-      );
-      expect(toDatapointUrl("dataset/test", "point#1")).toBe(
-        "/datasets/dataset%2Ftest/datapoint/point%231",
-      );
-    });
-  });
-
-  describe("toEvaluationDatapointUrl", () => {
-    it("should encode datapoint ID and include evaluation_run_ids", () => {
-      expect(
-        toEvaluationDatapointUrl("point_1", {
-          evaluation_run_ids: "run_1",
-        }),
-      ).toBe("/evaluations/results/point_1?evaluation_run_ids=run_1");
-    });
-
-    it("should encode special characters", () => {
-      expect(
-        toEvaluationDatapointUrl("point#1", {
-          evaluation_run_ids: "run_1,run_2",
-        }),
-      ).toBe("/evaluations/results/point%231?evaluation_run_ids=run_1%2Crun_2");
-    });
-  });
-
-  describe("toWorkflowEvaluationRunUrl", () => {
-    it("should encode run IDs", () => {
-      expect(toWorkflowEvaluationRunUrl("run_1")).toBe(
-        "/workflow-evaluations/runs/run_1",
-      );
-      expect(toWorkflowEvaluationRunUrl("run/test")).toBe(
-        "/workflow-evaluations/runs/run%2Ftest",
-      );
-    });
-  });
-
-  describe("toWorkflowEvaluationProjectUrl", () => {
-    it("should encode project names", () => {
-      expect(toWorkflowEvaluationProjectUrl("project_1")).toBe(
-        "/workflow-evaluations/projects/project_1",
-      );
-      expect(toWorkflowEvaluationProjectUrl("project/test")).toBe(
-        "/workflow-evaluations/projects/project%2Ftest",
-      );
     });
   });
 });

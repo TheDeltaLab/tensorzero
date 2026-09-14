@@ -41,22 +41,22 @@ mod tests {
     fn test_bundles_are_generated() {
         // Check that a known LlmParams bundle exists and contains the type name
         assert!(
-            !INFERENCE_TOOL_PARAMS.is_empty(),
-            "INFERENCE_TOOL_PARAMS bundle should not be empty"
+            !INFERENCE_RESPONSE.is_empty(),
+            "INFERENCE_RESPONSE bundle should not be empty"
         );
         assert!(
-            INFERENCE_TOOL_PARAMS.contains("InferenceToolParams"),
-            "INFERENCE_TOOL_PARAMS bundle should contain the type name"
+            INFERENCE_RESPONSE.contains("InferenceResponse"),
+            "INFERENCE_RESPONSE bundle should contain the type name"
         );
     }
 
     #[test]
     fn test_bundle_contains_dependencies() {
-        // InferenceToolParams depends on Input, InferenceParams, DynamicToolParams, etc.
+        // InferenceResponse depends on Input, ContentBlockChatOutput, etc.
         // Verify that at least one dependency is included
         assert!(
-            INFERENCE_TOOL_PARAMS.contains("Input"),
-            "INFERENCE_TOOL_PARAMS bundle should contain the Input dependency"
+            INFERENCE_RESPONSE.contains("Input"),
+            "INFERENCE_RESPONSE bundle should contain the Input dependency"
         );
     }
 

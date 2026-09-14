@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::clickhouse::get_clean_clickhouse;
@@ -64,8 +63,6 @@ async fn get_embedded_client(clickhouse: ClickHouseConnectionInfo) -> tensorzero
         ValkeyConnectionInfo::Disabled,
         TensorzeroHttpClient::new_testing().unwrap(),
         None,
-        HashSet::new(), // available_tools
-        HashSet::new(), // tool_whitelist
         false,
     )
     .await
