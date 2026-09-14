@@ -24,6 +24,7 @@ workspace = true
 
 
 [dependencies]
+durable-tools-spawn.workspace = true
 async-stream = { workspace = true }
 async-trait = { workspace = true }
 # `default-features = false` avoids the legacy `hyper 0.14` + `rustls 0.21`

@@ -1,0 +1,33 @@
+[package]
+name = "async-inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# Internal crates
+tensorzero-core = { path = "../tensorzero-core" }
+
+# Durable task queue
+durable.workspace = true
+
+# Async runtime
+tokio.workspace = true
+tokio-util = "0.7"
+
+# Serialization
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+
+# Database / cache
+sqlx = { workspace = true }
+redis.workspace = true
+
+# Utilities
+anyhow.workspace = true
+uuid.workspace = true
+tracing.workspace = true
+
+[lints]
+workspace = true

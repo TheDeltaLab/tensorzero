@@ -279,6 +279,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "async-inference"
+version = "2026.6.0"
+dependencies = [
+ "anyhow",
+ "durable",
+ "redis",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tensorzero-core",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "async-lock"
 version = "3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1920,6 +1937,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "durable-tools-spawn"
+version = "2026.6.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "durable",
+ "googletest",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "dyn-clone"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2348,6 +2381,7 @@ dependencies = [
 name = "gateway"
 version = "2026.6.0"
 dependencies = [
+ "async-inference",
  "async-stream",
  "axum",
  "brotli",
@@ -6520,6 +6554,7 @@ dependencies = [
  "dashmap",
  "derive_builder 0.20.2",
  "durable",
+ "durable-tools-spawn",
  "enum-map",
  "futures",
  "futures-core",

@@ -143,11 +143,11 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
             "/internal/object_storage",
             get(endpoints::object_storage::get_object_handler),
         )
-         // Model statistics endpoints
-         .route(
-             "/internal/models/count",
-             get(endpoints::internal::models::count_models_handler),
-         )
+        // Model statistics endpoints
+        .route(
+            "/internal/models/count",
+            get(endpoints::internal::models::count_models_handler),
+        )
         .route(
             "/internal/models/usage",
             get(endpoints::internal::models::get_model_usage_handler),
