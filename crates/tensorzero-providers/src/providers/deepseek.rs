@@ -168,6 +168,7 @@ impl DeepSeekProvider {
         let request_body = serde_json::to_value(
             OpenAIResponsesRequest::new(
                 &self.model_name,
+                PROVIDER_TYPE,
                 request,
                 false,
                 &[],
@@ -289,6 +290,7 @@ impl DeepSeekProvider {
         let request_body = serde_json::to_value(
             OpenAIResponsesRequest::new(
                 &self.model_name,
+                PROVIDER_TYPE,
                 request,
                 false,
                 &[],

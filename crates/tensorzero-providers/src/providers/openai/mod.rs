@@ -270,6 +270,7 @@ impl OpenAIProvider {
             OpenAIAPIType::Responses => Ok(serde_json::to_value(
                 OpenAIResponsesRequest::new(
                     &self.model_name,
+                    PROVIDER_TYPE,
                     request,
                     self.include_encrypted_reasoning,
                     &self.provider_tools,
@@ -721,6 +722,7 @@ impl InferenceProvider for OpenAIProvider {
                 let request_body = serde_json::to_value(
                     OpenAIResponsesRequest::new(
                         &self.model_name,
+                        PROVIDER_TYPE,
                         request,
                         self.include_encrypted_reasoning,
                         &self.provider_tools,
@@ -2951,6 +2953,7 @@ impl<'a> OpenAIBatchFileInput<'a> {
                 OpenAIBatchFileBody::Responses(Box::new(
                     OpenAIResponsesRequest::new(
                         model,
+                        PROVIDER_TYPE,
                         request,
                         include_encrypted_reasoning,
                         provider_tools,
