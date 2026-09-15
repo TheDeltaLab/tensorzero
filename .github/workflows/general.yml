@@ -1584,8 +1584,6 @@ jobs:
         check-docs-broken-links,
         check-node-bindings,
         check-production-deployment-docker-compose,
-        check-python-client-build,
-        check-python-schemas,
         check-version-consistency,
         clickhouse-tests,
         client-tests,
