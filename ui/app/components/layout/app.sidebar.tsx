@@ -15,6 +15,7 @@ import {
   HardDrive,
   KeyRound,
   LayoutGrid,
+  ListChecks,
   LogOut,
   Users,
 } from "lucide-react";
@@ -74,6 +75,11 @@ const navigation: NavigationSection[] = [
         title: "Models",
         url: "/observability/models",
         icon: Model,
+      },
+      {
+        title: "Async Tasks",
+        url: "/async-tasks",
+        icon: ListChecks,
       },
       {
         title: "Analysis",
