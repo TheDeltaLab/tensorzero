@@ -8,14 +8,14 @@ rustflags = ["-C", "link-args=-Wl,-undefined,dynamic_lookup"] # for NAPI
 check-all = "check --all-targets --all-features"
 test-unit = "nextest run --lib --bins"
 test-unit-fast = "nextest run --lib --bins --retries 0 --no-fail-fast"
-test-all = "nextest run --features e2e_tests"
+test-all = "nextest run --features e2e_tests,aws,google"
 # Note - 'test-batch', 'test-e2e', and 'test-clickhouse' must be kept in sync
 # Running all of them should cover all of our tests, and not miss any
 test-live-batch = [
     "nextest",
     "run",
     "--features",
-    "e2e_tests",
+    "e2e_tests,aws,google",
     "--profile",
     "live-batch",
 ]
@@ -23,7 +23,7 @@ test-mock-batch = [
     "nextest",
     "run",
     "--features",
-    "e2e_tests",
+    "e2e_tests,aws,google",
     "--profile",
     "mock-batch",
 ]
@@ -32,7 +32,7 @@ test-e2e-fast = [
     "nextest",
     "run",
     "--features",
-    "e2e_tests",
+    "e2e_tests,aws,google",
     "--profile",
     "e2e",
     "--retries",
@@ -46,7 +46,7 @@ test-clickhouse = [
     "nextest",
     "run",
     "--features",
-    "e2e_tests",
+    "e2e_tests,aws,google",
     "--profile",
     "clickhouse",
 ]
@@ -54,7 +54,7 @@ test-clickhouse-fast = [
     "nextest",
     "run",
     "--features",
-    "e2e_tests",
+    "e2e_tests,aws,google",
     "--profile",
     "clickhouse",
     "--retries",
@@ -65,7 +65,7 @@ test-endpoints = [
     "nextest",
     "run",
     "--features",
-    "e2e_tests",
+    "e2e_tests,aws,google",
     "--profile",
     "endpoints",
 ]
@@ -78,10 +78,10 @@ test-postgres-inference-load = [
 ]
 
 
-build-e2e = "build --bin gateway --features e2e_tests"
-run-e2e = "run --bin gateway --features e2e_tests -- --config-file tensorzero-core/tests/e2e/config/{tensorzero,object-storage-disabled}.*.toml"
-run-e2e-postgres = "run --bin gateway --features e2e_tests -- --config-file tensorzero-core/tests/e2e/config/{tensorzero,postgres,object-storage-disabled}.*.toml"
-migrate-postgres = "run --bin gateway --features e2e_tests -- --run-postgres-migrations"
+build-e2e = "build --bin gateway --features e2e_tests,aws,google"
+run-e2e = "run --bin gateway --features e2e_tests,aws,google -- --config-file tensorzero-core/tests/e2e/config/{tensorzero,object-storage-disabled}.*.toml"
+run-e2e-postgres = "run --bin gateway --features e2e_tests,aws,google -- --config-file tensorzero-core/tests/e2e/config/{tensorzero,postgres,object-storage-disabled}.*.toml"
+migrate-postgres = "run --bin gateway --features e2e_tests,aws,google -- --run-postgres-migrations"
 watch-e2e = "watch -x run-e2e"
 
 tsbuild = [
@@ -97,5 +97,6 @@ tsbuild = [
     "tensorzero-types",
     "-p",
     "config-applier",
-    "-p",
+    "--features",
+    "tensorzero-core/aws,tensorzero-core/google",
 ] # Export Typescript bindings for TensorZero

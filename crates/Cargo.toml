@@ -159,6 +159,9 @@ derive_builder = "0.20.0"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# `pyo3` (Python SDK bindings, stripped in #60) and `autopilot-client` are
+# referenced by leftover `#[cfg(feature = ...)]` blocks; keep rustc quiet.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("pyo3", "autopilot-client"))'] }
 
 [workspace.lints.clippy]
 allow_attributes = "deny"

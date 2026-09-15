@@ -35,6 +35,6 @@ workspace = true
 [features]
 # Provider integration features (forwarded to `tensorzero-core`). On by default
 # so existing builds are unchanged.
-default = ["aws", "google"]
+default = []
 aws = ["tensorzero-core/aws"]
 google = ["tensorzero-core/google"]

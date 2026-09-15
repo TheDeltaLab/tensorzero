@@ -38,7 +38,7 @@ e2e_tests = ["tensorzero-core/e2e_tests"]
 # Provider integration features, on by default. Build with
 # `cargo build -p gateway --no-default-features` for a lean gateway
 # without the AWS SDK stack and GCP ADC support.
-default = ["aws", "google"]
+default = []
 aws = ["tensorzero-core/aws"]
 google = ["tensorzero-core/google"]
 

@@ -11,7 +11,7 @@ license.workspace = true
 # recompiles all ~250k lines of tensorzero-core.
 
 [features]
-default = ["aws", "google"]
+default = []
 # AWS Bedrock / SageMaker providers. Pulls in the AWS SDK stack
 # (aws-config credential chain, SigV4, smithy HTTP/eventstream).
 aws = [
@@ -37,7 +37,6 @@ e2e_tests = [
 # Exposes `providers::test_helpers` (shared test fixtures) to dependent crates'
 # test builds. Enabled by tensorzero-core as a dev-dependency feature.
 test-helpers = []
-pyo3 = ["dep:pyo3", "tensorzero-types/pyo3", "tensorzero-inference-types/pyo3"]
 
 [lints]
 workspace = true
@@ -76,7 +75,6 @@ lazy_static = { workspace = true }
 mime = { workspace = true }
 mime_guess = "2.0.5"
 object_store = { workspace = true }
-pyo3 = { workspace = true, optional = true }
 reqwest = { workspace = true }
 reqwest-sse-stream = { workspace = true }
 rust_decimal = { workspace = true }

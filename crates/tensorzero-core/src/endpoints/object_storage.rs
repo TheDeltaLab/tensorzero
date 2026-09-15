@@ -13,8 +13,8 @@ use crate::{
     inference::types::storage::StoragePath,
     utils::gateway::{AppState, AppStateData},
 };
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use object_store::ObjectStoreExt;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -153,8 +153,8 @@ pub async fn get_object(
 mod tests {
     use super::*;
     use crate::inference::types::storage::StorageKind;
-    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
     use googletest::prelude::*;
     use std::fs;
     use tempfile::TempDir;
@@ -205,9 +205,7 @@ mod tests {
         let inside = fetch_object_by_path(Some(&store), "inside.txt")
             .await
             .expect("file inside configured root should be readable");
-        let decoded = BASE64_STANDARD
-            .decode(inside.data)
-            .expect("base64 decodes");
+        let decoded = BASE64_STANDARD.decode(inside.data).expect("base64 decodes");
         assert_eq!(
             decoded, b"safe-content",
             "expected to read the file inside the configured root"

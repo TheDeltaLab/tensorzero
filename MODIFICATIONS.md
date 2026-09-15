@@ -10,12 +10,15 @@ See `NOTICE` for the overall attribution statement.
 
 ## Modified non-source-code files
 
-- `crates/tensorzero-providers/Cargo.toml` — Made the AWS SDK deps and `google-cloud-auth` optional behind new `aws` / `google` cargo features (both default-on) so `--no-default-features` builds a lean provider set (Delta-AI fork).
-- `crates/tensorzero-core/Cargo.toml` — Forward `aws` / `google` provider features to `tensorzero-providers` (default-on); removed the now-unused direct AWS/GCP dependencies and swapped `aws_smithy_types::base64` helpers for the `base64` crate (Delta-AI fork).
-- `crates/gateway/Cargo.toml` — `aws` / `google` features (default-on) forwarded through `tensorzero-core`, `async-inference`, and `tensorzero-client` so `cargo build -p gateway --no-default-features` produces a lean gateway (Delta-AI fork).
-- `crates/async-inference/Cargo.toml` — Forward `aws` / `google` features (default-on) so lean gateway builds propagate through this crate (Delta-AI fork).
-- `crates/tensorzero-client/Cargo.toml` — Forward `aws` / `google` features (default-on) (Delta-AI fork).
-- `AGENTS.md` — Documented the lean-build provider cargo features (Delta-AI fork).
+- `crates/tensorzero-providers/Cargo.toml` — Made the AWS SDK deps and `google-cloud-auth` optional behind new `aws` / `google` cargo features, **off by default**; removed the dead `pyo3` feature/dep (Python SDK stripped in #60) (Delta-AI fork).
+- `crates/tensorzero-core/Cargo.toml` — Forward `aws` / `google` provider features to `tensorzero-providers` (off by default); removed the now-unused direct AWS/GCP dependencies, swapped `aws_smithy_types::base64` helpers for the `base64` crate, and removed the dead `pyo3` feature/dep plus the dangling `pyo3_helpers` module declaration (Delta-AI fork).
+- `crates/gateway/Cargo.toml` — `aws` / `google` features (off by default) forwarded through `tensorzero-core`, `async-inference`, and `tensorzero-client`; plain `cargo build -p gateway` is now lean (Delta-AI fork).
+- `crates/async-inference/Cargo.toml` — Forward `aws` / `google` features (off by default) so lean gateway builds propagate through this crate (Delta-AI fork).
+- `crates/tensorzero-client/Cargo.toml` — Forward `aws` / `google` features (off by default); removed the dead `pyo3` feature/dep and stale cargo-machete/cargo-shear ignores (Delta-AI fork).
+- `AGENTS.md` — Documented the lean-by-default provider cargo features and the gateway-core-only testing scope (Delta-AI fork).
+- `crates/.cargo/config.toml` — e2e/test/run/tsbuild aliases now pass `--features e2e_tests,aws,google` explicitly since provider features are off by default (Delta-AI fork).
+- `crates/tensorzero-http/Cargo.toml`, `crates/tensorzero-types/Cargo.toml`, `crates/tensorzero-inference-types/Cargo.toml` — Removed the dead `pyo3` feature/dep (Python SDK stripped in #60); `tensorzero-types` also swaps `aws-smithy-types` base64 for the `base64` crate so the lean graph drops it entirely (Delta-AI fork).
+- `crates/Cargo.toml` — Workspace `unexpected_cfgs` check-cfg allowlist for the leftover `pyo3` / `autopilot-client` cfg references (Delta-AI fork).
 - `AGENTS.md` — Added Modification Notice (Delta-AI fork) section.
 - `AGENTS.md` — Require `CARGO_TARGET_DIR=~/.tensorzero-cargo-dir` for all `cargo` commands so checkouts/worktrees share one build cache (Delta-AI fork).
 - `crates/.config/nextest.toml` — Longer slow-timeout override for the env-gated live-gateway async inference e2e tests (`client::async_inference::tests::e2e`) (Delta-AI fork).

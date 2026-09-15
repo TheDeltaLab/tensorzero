@@ -61,8 +61,6 @@ pub use tensorzero_types::{
 use futures::FutureExt;
 use futures::future::{join_all, try_join_all};
 use itertools::Itertools;
-#[cfg(feature = "pyo3")]
-use pyo3::prelude::*;
 pub use resolved_input::{
     LazyFileExt, ResolvedInput, ResolvedInputMessage, ResolvedInputMessageContent,
 };
@@ -109,8 +107,6 @@ pub mod extra_body;
 pub mod extra_headers;
 pub mod extra_stuff;
 pub mod file;
-#[cfg(feature = "pyo3")]
-pub mod pyo3_helpers;
 pub mod resolved_input;
 pub mod role;
 pub mod storage;
