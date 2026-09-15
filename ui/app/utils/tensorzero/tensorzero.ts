@@ -54,6 +54,9 @@ import type {
   ClientInferenceParams,
   InferenceResponse,
   ResolveUuidResponse,
+  AsyncTaskStatus,
+  AsyncTaskStatusResponse,
+  ListAsyncTasksResponse,
 } from "~/types/tensorzero";
 import type { AnalysisResponse } from "~/routes/observability/analysis/analysisQuery";
 
@@ -290,6 +293,48 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       api_keys: InferenceApiKeyOption[];
     };
     return body.api_keys ?? [];
+  }
+
+  /**
+   * Async inference tasks from the gateway's durable queue, for the async
+   * tasks dashboard page. (Delta-AI fork: restored after the #60 strip.)
+   */
+  async listAsyncTasks(options: {
+    limit: number;
+    offset: number;
+    status?: AsyncTaskStatus;
+  }): Promise<ListAsyncTasksResponse> {
+    const params = new URLSearchParams({
+      limit: options.limit.toString(),
+      offset: options.offset.toString(),
+    });
+    if (options.status) {
+      params.set("status", options.status);
+    }
+    const response = await this.fetch(
+      `/internal/async_tasks?${params.toString()}`,
+      { method: "GET" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as ListAsyncTasksResponse;
+  }
+
+  /**
+   * Detail for one async inference task (public API shape: status plus the
+   * final response or error payload).
+   */
+  async getAsyncTask(taskId: string): Promise<AsyncTaskStatusResponse> {
+    const response = await this.fetch(`/v1/async_tasks/${taskId}`, {
+      method: "GET",
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as AsyncTaskStatusResponse;
   }
 
   async getDashboardSession(
