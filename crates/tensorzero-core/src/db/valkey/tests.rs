@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::error::ErrorDetails;
 use crate::observability::{LogFormat, TENSORZERO_EMBEDDED_DEFAULTS, setup_observability};
 
