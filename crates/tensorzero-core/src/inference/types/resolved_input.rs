@@ -1,3 +1,6 @@
+// Modified by Delta-AI under Apache 2.0
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use std::future::Future;
 use std::pin::Pin;
 
@@ -94,7 +97,7 @@ pub async fn write_file(
     // The store might be explicitly disabled
     if let Some(store) = object_store.object_store.as_ref() {
         let data = raw.data();
-        let bytes = aws_smithy_types::base64::decode(data).map_err(|e| {
+        let bytes = BASE64_STANDARD.decode(data).map_err(|e| {
             Error::new(ErrorDetails::ObjectStoreWrite {
                 message: format!("Failed to decode file as base64: {e:?}"),
                 path: storage_path.clone(),

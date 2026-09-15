@@ -1,7 +1,10 @@
 // Modified by Delta-AI under Apache 2.0
 pub mod anthropic;
+#[cfg(feature = "aws")]
 pub mod aws_bedrock;
+#[cfg(feature = "aws")]
 pub mod aws_common;
+#[cfg(feature = "aws")]
 pub mod aws_sagemaker;
 pub mod azure;
 pub mod chat_completions;

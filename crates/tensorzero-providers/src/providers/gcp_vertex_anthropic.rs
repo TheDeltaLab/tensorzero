@@ -1,5 +1,6 @@
 // Modified by Delta-AI under Apache 2.0
 use std::borrow::Cow;
+#[cfg(feature = "google")]
 use std::fmt::Display;
 
 use futures::StreamExt;
@@ -17,6 +18,7 @@ use tensorzero_error::{DisplayOrDebugGateway, Error, ErrorDetails};
 use tensorzero_http::{TensorZeroEventSource, TensorzeroHttpClient};
 use tensorzero_inference_types::BatchRequestRow;
 use tensorzero_inference_types::PollBatchInferenceResponse;
+#[cfg(feature = "google")]
 use tensorzero_inference_types::credential_validation::{
     e2e_skip_credential_validation, skip_credential_validation,
 };
@@ -70,6 +72,7 @@ pub struct GCPVertexAnthropicProvider {
     provider_tools: Vec<serde_json::Value>,
 }
 
+#[cfg(feature = "google")]
 fn handle_gcp_error(
     provider_type: ProviderType,
     e: impl Display + Debug,
@@ -91,6 +94,7 @@ fn handle_gcp_error(
     }
 }
 
+#[cfg(feature = "google")]
 pub async fn make_gcp_sdk_credentials(
     provider_type: ProviderType,
 ) -> Result<GCPVertexCredentials, Error> {
@@ -107,6 +111,19 @@ pub async fn make_gcp_sdk_credentials(
         Ok(_) => Ok(GCPVertexCredentials::Sdk(creds)),
         Err(e) => handle_gcp_error(provider_type, e),
     }
+}
+
+/// ADC (`sdk`) credentials are only available with the `google` cargo feature.
+#[cfg(not(feature = "google"))]
+pub async fn make_gcp_sdk_credentials(
+    provider_type: ProviderType,
+) -> Result<GCPVertexCredentials, Error> {
+    Err(Error::new(ErrorDetails::Config {
+        message: format!(
+            "provider `{provider_type}` was configured with `sdk` (Application Default) credentials, \
+             which require the `google` cargo feature (rebuild with `--features google`)"
+        ),
+    }))
 }
 
 impl GCPVertexAnthropicProvider {

@@ -17,7 +17,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 tokio-stream = { workspace = true }
-tensorzero-core = { path = "../tensorzero-core" }
+tensorzero-core = { path = "../tensorzero-core", default-features = false }
 tensorzero-inference-types = { path = "../tensorzero-inference-types" }
 url = { workspace = true }
 pyo3 = { workspace = true, optional = true }
@@ -41,6 +41,11 @@ tracing-subscriber = "0.3.23"
 toml = { workspace = true }
 
 [features]
+# Provider integration features (forwarded to `tensorzero-core`). On by
+# default so existing builds are unchanged.
+default = ["aws", "google"]
+aws = ["tensorzero-core/aws"]
+google = ["tensorzero-core/google"]
 # Forward this feature to 'tensorzero-core', so that our types will generate
 # the appropriate pyo3 attributes.
 pyo3 = ["dep:pyo3", "tensorzero-core/pyo3", "tensorzero-inference-types/pyo3"]

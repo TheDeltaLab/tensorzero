@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! File Handling for TensorZero Inference Inputs
 //!
 //! This module defines file types for different stages of the file lifecycle:
@@ -44,7 +45,8 @@
 //!           ObjectStorageFile (metadata + data)
 //! ```
 
-use aws_smithy_types::base64;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine;
 use mime::MediaType;
 
 use crate::{
@@ -185,7 +187,7 @@ impl FileExt for File {
                     }
                 };
 
-                let data = base64::encode(bytes);
+                let data = BASE64_STANDARD.encode(bytes);
                 Ok(Base64File::from_parts(
                     Some(url),
                     mime_type,
