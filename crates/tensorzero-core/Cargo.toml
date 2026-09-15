@@ -11,8 +11,13 @@ exclude = ["tests/", "fixtures/"]
 # Forward this feature to the Rust client, so that the embedded gateway
 # has the `e2e_tests` feature enabled when we run our e2e tests
 e2e_tests = ["tensorzero-types/e2e_tests", "tensorzero-error/e2e_tests", "tensorzero-inference-types/e2e_tests", "tensorzero-stored-config/e2e_tests", "tensorzero-http/e2e_tests", "tensorzero-otel/e2e_tests", "tensorzero-providers/e2e_tests"]
-pyo3 = ["dep:pyo3", "tensorzero-types/pyo3", "tensorzero-inference-types/pyo3", "tensorzero-http/pyo3", "tensorzero-providers/pyo3"]
 optimization_tests = ["e2e_tests"]
+# Provider integration features (forwarded to `tensorzero-providers`).
+# On by default so existing builds are unchanged; pass
+# `--no-default-features` down this chain for a lean build without them.
+default = []
+aws = ["tensorzero-providers/aws"]
+google = ["tensorzero-providers/google"]
 
 [[test]]
 name = "e2e"
@@ -27,29 +32,6 @@ workspace = true
 durable-tools-spawn.workspace = true
 async-stream = { workspace = true }
 async-trait = { workspace = true }
-# `default-features = false` avoids the legacy `hyper 0.14` + `rustls 0.21`
-# stack pulled in by `aws-smithy-runtime/tls-rustls`. See
-# https://github.com/smithy-lang/smithy-rs/issues/4576#issuecomment-4113177811
-# The feature list mirrors `aws-config`'s defaults (`default-https-client`,
-# `rt-tokio`, `credentials-process`, `sso`) plus `behavior-version-latest`.
-aws-config = { version = "1.8", default-features = false, features = [
-    "behavior-version-latest",
-    "default-https-client",
-    "rt-tokio",
-    "credentials-process",
-    "sso",
-] }
-aws-smithy-types = { version = "1.4.7", features = [
-    "serde-deserialize",
-    "serde-serialize",
-] }
-aws-types = "1.3.6"
-aws-credential-types = { version = "1.2.2", features = [
-    "hardcoded-credentials",
-] }
-aws-sigv4 = "1.3"
-aws-smithy-eventstream = "0.60"
-aws-smithy-runtime-api = "1.11.0"
 axum = { workspace = true }
 backon = { version = "1.6.0", features = ["tokio-sleep"] }
 blake3 = { workspace = true }
@@ -95,7 +77,7 @@ url = { workspace = true, features = ["serde"] }
 uuid = { workspace = true }
 tensorzero-derive = { path = "../tensorzero-derive" }
 tensorzero-inference-types = { path = "../tensorzero-inference-types" }
-tensorzero-providers = { path = "../tensorzero-providers" }
+tensorzero-providers = { path = "../tensorzero-providers", default-features = false }
 tensorzero-stored-config = { path = "../tensorzero-stored-config" }
 tensorzero-types = { path = "../tensorzero-types" }
 tensorzero-error = { path = "../tensorzero-error", features = ["axum", "otel", "sqlx", "redis"] }
@@ -116,8 +98,6 @@ tracing-futures = { version = "0.2.5", features = ["futures-03"] }
 tracing-opentelemetry-instrumentation-sdk = { workspace = true, features = [
     "http",
 ] }
-pyo3 = { workspace = true, optional = true }
-google-cloud-auth = { workspace = true }
 mime = { workspace = true }
 mime_guess = "2.0.5"
 indexmap = { version = "2.13.1", features = ["serde"] }
@@ -150,7 +130,7 @@ serde_with = { workspace = true }
 
 [dev-dependencies]
 tensorzero = { path = "../tensorzero-client", features = ["e2e_tests"] }
-tensorzero-providers = { path = "../tensorzero-providers", features = ["test-helpers", "e2e_tests"] }
+tensorzero-providers = { path = "../tensorzero-providers", features = ["test-helpers", "e2e_tests", "aws", "google"] }
 tensorzero-types = { path = "../tensorzero-types", features = ["e2e_tests"] }
 tensorzero-error = { path = "../tensorzero-error", features = ["e2e_tests"] }
 tensorzero-inference-types = { path = "../tensorzero-inference-types", features = ["e2e_tests"] }

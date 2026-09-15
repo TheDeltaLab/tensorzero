@@ -89,6 +89,26 @@ default-filter = 'binary(e2e) and test(endpoints::)'
 junit.path = "junit.xml"
 retries = { backoff = "exponential", count = 4, delay = "5s", jitter = true, max-delay = "60s" }
 
+# Delta-AI daily driver: the subset of e2e tests that exercise the capabilities
+# our internal deployments actually use (OpenAI-compatible + DeepSeek providers,
+# Postgres observability, Valkey, async jobs, fallback/cost/synapse-compat).
+# Skips the upstream live-provider matrix, ClickHouse, optimizer variants
+# (dicl/mixture_of_n/best_of_n), feedback, prometheus, object storage, batch,
+# config-in-db, and proxy. Run with `cargo test-e2e-delta`.
+[profile.delta]
+default-filter = '''binary(e2e) and (
+    test(openai_compatible::) | test(inference::) | test(async_inference::) |
+    test(fallback::) | test(timeouts::) | test(retries::) | test(streaming_errors::) |
+    test(cost::) | test(raw_usage::) |
+    test(synapse_compat::) | test(protocol_preservation::) |
+    test(rate_limiting::) | test(cache::) | test(valkey) |
+    (test(db::) and (test(postgres) or test(valkey))) |
+    test(otel::) | test(otel_export) | test(otel_config_headers::) |
+    test(image_url::) | test(template::) | test(health::) | test(howdy::) |
+    test(aggregated_response::) | test(built_in::)
+  )
+'''
+
 # Run only evaluation tests. These run against both ClickHouse and Postgres in CI.
 [profile.cache]
 default-filter = 'binary(e2e) and (test(cache::) | test(valkey))'

@@ -7,7 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 # Internal crates
-tensorzero-core = { path = "../tensorzero-core" }
+tensorzero-core = { path = "../tensorzero-core", default-features = false }
 
 # Durable task queue
 durable.workspace = true
@@ -31,3 +31,10 @@ tracing.workspace = true
 
 [lints]
 workspace = true
+
+[features]
+# Provider integration features (forwarded to `tensorzero-core`). On by default
+# so existing builds are unchanged.
+default = []
+aws = ["tensorzero-core/aws"]
+google = ["tensorzero-core/google"]

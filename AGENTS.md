@@ -3,6 +3,7 @@
 - The Cargo workspace root is `crates/`. Run all `cargo` commands from that directory (e.g. `cd crates && cargo check`).
 - **Always set `CARGO_TARGET_DIR` to `~/.tensorzero-cargo-dir` when running any `cargo` command** (`check`, `clippy`, `test`, `nextest`, etc.), e.g. `cd crates && CARGO_TARGET_DIR=~/.tensorzero-cargo-dir cargo check`. This shares one build cache across all checkouts and worktrees. Without it, each worktree builds its own `crates/target`, and debug incremental sessions there grow to tens of GB and accumulate stale copies across interrupted or failed builds.
 - Use `cargo check` for quick verification, restrict further (e.g. `cargo check --package tensorzero-core`) if appropriate. For complex changes, you might want to run `cargo check --all-targets --all-features`. Test suite compilation is slow.
+- The AWS SDK stack (Bedrock/SageMaker providers) and GCP ADC (`sdk`) credentials sit behind the `aws` and `google` cargo features, **off by default** — plain `cargo build`/`check` produces a lean gateway without the AWS SDK crates. The `test-e2e` / `run-e2e` / `build-e2e` / `tsbuild` aliases pass `--features aws,google` explicitly because the e2e configs exercise those providers. Internal deployments that only use DeepSeek / OpenAI-compatible / OpenRouter providers need neither feature.
 - If you update Rust types or functions used in TypeScript, regenerate bindings with `pnpm build-bindings` (from root), then rebuild the NAPI bindings with `pnpm --filter=@tensorzero/tensorzero-node build`. Run `cargo check` first to catch compilation errors.
 - If you change a signature of a struct, function, and so on, use `grep` to find all instances in the codebase. For example, search for `StructName {` when updating struct fields.
 - Place crate imports at the top of the file or module using `use crate::...`. Avoid imports inside functions or tests. Avoid long inline crate paths.
@@ -24,6 +25,7 @@
 
 ## Rust Testing
 
+- **Testing scope:** for routine changes run `cargo test-e2e-delta` — the `delta` nextest profile selects the gateway-core subset we actually use (OpenAI-compatible/DeepSeek provider paths, Postgres observability, Valkey, async jobs, fallback, cost, synapse-compat; ~650 tests vs ~4,900 for the full `test-e2e`). The full `test-e2e` / `test-clickhouse` aliases remain for provider-matrix and ClickHouse-version CI. Do not run `--all-features` full-matrix tests for routine changes (the Python SDK `pyo3` bindings were stripped in #60 — the feature no longer exists).
 - Run tests with `cargo nextest`.
 - Use `googletest` for new Rust tests.
 - Annotate new tests with `#[gtest]` (googletest crate).

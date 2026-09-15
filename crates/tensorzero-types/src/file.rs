@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 //! File types for inference inputs.
 //!
 //! This module defines file types for different stages of the file lifecycle:
@@ -5,6 +6,8 @@
 
 use crate::error::TypeError;
 use crate::storage::StoragePath;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use mime::MediaType;
 #[cfg(feature = "pyo3")]
 use pyo3::prelude::*;
@@ -71,7 +74,7 @@ impl Base64File {
             mime_type
         } else {
             // Decode base64 and infer mime type from the data
-            let decoded = aws_smithy_types::base64::decode(&data).map_err(|e| {
+            let decoded = BASE64_STANDARD.decode(&data).map_err(|e| {
                 TypeError::InvalidBase64(format!("Failed to decode base64 data: {e}"))
             })?;
 

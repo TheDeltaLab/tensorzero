@@ -7,6 +7,7 @@
     clippy::unwrap_used
 )]
 mod aggregated_response;
+mod async_inference;
 mod best_of_n;
 mod built_in;
 mod cache;

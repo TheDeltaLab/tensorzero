@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use futures::StreamExt;
 use futures::future::try_join_all;
+#[cfg(feature = "google")]
 use google_cloud_auth::credentials::{CacheableResource, Credentials};
 use http;
 use http::{HeaderMap, HeaderValue};
@@ -236,6 +237,7 @@ pub async fn make_gcp_object_store(
                     bearer: key.expose_secret().to_string(),
                 })));
         }
+        #[cfg(feature = "google")]
         GCPVertexCredentials::Sdk(creds) => {
             let headers = creds
                 .headers(http::Extensions::default())
@@ -728,6 +730,7 @@ pub enum GCPVertexCredentials {
         raw: SecretString,
     },
     Dynamic(String),
+    #[cfg(feature = "google")]
     Sdk(Credentials),
     None,
     WithFallback {
@@ -909,6 +912,7 @@ impl GCPVertexCredentials {
                     })?
                     .expose_secret(),
             ),
+            #[cfg(feature = "google")]
             GCPVertexCredentials::Sdk(creds) => {
                 let headers = creds
                     .headers(http::Extensions::default())

@@ -7,8 +7,8 @@ license.workspace = true
 
 [dependencies]
 # Internal crates
-async-inference = { path = "../async-inference" }
-tensorzero-core = { path = "../tensorzero-core" }
+async-inference = { path = "../async-inference", default-features = false }
+tensorzero-core = { path = "../tensorzero-core", default-features = false }
 axum = { workspace = true }
 tracing = { version = "0.1.43", features = ["log", "release_max_level_debug"] }
 tokio = { workspace = true }
@@ -35,7 +35,12 @@ workspace = true
 
 [features]
 e2e_tests = ["tensorzero-core/e2e_tests"]
+# Provider integration features, on by default. Build with
+# `cargo build -p gateway --no-default-features` for a lean gateway
+# without the AWS SDK stack and GCP ADC support.
 default = []
+aws = ["tensorzero-core/aws"]
+google = ["tensorzero-core/google"]
 
 [dev-dependencies]
 tensorzero = { path = "../tensorzero-client", features = ["e2e_tests"] }
