@@ -125,31 +125,40 @@ impl ValkeyConnectionInfo {
         })?;
 
         let async_inference_stream_connection = if cluster {
-                let cluster_client = ClusterClient::new(vec![cleaned_valkey_url]).map_err(|e| {
+            // Cluster topologies advertise peer nodes by IP (e.g. Azure
+            // Managed Redis), while the TLS certificate is issued for the
+            // DNS endpoint. Mirror redis-cli: verify the certificate
+            // chain, skip hostname matching — otherwise every connection
+            // to a redirected peer node fails with "certificate not valid
+            // for name <ip>".
+            let cluster_client = ClusterClient::builder(vec![cleaned_valkey_url])
+                .danger_accept_invalid_hostnames(true)
+                .build()
+                .map_err(|e| {
                     DelayedError::new(ErrorDetails::ValkeyConnection {
                         message: format!("Failed to create Valkey cluster client: {e}"),
                     })
                 })?;
-                let connection = cluster_client.get_async_connection().await.map_err(|e| {
-                    DelayedError::new(ErrorDetails::ValkeyConnection {
-                        message: format!("Failed to connect to Valkey cluster: {e}"),
-                    })
-                })?;
-                ValkeyConnection::Cluster(connection)
-            } else {
-                let connection = ConnectionManager::new_with_config(
-                    client,
-                    ConnectionManagerConfig::new()
-                        .set_response_timeout(Some(ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT)),
-                )
-                .await
-                .map_err(|e| {
-                    DelayedError::new(ErrorDetails::ValkeyConnection {
-                        message: format!("Failed to connect to Valkey: {e}"),
-                    })
-                })?;
-                ValkeyConnection::Single(connection)
-            };
+            let connection = cluster_client.get_async_connection().await.map_err(|e| {
+                DelayedError::new(ErrorDetails::ValkeyConnection {
+                    message: format!("Failed to connect to Valkey cluster: {e}"),
+                })
+            })?;
+            ValkeyConnection::Cluster(connection)
+        } else {
+            let connection = ConnectionManager::new_with_config(
+                client,
+                ConnectionManagerConfig::new()
+                    .set_response_timeout(Some(ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT)),
+            )
+            .await
+            .map_err(|e| {
+                DelayedError::new(ErrorDetails::ValkeyConnection {
+                    message: format!("Failed to connect to Valkey: {e}"),
+                })
+            })?;
+            ValkeyConnection::Single(connection)
+        };
 
         // When creating the connection, load the function library into Valkey.
         Self::load_function_library(&mut connection).await?;
