@@ -969,10 +969,13 @@ async fn spawn_async_inference_worker_if_configured(
         _ => return Err(ExitCode::FAILURE),
     };
 
+    // Delta-AI fork: use the dedicated async inference stream connection —
+    // it carries the longer response timeout and, on cluster deployments
+    // (`#cluster` URL flag), follows MOVED redirects for stream keys.
     let valkey = match gateway_handle
         .app_state
         .valkey_connection_info()
-        .get_connection()
+        .get_async_inference_stream_connection()
     {
         Some(connection) => connection.clone(),
         None => {

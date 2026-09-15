@@ -38,3 +38,28 @@ async fn test_tls_url_gives_connection_error_cache_only() {
         "expected ValkeyConnection error, got: {err}"
     );
 }
+
+#[test]
+fn test_strip_cluster_fragment() {
+    use super::strip_cluster_fragment;
+    // Plain URL: unchanged, no cluster.
+    assert_eq!(
+        strip_cluster_fragment("redis://127.0.0.1:6379"),
+        ("redis://127.0.0.1:6379".to_string(), false)
+    );
+    // Cluster flag: stripped, requested.
+    assert_eq!(
+        strip_cluster_fragment("rediss://:secret@host:8500#cluster"),
+        ("rediss://:secret@host:8500".to_string(), true)
+    );
+    // redis-rs `insecure` flag is preserved on its own.
+    assert_eq!(
+        strip_cluster_fragment("rediss://u:p@host:6379#insecure"),
+        ("rediss://u:p@host:6379#insecure".to_string(), false)
+    );
+    // Combined flags: cluster removed, insecure kept.
+    assert_eq!(
+        strip_cluster_fragment("rediss://u:p@host:8500#insecure+cluster"),
+        ("rediss://u:p@host:8500#insecure".to_string(), true)
+    );
+}

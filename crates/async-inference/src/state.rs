@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use redis::aio::ConnectionManager;
+use tensorzero_core::db::valkey::ValkeyConnection;
 #[expect(
     clippy::disallowed_types,
     reason = "the async inference worker is gateway-construction code; it needs the swappable state so task executions see the latest config"
@@ -22,7 +22,7 @@ pub struct AsyncInferenceState {
     )]
     pub app_state: SwappableAppStateData,
     /// Valkey connection for the per-task SSE event streams.
-    pub valkey: ConnectionManager,
+    pub valkey: ValkeyConnection,
     /// TTL applied to each task's Redis event stream (refreshed while the
     /// task is running).
     pub stream_ttl: Duration,

@@ -8,10 +8,10 @@ use anyhow::anyhow;
 use durable::async_trait;
 use durable::{StepState, Task, TaskContext, TaskResult};
 use redis::AsyncCommands;
-use redis::aio::ConnectionManager;
 use redis::streams::StreamMaxlen;
 use serde::Serialize;
 use serde_json::Value;
+use tensorzero_core::db::valkey::ValkeyConnection;
 use tensorzero_core::endpoints::openai_compatible::async_inference::{
     ASYNC_INFERENCE_TASK_NAME, AsyncInferenceError, STREAM_FIELD_DATA, STREAM_FIELD_EVENT,
     STREAM_FIELD_MARKER, STREAM_MARKER_DONE, STREAM_MARKER_ERROR, STREAM_MAX_LEN,
@@ -150,14 +150,14 @@ async fn execute_inference_step(
 /// Writes SSE frames and terminal markers to a task's Redis stream, keeping
 /// the stream's TTL fresh while the task is running.
 struct StreamWriter {
-    conn: ConnectionManager,
+    conn: ValkeyConnection,
     key: String,
     ttl: Duration,
     last_expire: Option<Instant>,
 }
 
 impl StreamWriter {
-    fn new(conn: ConnectionManager, key: String, ttl: Duration) -> Self {
+    fn new(conn: ValkeyConnection, key: String, ttl: Duration) -> Self {
         Self {
             conn,
             key,

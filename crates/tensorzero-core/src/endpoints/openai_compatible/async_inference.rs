@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
+use crate::db::valkey::ValkeyConnection;
 use axum::Extension;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -31,7 +32,6 @@ use durable_tools_spawn::{SpawnClient, SpawnError, SpawnOptions, TaskPollResult,
 use futures::Stream;
 use futures::stream::StreamExt;
 use redis::AsyncCommands;
-use redis::aio::ConnectionManager;
 use redis::streams::{StreamId, StreamRangeReply, StreamReadOptions, StreamReadReply};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -581,7 +581,7 @@ fn parse_stream_entry(entry: &StreamId) -> Result<StreamEntryAction, Error> {
 /// reaches a terminal state in Postgres.
 fn async_task_event_stream(
     spawn_client: Arc<SpawnClient>,
-    mut conn: ConnectionManager,
+    mut conn: ValkeyConnection,
     key: String,
     task_id: Uuid,
     replay: StreamRangeReply,
