@@ -16,12 +16,14 @@ See `NOTICE` for the overall attribution statement.
 - `crates/async-inference/Cargo.toml` — Forward `aws` / `google` features (off by default) so lean gateway builds propagate through this crate (Delta-AI fork).
 - `crates/tensorzero-client/Cargo.toml` — Forward `aws` / `google` features (off by default); removed the dead `pyo3` feature/dep and stale cargo-machete/cargo-shear ignores (Delta-AI fork).
 - `AGENTS.md` — Documented the lean-by-default provider cargo features and the gateway-core-only testing scope (Delta-AI fork).
-- `crates/.cargo/config.toml` — e2e/test/run/tsbuild aliases now pass `--features e2e_tests,aws,google` explicitly since provider features are off by default (Delta-AI fork).
+- `crates/.cargo/config.toml` — e2e/test/run/tsbuild aliases now pass `--features e2e_tests,aws,google` explicitly since provider features are off by default; new `test-e2e-delta` alias for the gateway-core daily-driver subset (Delta-AI fork).
 - `crates/tensorzero-http/Cargo.toml`, `crates/tensorzero-types/Cargo.toml`, `crates/tensorzero-inference-types/Cargo.toml` — Removed the dead `pyo3` feature/dep (Python SDK stripped in #60); `tensorzero-types` also swaps `aws-smithy-types` base64 for the `base64` crate so the lean graph drops it entirely (Delta-AI fork).
 - `crates/Cargo.toml` — Workspace `unexpected_cfgs` check-cfg allowlist for the leftover `pyo3` / `autopilot-client` cfg references (Delta-AI fork).
 - `AGENTS.md` — Added Modification Notice (Delta-AI fork) section.
 - `AGENTS.md` — Require `CARGO_TARGET_DIR=~/.tensorzero-cargo-dir` for all `cargo` commands so checkouts/worktrees share one build cache (Delta-AI fork).
-- `crates/.config/nextest.toml` — Longer slow-timeout override for the env-gated live-gateway async inference e2e tests (`client::async_inference::tests::e2e`) (Delta-AI fork).
+- `crates/.config/nextest.toml` — Longer slow-timeout override for the env-gated live-gateway async inference e2e tests (`client::async_inference::tests::e2e`); new `delta` profile selecting the gateway-core subset for daily runs (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/tests.rs` — Mounted the previously-orphaned `async_inference` module (stripped in #60, not re-added when async endpoints returned in #61) (Delta-AI fork).
+- `crates/tensorzero-core/tests/e2e/auth.rs`, `crates/tensorzero-core/tests/e2e/mcp/` — Deleted orphaned test files left unmounted by the #60 strip (datasets/MCP functionality) (Delta-AI fork).
 - `crates/tensorzero-python/tensorzero/tensorzero.pyi` — Type stubs for the async task / status / health gateway methods (Delta-AI fork).
 - `CLA.md` — Changed Company from TensorZero, Inc. to Delta-AI; removed legacy hello@tensorzero.com contact.
 - `SECURITY.md` — Changed security contact to security@thebrainly.ai.

@@ -25,7 +25,7 @@
 
 ## Rust Testing
 
-- **Testing scope:** do not run `--all-features` full-matrix tests for routine changes. The lean default (no `aws`/`google`) plus the repo aliases below cover the gateway's core capabilities. `--all-features` is only for occasional broad checks (and note the Python SDK `pyo3` bindings were stripped in #60 — the feature no longer exists).
+- **Testing scope:** for routine changes run `cargo test-e2e-delta` — the `delta` nextest profile selects the gateway-core subset we actually use (OpenAI-compatible/DeepSeek provider paths, Postgres observability, Valkey, async jobs, fallback, cost, synapse-compat; ~650 tests vs ~4,900 for the full `test-e2e`). The full `test-e2e` / `test-clickhouse` aliases remain for provider-matrix and ClickHouse-version CI. Do not run `--all-features` full-matrix tests for routine changes (the Python SDK `pyo3` bindings were stripped in #60 — the feature no longer exists).
 - Run tests with `cargo nextest`.
 - Use `googletest` for new Rust tests.
 - Annotate new tests with `#[gtest]` (googletest crate).

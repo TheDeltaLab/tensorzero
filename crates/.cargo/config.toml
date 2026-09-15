@@ -28,6 +28,9 @@ test-mock-batch = [
     "mock-batch",
 ]
 test-e2e = ["nextest", "run", "--features", "e2e_tests", "--profile", "e2e"]
+# Delta-AI daily driver: gateway-core subset (see the `delta` nextest profile)
+test-e2e-delta = ["nextest", "run", "--features", "e2e_tests,aws,google", "--profile", "delta"]
+
 test-e2e-fast = [
     "nextest",
     "run",
