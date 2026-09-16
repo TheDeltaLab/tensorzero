@@ -84,15 +84,15 @@ func main() {
 
 ## API overview
 
-| Method                                    | Endpoint                               |
-| ----------------------------------------- | -------------------------------------- |
-| `SubmitChatCompletion(ctx, body)`         | `POST /v1/chat/completions/async`      |
-| `SubmitResponses(ctx, body)`              | `POST /v1/responses/async`             |
-| `SubmitMessages(ctx, body)`               | `POST /v1/messages/async`              |
-| `GetTask(ctx, taskID)`                    | `GET /v1/async_tasks/{task_id}`        |
-| `StreamTask(ctx, taskID)`                 | `GET /v1/async_tasks/{task_id}/stream` |
-| `WaitForCompletion(ctx, taskID, opts...)` | polls `GetTask`                        |
-| `Status(ctx)` / `Health(ctx)`             | `GET /status`, `GET /health` (no auth) |
+| Method | Endpoint |
+| --- | --- |
+| `SubmitChatCompletion(ctx, body)` | `POST /v1/chat/completions/async` |
+| `SubmitResponses(ctx, body)` | `POST /v1/responses/async` |
+| `SubmitMessages(ctx, body)` | `POST /v1/messages/async` |
+| `GetTask(ctx, taskID)` | `GET /v1/async_tasks/{task_id}` |
+| `StreamTask(ctx, taskID)` | `GET /v1/async_tasks/{task_id}/stream` |
+| `WaitForCompletion(ctx, taskID, opts...)` | polls `GetTask` |
+| `Status(ctx)` / `Health(ctx)` | `GET /status`, `GET /health` (no auth) |
 
 - `TaskStatus` is discriminated by `Status` (`TaskQueued`, `TaskRunning`,
   `TaskCompleted`, `TaskFailed`, `TaskCancelled`); `Response` is a

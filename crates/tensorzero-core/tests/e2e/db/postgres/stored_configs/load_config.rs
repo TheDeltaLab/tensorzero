@@ -13,7 +13,7 @@ use tensorzero_core::config::path::ResolvedTomlPathData;
 use tensorzero_core::config::{
     Namespace, NonStreamingTimeouts, StreamingTimeouts, TimeoutsConfig, UninitializedConfig,
     UninitializedFunctionConfig, UninitializedFunctionConfigJson, UninitializedSchemas,
-    UninitializedVariantConfig, UninitializedVariantInfo,
+    UninitializedToolConfig, UninitializedVariantConfig, UninitializedVariantInfo,
 };
 use tensorzero_core::db::postgres::PostgresConnectionInfo;
 use tensorzero_core::db::postgres::function_config_writes::WriteFunctionConfigParams;
@@ -28,7 +28,9 @@ use tensorzero_core::utils::retries::RetryConfig;
 use tensorzero_core::variant::chat_completion::{
     UninitializedChatCompletionConfig, UninitializedChatTemplate, UninitializedChatTemplates,
 };
-use tensorzero_stored_config::{StoredFunctionConfig, StoredJsonFunctionConfig, StoredVariantRef};
+use tensorzero_stored_config::{
+    StoredFunctionConfig, StoredJsonFunctionConfig, StoredVariantRef,
+};
 
 fn empty_config() -> UninitializedConfig {
     // Mirrors what `load_config_from_db` returns for an empty database:
@@ -149,6 +151,37 @@ fn sample_function() -> UninitializedFunctionConfig {
         )),
         description: Some("JSON test function".to_string()),
     })
+}
+
+fn sample_tool() -> UninitializedToolConfig {
+    UninitializedToolConfig {
+        description: "Search docs".to_string(),
+        parameters: fake_template(
+            "tools.search.parameters",
+            "{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}",
+        ),
+        name: Some("search".to_string()),
+        strict: true,
+    }
+}
+
+async fn insert_file(pool: &PgPool, file_path: &str, source_body: &str) -> Uuid {
+    let id = Uuid::now_v7();
+    let content_hash = blake3::hash(source_body.as_bytes()).as_bytes().to_vec();
+    sqlx::query(
+        "INSERT INTO tensorzero.stored_files \
+         (id, file_path, source_body, content_hash, creation_source) \
+         VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(id)
+    .bind(file_path)
+    .bind(source_body)
+    .bind(content_hash)
+    .bind("test")
+    .execute(pool)
+    .await
+    .expect("stored file insert should succeed");
+    id
 }
 
 /// Smoke test for the zero-config gateway boot path: a freshly-migrated

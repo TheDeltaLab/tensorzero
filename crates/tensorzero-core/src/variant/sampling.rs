@@ -67,19 +67,25 @@ fn sample_weighted(
     active_variants: &BTreeMap<String, Arc<VariantInfo>>,
     uniform_sample: f64,
 ) -> Result<String, Error> {
-    let weight_of = |variant: &VariantInfo| -> f64 { variant.inner.weight().unwrap_or_default() };
+    let weight_of = |variant: &VariantInfo| -> f64 {
+        variant.inner.weight().unwrap_or_default()
+    };
     let total_weight: f64 = active_variants.values().map(|v| weight_of(v)).sum();
 
     if total_weight <= 0.0 {
         // All weighted variants have been consumed by earlier rounds of the
         // retry loop; fall back to the first remaining active variant.
-        return active_variants.keys().next().cloned().ok_or_else(|| {
-            Error::new(ErrorDetails::InvalidFunctionVariants {
-                message: format!(
-                    "No active variants with positive weight remain. {IMPOSSIBLE_ERROR_MESSAGE}"
-                ),
-            })
-        });
+        return active_variants
+            .keys()
+            .next()
+            .cloned()
+            .ok_or_else(|| {
+                Error::new(ErrorDetails::InvalidFunctionVariants {
+                    message: format!(
+                        "No active variants with positive weight remain. {IMPOSSIBLE_ERROR_MESSAGE}"
+                    ),
+                })
+            });
     }
 
     let random_threshold = uniform_sample * total_weight;
@@ -106,7 +112,9 @@ fn sample_weighted(
         .cloned()
         .ok_or_else(|| {
             Error::new(ErrorDetails::InvalidFunctionVariants {
-                message: format!("No active variants available. {IMPOSSIBLE_ERROR_MESSAGE}"),
+                message: format!(
+                    "No active variants available. {IMPOSSIBLE_ERROR_MESSAGE}"
+                ),
             })
         })
 }
@@ -164,7 +172,8 @@ mod tests {
         let mut hits = HashMap::new();
         for i in 0..100u32 {
             let episode_id = Uuid::from_u64_pair(u64::from(i), 0);
-            let (name, _) = sample_variant("fn", &episode_id, &mut variants.clone()).unwrap();
+            let (name, _) =
+                sample_variant("fn", &episode_id, &mut variants.clone()).unwrap();
             *hits.entry(name).or_insert(0) += 1;
         }
         assert!(hits.get("heavy").copied().unwrap_or(0) > 90);

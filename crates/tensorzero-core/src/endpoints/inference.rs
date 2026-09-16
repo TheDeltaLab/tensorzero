@@ -639,11 +639,8 @@ pub async fn inference(
     // Keep sampling variants until one succeeds
     let mut already_sampled = false;
     while !candidate_variants.is_empty() {
-        let result = crate::variant::sampling::sample_variant(
-            &function_name,
-            &episode_id,
-            &mut candidate_variants,
-        );
+        let result =
+            crate::variant::sampling::sample_variant(&function_name, &episode_id, &mut candidate_variants);
         let (variant_name, variant) = match result {
             Ok((variant_name, variant)) => (variant_name, variant),
             Err(e) => {

@@ -108,8 +108,8 @@ mod tests {
                 tool_choice: ToolChoice::Auto,
                 parallel_tool_calls: None,
                 description: None,
-                all_explicit_templates_names: Default::default(),
-            })),
+                    all_explicit_templates_names: Default::default(),
+                })),
         );
         config
     }

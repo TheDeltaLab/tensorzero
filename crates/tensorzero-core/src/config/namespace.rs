@@ -83,6 +83,11 @@ impl<'de> serde::Deserialize<'de> for Namespace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    
+
+    
+    
+    
 
     #[test]
     fn test_namespace_valid() {
@@ -140,4 +145,5 @@ mod tests {
             "Deserializing a namespace starting with `tensorzero::` should fail"
         );
     }
+
 }

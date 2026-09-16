@@ -13,7 +13,8 @@ use crate::inference::types::pyo3_helpers::{
 };
 use crate::inference::types::stored_input::StoredInput;
 use crate::inference::types::{
-    ContentBlockChatOutput, FunctionType, JsonInferenceOutput, ModelInput, ResolvedInput, Text,
+    ContentBlockChatOutput, FunctionType, JsonInferenceOutput, ModelInput,
+    ResolvedInput, Text,
 };
 use crate::tool::{StaticToolConfig, ToolCallConfigDatabaseInsert, deserialize_optional_tool_info};
 use crate::variant::{VariantConfig, chat_completion::prepare_model_input};
@@ -454,10 +455,12 @@ pub struct RenderedSample {
     pub tags: HashMap<String, String>,
 }
 
-impl RenderedSample {}
+impl RenderedSample {
+}
 
 #[cfg(feature = "pyo3")]
 impl RenderedSample {
+
     #[getter]
     pub fn get_input(&self) -> ModelInput {
         self.input.clone()
@@ -668,11 +671,51 @@ pub async fn render_stored_sample<T: StoredSample>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{Config, SchemaData};
     use crate::endpoints::inference::InferenceParams;
+    use crate::function::{FunctionConfig, FunctionConfigChat, FunctionConfigJson};
     use crate::inference::types::System;
     use crate::inference::types::{ContentBlockChatOutput, JsonInferenceOutput, Text};
+    use crate::jsonschema_util::JSONSchema;
+    use crate::tool::{ToolCallConfig, ToolChoice};
+    use std::sync::Arc;
     use tensorzero_inference_types::tool::DynamicToolParams;
 
+    /// Helper to create a test config with the functions registered
+    fn create_test_config() -> Config {
+        let mut config = Config::default();
+
+        // Add the test_function (Chat function)
+        config.functions.insert(
+            "test_function".to_string(),
+            Arc::new(FunctionConfig::Chat(FunctionConfigChat {
+                variants: Default::default(),
+                schemas: SchemaData::default(),
+                tools: vec![],
+                tool_choice: ToolChoice::Auto,
+                parallel_tool_calls: None,
+                description: None,
+                    all_explicit_templates_names: Default::default(),
+                })),
+        );
+
+        // Add the json_function (Json function)
+        config.functions.insert(
+            "json_function".to_string(),
+            Arc::new(FunctionConfig::Json(FunctionConfigJson {
+                variants: Default::default(),
+                schemas: SchemaData::default(),
+                output_schema: JSONSchema::default(),
+                json_mode_tool_call_config: ToolCallConfig::default(),
+                description: None,
+                    all_explicit_template_names: Default::default(),
+                })),
+        );
+
+        config
+    }
+
+    /// Helper to create a test StoredChatInference with all fields populated
     fn create_test_chat_inference() -> StoredChatInference {
         let inference_id = Uuid::now_v7();
         let episode_id = Uuid::now_v7();
@@ -757,6 +800,91 @@ mod tests {
     }
 
     /// Helper to create a test RenderedSample for Chat function
+    fn create_test_chat_rendered_sample() -> RenderedSample {
+        let inference_id = Uuid::now_v7();
+        let episode_id = Uuid::now_v7();
+
+        RenderedSample {
+            function_name: "test_function".to_string(),
+            function_type: FunctionType::Chat,
+            input: ModelInput {
+                system: Some("Test system prompt".to_string()),
+                messages: vec![],
+            },
+            stored_input: StoredInput {
+                system: Some(System::Text("Test system prompt".to_string())),
+                messages: vec![],
+            },
+            output: Some(vec![
+                ContentBlockChatOutput::Text(Text {
+                    text: "Test output 1".to_string(),
+                }),
+                ContentBlockChatOutput::Text(Text {
+                    text: "Test output 2".to_string(),
+                }),
+            ]),
+            stored_output: Some(StoredOutput::Chat(vec![
+                ContentBlockChatOutput::Text(Text {
+                    text: "Test output 1".to_string(),
+                }),
+                ContentBlockChatOutput::Text(Text {
+                    text: "Test output 2".to_string(),
+                }),
+            ])),
+            dispreferred_outputs: vec![],
+            episode_id: Some(episode_id),
+            inference_id: Some(inference_id),
+            tool_params: DynamicToolParams::default(),
+            output_schema: None,
+            tags: {
+                let mut tags = HashMap::new();
+                tags.insert("key1".to_string(), "value1".to_string());
+                tags.insert("key2".to_string(), "value2".to_string());
+                tags
+            },
+        }
+    }
+
+    /// Helper to create a test RenderedSample for JSON function
+    fn create_test_json_rendered_sample() -> RenderedSample {
+        let inference_id = Uuid::now_v7();
+        let episode_id = Uuid::now_v7();
+
+        RenderedSample {
+            function_name: "json_function".to_string(),
+            function_type: FunctionType::Json,
+            input: ModelInput {
+                system: Some("JSON system prompt".to_string()),
+                messages: vec![],
+            },
+            stored_input: StoredInput {
+                system: Some(System::Text("JSON system prompt".to_string())),
+                messages: vec![],
+            },
+            output: None, // JSON functions don't have chat output
+            stored_output: Some(StoredOutput::Json(JsonInferenceOutput {
+                raw: Some(r#"{"result": "test"}"#.to_string()),
+                parsed: Some(serde_json::json!({"result": "test"})),
+            })),
+            dispreferred_outputs: vec![],
+            episode_id: Some(episode_id),
+            inference_id: Some(inference_id),
+            tool_params: DynamicToolParams::default(),
+            output_schema: Some(serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "result": {"type": "string"}
+                }
+            })),
+            tags: {
+                let mut tags = HashMap::new();
+                tags.insert("json_key".to_string(), "json_value".to_string());
+                tags
+            },
+        }
+    }
+
+
     #[test]
     fn test_stored_inference_id() {
         let chat_inference = create_test_chat_inference();

@@ -90,6 +90,9 @@ pub mod test_helpers;
 #[cfg(feature = "pyo3")]
 pub use tensorzero_core::observability;
 
+
+
+
 // NOTE(shuyangli): For methods that delegate to APIs in the gateway, the arguments generally are flattened from the request type for
 // This is because when reading the code outside of an IDE, it's often difficult to tell the arguments apart without argument names.
 //
@@ -122,6 +125,17 @@ pub trait ClientExt {
 
     // ================================================================
     // ================================================================
+
+
+
+
+
+
+
+
+
+
+
 
     // ================================================================
     // Inference operations
@@ -197,12 +211,18 @@ pub trait ClientExt {
         request: ListEpisodesRequest,
     ) -> Result<ListEpisodesResponse, TensorZeroError>;
 
+
+
     async fn experimental_render_samples<T: StoredSample + Send>(
         &self,
         stored_samples: Vec<T>,
         variants: HashMap<String, String>,
         concurrency: Option<usize>,
     ) -> Result<Vec<RenderedSample>, TensorZeroError>;
+
+
+
+
 
     // ================================================================
     // Config access
@@ -249,6 +269,7 @@ pub trait ClientExt {
         &self,
         request: WriteConfigRequest,
     ) -> Result<WriteConfigResponse, TensorZeroError>;
+
 
     #[cfg(any(feature = "e2e_tests", feature = "pyo3"))]
     #[expect(
@@ -326,6 +347,17 @@ impl ClientExt for Client {
             }
         }
     }
+
+
+
+
+
+
+
+
+
+
+
 
     async fn get_inferences(
         &self,
@@ -443,6 +475,8 @@ impl ClientExt for Client {
         }
     }
 
+
+
     /// There are two things that need to happen in this function:
     /// 1. We need to resolve all network resources (e.g. images) in the inference examples.
     /// 2. We need to prepare all messages into "simple" messages that have been templated for a particular variant.
@@ -474,6 +508,9 @@ impl ClientExt for Client {
         .await
         .map_err(err_to_http)
     }
+
+
+
 
     fn get_config(&self) -> Result<Arc<Config>, TensorZeroError> {
         match self.mode() {
@@ -595,6 +632,8 @@ impl ClientExt for Client {
         }
     }
 
+
+
     #[cfg(any(feature = "e2e_tests", feature = "pyo3"))]
     #[expect(
         clippy::disallowed_types,
@@ -609,3 +648,6 @@ impl ClientExt for Client {
         }
     }
 }
+
+
+

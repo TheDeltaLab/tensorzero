@@ -6,9 +6,9 @@ use tensorzero_stored_config::{
     STORED_FUNCTION_CONFIG_SCHEMA_REVISION, STORED_VARIANT_CONFIG_SCHEMA_REVISION,
     StoredBestOfNVariantConfig, StoredChatCompletionVariantConfig, StoredChatFunctionConfig,
     StoredDiclVariantConfig, StoredFileRef, StoredFunctionConfig, StoredInputWrappers,
-    StoredJsonFunctionConfig, StoredMixtureOfNVariantConfig, StoredRetryConfig,
-    StoredTimeoutsConfig, StoredToolChoice, StoredVariantConfig, StoredVariantRef,
-    StoredVariantVersionConfig,
+    StoredJsonFunctionConfig, StoredMixtureOfNVariantConfig,
+    StoredRetryConfig, StoredTimeoutsConfig, StoredToolChoice, StoredVariantConfig,
+    StoredVariantRef, StoredVariantVersionConfig,
 };
 use uuid::Uuid;
 

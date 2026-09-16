@@ -13,23 +13,14 @@ use std::process::Command;
 /// - type_name: The TypeScript type name matching the .ts filename (e.g., "InferenceToolParams")
 const ROOT_TYPES: &[(&str, &str)] = &[
     ("FEEDBACK_RESPONSE", "FeedbackResponse"),
-    (
-        "GET_FEEDBACK_BY_TARGET_ID_RESPONSE",
-        "GetFeedbackByTargetIdResponse",
-    ),
+    ("GET_FEEDBACK_BY_TARGET_ID_RESPONSE", "GetFeedbackByTargetIdResponse"),
     ("GET_INFERENCES_RESPONSE", "GetInferencesResponse"),
     ("INFERENCE_RESPONSE", "InferenceResponse"),
-    (
-        "LATEST_FEEDBACK_ID_BY_METRIC_RESPONSE",
-        "LatestFeedbackIdByMetricResponse",
-    ),
+    ("LATEST_FEEDBACK_ID_BY_METRIC_RESPONSE", "LatestFeedbackIdByMetricResponse"),
     ("LIST_EPISODES_RESPONSE", "ListEpisodesResponse"),
     ("WRITE_CONFIG_RESPONSE", "WriteConfigResponse"),
     ("FEEDBACK_BY_VARIANT", "FeedbackByVariant"),
-    (
-        "GET_VARIANT_STATISTICS_RESPONSE",
-        "GetVariantStatisticsResponse",
-    ),
+    ("GET_VARIANT_STATISTICS_RESPONSE", "GetVariantStatisticsResponse"),
     ("INPUT", "Input"),
     ("CONTENT_BLOCK_CHAT_OUTPUT", "ContentBlockChatOutput"),
 ];

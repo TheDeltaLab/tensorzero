@@ -3,15 +3,16 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use sqlx::{Postgres, QueryBuilder, Transaction};
 use tensorzero_stored_config::{
-    STORED_CLICKHOUSE_CONFIG_SCHEMA_REVISION, STORED_EMBEDDING_MODEL_CONFIG_SCHEMA_REVISION,
+    STORED_CLICKHOUSE_CONFIG_SCHEMA_REVISION,
+    STORED_EMBEDDING_MODEL_CONFIG_SCHEMA_REVISION,
     STORED_GATEWAY_CONFIG_SCHEMA_REVISION, STORED_METRIC_CONFIG_SCHEMA_REVISION,
     STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, STORED_MODEL_CONFIG_SCHEMA_REVISION,
-    STORED_POSTGRES_CONFIG_SCHEMA_REVISION, STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION,
-    STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION, STORED_STORAGE_KIND_SCHEMA_REVISION,
-    STORED_TOOL_CONFIG_SCHEMA_REVISION, StoredClickHouseConfig, StoredEmbeddingModelConfig,
-    StoredGatewayConfig, StoredMetricConfig, StoredModelAlias, StoredModelAliasTarget,
-    StoredModelConfig, StoredPostgresConfig, StoredProviderTypesConfig, StoredRateLimitingConfig,
-    StoredStorageKind,
+    STORED_POSTGRES_CONFIG_SCHEMA_REVISION,
+    STORED_PROVIDER_TYPES_CONFIG_SCHEMA_REVISION, STORED_RATE_LIMITING_CONFIG_SCHEMA_REVISION,
+    STORED_STORAGE_KIND_SCHEMA_REVISION, STORED_TOOL_CONFIG_SCHEMA_REVISION,
+    StoredClickHouseConfig, StoredEmbeddingModelConfig, StoredGatewayConfig, StoredMetricConfig,
+    StoredModelAlias, StoredModelAliasTarget, StoredModelConfig,
+    StoredPostgresConfig, StoredProviderTypesConfig, StoredRateLimitingConfig, StoredStorageKind,
 };
 use uuid::Uuid;
 

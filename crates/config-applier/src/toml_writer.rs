@@ -1,4 +1,3 @@
-// Modified by Delta-AI under Apache 2.0
 use serde::Serialize;
 use toml_edit::{DocumentMut, InlineTable, Item, Table, Value};
 
@@ -110,6 +109,28 @@ pub fn upsert_variant(
     Ok(())
 }
 
+/// Upsert an experimentation config into a function.
+pub fn upsert_experimentation(
+    doc: &mut DocumentMut,
+    function_name: &str,
+    experimentation_item: Item,
+) -> Result<(), ConfigApplierError> {
+    let function_table = ensure_table(doc, &["functions", function_name])?;
+    function_table.insert("experimentation", experimentation_item);
+    Ok(())
+}
+
+/// Upsert an evaluation into the evaluations table.
+pub fn upsert_evaluation(
+    doc: &mut DocumentMut,
+    evaluation_name: &str,
+    evaluation_item: Item,
+) -> Result<(), ConfigApplierError> {
+    let evaluations_table = ensure_table(doc, &["evaluations"])?;
+    evaluations_table.insert(evaluation_name, evaluation_item);
+    Ok(())
+}
+
 /// Remove the given keys from a table.
 pub fn strip_keys(table: &mut Table, keys: &[&str]) {
     for key in keys {
@@ -164,6 +185,18 @@ fn strip_empty_inline_tables(inline: &mut InlineTable) {
     for key in keys_to_remove {
         inline.remove(&key);
     }
+}
+
+/// Upsert an evaluator into an evaluation's evaluators table.
+pub fn upsert_evaluator(
+    doc: &mut DocumentMut,
+    evaluation_name: &str,
+    evaluator_name: &str,
+    evaluator_item: Item,
+) -> Result<(), ConfigApplierError> {
+    let evaluators_table = ensure_table(doc, &["evaluations", evaluation_name, "evaluators"])?;
+    evaluators_table.insert(evaluator_name, evaluator_item);
+    Ok(())
 }
 
 #[cfg(test)]

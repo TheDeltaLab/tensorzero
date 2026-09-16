@@ -1,4 +1,3 @@
-// Modified by Delta-AI under Apache 2.0
 //! Locates entities (functions, evaluations) within a set of loaded TOML config files.
 //!
 //! TensorZero configs can be split across multiple TOML files. When modifying an entity,
@@ -35,7 +34,6 @@ pub struct FunctionLocation<'a> {
 }
 
 /// Result of locating an evaluation in the config files.
-#[cfg(test)]
 pub struct EvaluationLocation<'a> {
     /// Reference to the config file
     pub file: &'a mut LoadedConfigFile,
@@ -71,7 +69,6 @@ pub fn locate_function<'a>(
 /// Searches through the loaded config files and returns the file whose
 /// `[evaluations.<evaluation_name>]` table contains a `type` key. This ensures we find
 /// the canonical definition file, not a file that merely extends the evaluation.
-#[cfg(test)]
 pub fn locate_evaluation<'a>(
     files: &'a mut [LoadedConfigFile],
     evaluation_name: &str,
@@ -100,7 +97,6 @@ pub fn locate_evaluation<'a>(
 /// Searches through the loaded config files and returns the file whose
 /// `[evaluations.<evaluation_name>]` table contains a `type` key. This ensures we find
 /// the canonical definition file, not a file that merely extends the evaluation.
-#[cfg(test)]
 pub fn locate_evaluation_required<'a>(
     files: &'a mut [LoadedConfigFile],
     evaluation_name: &str,

@@ -19,8 +19,8 @@ use crate::{
         },
     },
     error::{Error, ErrorDetails},
-    function::FunctionConfig,
     statistics_util::asymp_cs,
+    function::FunctionConfig,
 };
 
 use super::{

@@ -22,8 +22,8 @@ use crate::db::feedback::{
 };
 use crate::db::{FeedbackQueries, TableBounds, TimeWindow};
 use crate::error::{Error, ErrorDetails};
-use crate::function::FunctionConfig;
 use crate::statistics_util::asymp_cs;
+use crate::function::FunctionConfig;
 
 use super::PostgresConnectionInfo;
 

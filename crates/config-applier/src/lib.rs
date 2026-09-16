@@ -10,7 +10,10 @@ mod locator;
 mod path_resolver;
 mod toml_writer;
 
-pub use edit::{EditPayload, UpsertVariantPayload};
+pub use edit::{
+    EditPayload,
+    UpsertVariantPayload,
+};
 pub use error::ConfigApplierError;
 
 use std::path::{Path, PathBuf};
@@ -178,6 +181,7 @@ impl ConfigApplier {
         Ok(files)
     }
 
+
     /// Get the base directory extracted from the glob pattern.
     pub fn glob_base(&self) -> &Path {
         &self.glob_base
@@ -192,14 +196,14 @@ impl ConfigApplier {
 #[cfg(test)]
 mod tests {
     use super::*;
-
+    
     use std::fs;
     use std::sync::Arc;
     use tempfile::TempDir;
-
+    
     use tensorzero_core::config::{UninitializedVariantConfig, UninitializedVariantInfo};
     use tensorzero_core::utils::retries::RetryConfig;
-
+    
     use tensorzero_core::variant::chat_completion::UninitializedChatCompletionConfig;
 
     fn setup_test_config(dir: &Path) {
@@ -215,6 +219,7 @@ model = "gpt-4"
         )
         .expect("failed to write test config");
     }
+
 
     #[tokio::test]
     async fn test_config_writer_new() {

@@ -3,7 +3,10 @@ use googletest::prelude::*;
 use googletest_matchers::matches_json_literal;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::Arc,
+};
 use tensorzero_core::{
     config::{
         Config, MetricConfig, MetricConfigLevel, MetricConfigOptimize, MetricConfigType,

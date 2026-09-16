@@ -2,9 +2,9 @@
 use serde_json::Value;
 
 use crate::{
-    StoredClickHouseConfig, StoredEmbeddingModelConfig, StoredEvaluationConfig,
-    StoredFunctionConfig, StoredGatewayConfig, StoredMetricConfig, StoredModelConfig,
-    StoredOptimizerConfig, StoredPostgresConfig, StoredProviderTypesConfig,
+    StoredClickHouseConfig, StoredEmbeddingModelConfig,
+    StoredEvaluationConfig, StoredFunctionConfig, StoredGatewayConfig, StoredMetricConfig,
+    StoredModelConfig, StoredOptimizerConfig, StoredPostgresConfig, StoredProviderTypesConfig,
     StoredRateLimitingConfig, StoredStorageKind, StoredToolConfig, StoredVariantVersionConfig,
 };
 

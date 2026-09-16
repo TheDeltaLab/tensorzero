@@ -671,6 +671,7 @@ impl ModelInferenceQueries for DelegatingDatabaseConnection {
     }
 }
 
+
 #[async_trait]
 impl ResolveUuidQueries for DelegatingDatabaseConnection {
     async fn resolve_uuid(&self, id: &Uuid) -> Result<Vec<ResolvedObject>, Error> {
