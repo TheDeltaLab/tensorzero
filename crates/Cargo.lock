@@ -284,6 +284,7 @@ version = "2026.6.0"
 dependencies = [
  "anyhow",
  "durable",
+ "googletest",
  "redis",
  "serde",
  "serde_json",

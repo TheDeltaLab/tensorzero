@@ -38,3 +38,7 @@ workspace = true
 default = []
 aws = ["tensorzero-core/aws"]
 google = ["tensorzero-core/google"]
+
+[dev-dependencies]
+googletest.workspace = true
+tokio = { workspace = true, features = ["test-util"] }

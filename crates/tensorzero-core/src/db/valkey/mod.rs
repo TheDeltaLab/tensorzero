@@ -1,5 +1,6 @@
 // Modified by Delta-AI under Apache 2.0
 pub mod cache;
+mod cluster;
 mod rate_limiting;
 #[cfg(test)]
 mod tests;
@@ -7,8 +8,8 @@ mod tests;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use cluster::RecoveringClusterConnection;
 use redis::aio::{ConnectionManager, ConnectionManagerConfig};
-use redis::cluster::ClusterClient;
 use redis::{AsyncCommands, Client, RedisResult};
 
 /// A Valkey connection that is cluster-aware when needed (Delta-AI fork).
@@ -23,7 +24,7 @@ use redis::{AsyncCommands, Client, RedisResult};
 #[derive(Clone)]
 pub enum ValkeyConnection {
     Single(ConnectionManager),
-    Cluster(redis::cluster_async::ClusterConnection),
+    Cluster(RecoveringClusterConnection),
 }
 
 impl redis::aio::ConnectionLike for ValkeyConnection {
@@ -32,7 +33,20 @@ impl redis::aio::ConnectionLike for ValkeyConnection {
         cmd: &'a redis::Cmd,
     ) -> redis::RedisFuture<'a, redis::Value> {
         match self {
-            Self::Single(connection) => connection.req_packed_command(cmd),
+            Self::Single(connection) => Box::pin(async move {
+                timeout(
+                    ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT,
+                    connection.req_packed_command(cmd),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Valkey stream command timed out",
+                    )
+                    .into())
+                })
+            }),
             Self::Cluster(connection) => connection.req_packed_command(cmd),
         }
     }
@@ -44,7 +58,20 @@ impl redis::aio::ConnectionLike for ValkeyConnection {
         count: usize,
     ) -> redis::RedisFuture<'a, Vec<redis::Value>> {
         match self {
-            Self::Single(connection) => connection.req_packed_commands(cmd, offset, count),
+            Self::Single(connection) => Box::pin(async move {
+                timeout(
+                    ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT,
+                    connection.req_packed_commands(cmd, offset, count),
+                )
+                .await
+                .unwrap_or_else(|_| {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        "Valkey stream pipeline timed out",
+                    )
+                    .into())
+                })
+            }),
             Self::Cluster(connection) => connection.req_packed_commands(cmd, offset, count),
         }
     }
@@ -65,7 +92,7 @@ fn strip_cluster_fragment(valkey_url: &str) -> (String, bool) {
         return (valkey_url.to_string(), false);
     };
     let mut flags = fragment.split(&[',', '+']).collect::<Vec<_>>();
-    let requested = flags.iter().any(|flag| *flag == "cluster");
+    let requested = flags.contains(&"cluster");
     flags.retain(|flag| *flag != "cluster");
     let cleaned = if flags.is_empty() {
         base.to_string()
@@ -82,10 +109,9 @@ use crate::error::{DelayedError, ErrorDetails};
 /// Response timeout for the dedicated async inference event-stream connection.
 ///
 /// The shared manager keeps the redis-rs default (500ms) so request hot-path
-/// users like rate limiting fail fast. Async inference stream commands need
-/// more headroom: the initial `XRANGE` replay can straddle a loaded Valkey,
-/// and the follow loop's blocking `XREAD` waits up to `XREAD_BLOCK_MS` (5s)
-/// server-side before returning empty, so this must comfortably exceed that.
+/// users like rate limiting fail fast. Stream writes and replay reads have a
+/// bounded 10s budget. Stream following uses non-blocking reads so readers
+/// never hold the multiplexed connection ahead of writers or health checks.
 const ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connection info for Valkey (Redis-compatible) rate limiting backend.
@@ -125,26 +151,15 @@ impl ValkeyConnectionInfo {
         })?;
 
         let async_inference_stream_connection = if cluster {
-            // Cluster topologies advertise peer nodes by IP (e.g. Azure
-            // Managed Redis), while the TLS certificate is issued for the
-            // DNS endpoint. Mirror redis-cli: verify the certificate
-            // chain, skip hostname matching — otherwise every connection
-            // to a redirected peer node fails with "certificate not valid
-            // for name <ip>".
-            let cluster_client = ClusterClient::builder(vec![cleaned_valkey_url])
-                .danger_accept_invalid_hostnames(true)
-                .build()
-                .map_err(|e| {
-                    DelayedError::new(ErrorDetails::ValkeyConnection {
-                        message: format!("Failed to create Valkey cluster client: {e}"),
-                    })
-                })?;
-            let connection = cluster_client.get_async_connection().await.map_err(|e| {
-                DelayedError::new(ErrorDetails::ValkeyConnection {
-                    message: format!("Failed to connect to Valkey cluster: {e}"),
-                })
-            })?;
-            ValkeyConnection::Cluster(connection)
+            ValkeyConnection::Cluster(
+                RecoveringClusterConnection::new(cleaned_valkey_url)
+                    .await
+                    .map_err(|e| {
+                        DelayedError::new(ErrorDetails::ValkeyConnection {
+                            message: format!("Failed to connect to Valkey cluster: {e}"),
+                        })
+                    })?,
+            )
         } else {
             let connection = ConnectionManager::new_with_config(
                 client,
@@ -216,6 +231,39 @@ impl ValkeyConnectionInfo {
             } => async_inference_stream_connection.as_deref(),
             Self::Disabled => None,
         }
+    }
+
+    /// Probe a key-routed command on the actual async stream connection.
+    /// PING on the ordinary seed connection cannot detect stale shard topology.
+    pub async fn async_inference_health(&self) -> Result<(), DelayedError> {
+        let Some(connection) = self.get_async_inference_stream_connection() else {
+            return Err(DelayedError::new(ErrorDetails::ValkeyConnection {
+                message: "Async inference Valkey connection is unavailable".to_string(),
+            }));
+        };
+        let mut cmd = redis::cmd("EXISTS");
+        cmd.arg("tensorzero:async_inference:health");
+        let deadline = Duration::from_millis(HEALTH_CHECK_TIMEOUT_MS);
+        let result = match connection {
+            ValkeyConnection::Cluster(connection) => connection.command(&cmd, deadline).await,
+            ValkeyConnection::Single(connection) => {
+                let mut connection = connection.clone();
+                timeout(deadline, cmd.query_async::<redis::Value>(&mut connection))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "Async inference Valkey health check timed out",
+                        )
+                        .into())
+                    })
+            }
+        };
+        result.map(|_| ()).map_err(|e| {
+            DelayedError::new(ErrorDetails::ValkeyConnection {
+                message: format!("Async inference Valkey health check failed: {e}"),
+            })
+        })
     }
 
     /// Load the rate limiting function library into Valkey.

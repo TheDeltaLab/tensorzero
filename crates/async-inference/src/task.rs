@@ -2,6 +2,7 @@
 //! The durable task that executes one async inference.
 
 use std::borrow::Cow;
+use std::future::Future;
 use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
@@ -58,17 +59,9 @@ impl Task<AsyncInferenceState> for AsyncInferenceTask {
         &self,
         params: Self::Params,
         mut ctx: TaskContext<AsyncInferenceState>,
-        state: AsyncInferenceState,
+        _state: AsyncInferenceState,
     ) -> TaskResult<Self::Output> {
         let task_id = ctx.task_id;
-        let key = async_inference_stream_key(task_id);
-
-        // Clear stale events from a previous attempt before re-running.
-        let mut conn = state.valkey.clone();
-        if let Err(e) = conn.del::<_, ()>(&key).await {
-            tracing::warn!("Failed to clear async inference event stream `{key}`: {e}");
-        }
-
         let step_params = InferenceStepParams { task_id, params };
         let output = ctx
             .step("inference", step_params, execute_inference_step)
@@ -83,65 +76,105 @@ async fn execute_inference_step(
     step_params: InferenceStepParams,
     step_state: StepState<AsyncInferenceState>,
 ) -> anyhow::Result<Value> {
-    let state = step_state.state;
-    let key = async_inference_stream_key(step_params.task_id);
-    let mut writer = StreamWriter::new(state.valkey.clone(), key, state.stream_ttl);
+    let heartbeater = step_state.heartbeater;
+    with_heartbeat(
+        execute_with_relay(step_params, step_state.state),
+        || async {
+            heartbeater
+                .heartbeat(None)
+                .await
+                .map_err(anyhow::Error::from)
+        },
+        HEARTBEAT_INTERVAL,
+    )
+    .await
+}
 
-    let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SerializedSseEvent>();
+/// Poll the heartbeat independently of Redis and provider work, including
+/// initial cleanup and final stream flushing. Dropping `work` on lease loss
+/// cancels the inference/relay together; no detached inference survives it.
+async fn with_heartbeat<T, F, H, HF>(
+    work: F,
+    mut heartbeat: H,
+    interval: Duration,
+) -> anyhow::Result<T>
+where
+    F: Future<Output = anyhow::Result<T>>,
+    H: FnMut() -> HF,
+    HF: Future<Output = anyhow::Result<()>>,
+{
+    tokio::pin!(work);
+    let mut ticks = tokio::time::interval(interval);
+    ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    ticks.tick().await;
+    loop {
+        tokio::select! {
+            biased;
+            _ = ticks.tick() => heartbeat().await?,
+            result = &mut work => return result,
+        }
+    }
+}
+
+async fn execute_with_relay(
+    step_params: InferenceStepParams,
+    state: AsyncInferenceState,
+) -> anyhow::Result<Value> {
+    let key = async_inference_stream_key(step_params.task_id);
+    let mut writer = StreamWriter::new(state.valkey.clone(), key.clone(), state.stream_ttl);
+    // Do not append to a previous attempt if cleanup failed. The final task
+    // result remains authoritative if the stream fails after inference starts.
+    // A cleanup failure occurs before any provider call, so retrying is safe.
+    let mut conn = state.valkey.clone();
+    conn.del::<_, ()>(&key).await.map_err(|e| {
+        anyhow!(
+            "Cannot clear the previous async inference stream before starting a new attempt: {e}"
+        )
+    })?;
+
+    // Backpressure bounds retained events while a Redis operation is slow.
+    // The relay and model are polled independently, under the heartbeat above.
+    let (event_tx, mut event_rx) = mpsc::channel::<SerializedSseEvent>(64);
     let app_state = state.app_state.load_latest();
-    let mut inference = Box::pin(run_async_inference(
+    let inference = run_async_inference(
         &app_state,
         step_params.task_id,
         step_params.params,
         event_tx,
-    ));
-
-    // Drive the inference while relaying frames and refreshing the lease.
-    // `biased` so a completed inference is observed before a closed channel.
-    let heartbeater = step_state.heartbeater;
-    let mut heartbeat_interval = tokio::time::interval(HEARTBEAT_INTERVAL);
-    heartbeat_interval.tick().await;
-    let result = loop {
-        tokio::select! {
-            biased;
-            result = &mut inference => break result,
-            frame = event_rx.recv() => {
-                // The sender is dropped when the inference future finishes;
-                // the next `biased` poll of `inference` observes its result.
-                if let Some(frame) = frame
-                    && let Err(e) = writer.add_frame(&frame).await
-                {
-                    tracing::warn!("Failed to relay async inference event: {e}");
-                }
-            }
-            _ = heartbeat_interval.tick() => {
-                if let Err(e) = heartbeater.heartbeat(None).await {
-                    // Cancelled (or the lease was lost): abort the inference by
-                    // dropping its future and fail this run.
-                    drop(inference);
-                    return Err(anyhow!("Async inference task heartbeat failed: {e}"));
-                }
+    );
+    let relay = async {
+        let mut complete = true;
+        while let Some(frame) = event_rx.recv().await {
+            if complete && let Err(e) = writer.add_frame(&frame).await {
+                // An XADD timeout has an ambiguous outcome: never replay it.
+                // Drain subsequent events without publishing an incomplete
+                // sequence as success. Polling still returns the full result.
+                tracing::warn!("Async inference event relay interrupted: {e}");
+                complete = false;
             }
         }
+        complete
     };
-
-    // Flush any frames queued between the last relay poll and completion.
-    while let Ok(frame) = event_rx.try_recv() {
-        if let Err(e) = writer.add_frame(&frame).await {
-            tracing::warn!("Failed to relay async inference event: {e}");
-        }
+    let (result, complete_stream) = tokio::join!(inference, relay);
+    if !complete_stream {
+        writer.write_terminal_marker(STREAM_MARKER_ERROR, Some(
+            serde_json::json!({"error": {"message": "Async event stream interrupted; fetch the complete result from the task status endpoint"}}).to_string(),
+        )).await;
     }
-
     match result {
         Ok(response) => {
-            writer.write_terminal_marker(STREAM_MARKER_DONE, None).await;
+            if complete_stream {
+                writer.write_terminal_marker(STREAM_MARKER_DONE, None).await;
+            }
             Ok(response)
         }
         Err(error) => {
             let AsyncInferenceError { message, body } = error;
-            writer
-                .write_terminal_marker(STREAM_MARKER_ERROR, Some(body.to_string()))
-                .await;
+            if complete_stream {
+                writer
+                    .write_terminal_marker(STREAM_MARKER_ERROR, Some(body.to_string()))
+                    .await;
+            }
             Err(anyhow!(message))
         }
     }
@@ -238,5 +271,63 @@ impl StreamWriter {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use googletest::prelude::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    #[gtest]
+    #[tokio::test(start_paused = true)]
+    async fn blocked_work_does_not_block_heartbeats() {
+        let count = AtomicUsize::new(0);
+        let result = with_heartbeat(
+            async {
+                tokio::time::sleep(Duration::from_secs(245)).await;
+                Ok(7)
+            },
+            || async {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+            HEARTBEAT_INTERVAL,
+        )
+        .await
+        .expect("work completes despite exceeding the original lease");
+        expect_that!(result, eq(7));
+        expect_that!(count.load(Ordering::SeqCst), eq(8));
+    }
+
+    struct DropGuard(Arc<AtomicBool>);
+    impl Drop for DropGuard {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    #[gtest]
+    #[tokio::test(start_paused = true)]
+    async fn lost_lease_cancels_inference_and_relay() {
+        let dropped = Arc::new(AtomicBool::new(false));
+        let guard = DropGuard(dropped.clone());
+        let result: anyhow::Result<()> = with_heartbeat(
+            async move {
+                let _guard = guard;
+                std::future::pending().await
+            },
+            || async { Err(anyhow!("lease lost")) },
+            HEARTBEAT_INTERVAL,
+        )
+        .await;
+        expect_that!(result.is_err(), eq(true));
+        expect_that!(
+            dropped.load(Ordering::SeqCst),
+            eq(true),
+            "no detached inference after cancellation"
+        );
     }
 }

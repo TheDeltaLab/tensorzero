@@ -17,10 +17,11 @@
 //!   terminal frame: `data: [DONE]` on success, `event: error` on failure.
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use crate::db::valkey::ValkeyConnection;
 use axum::Extension;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -82,11 +83,9 @@ pub const STREAM_MARKER_DONE: &str = "done";
 /// error body.
 pub const STREAM_MARKER_ERROR: &str = "error";
 
-/// How long an XREAD call blocks waiting for new stream entries before the
-/// handler re-checks the task status in Postgres. In practice the valkey
-/// client's 500ms default response timeout fires first on an idle stream;
-/// the follow loop treats that client-side timeout as an empty read.
-const XREAD_BLOCK_MS: usize = 5000;
+/// Never issue blocking reads on the multiplexed connection shared with writers.
+const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const TASK_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Upper bound on the number of entries kept in a task's Redis stream.
 pub const STREAM_MAX_LEN: usize = 10000;
@@ -486,7 +485,16 @@ pub async fn stream_async_task_handler(
         return Ok(async_stream_gone_response(task_id));
     }
 
-    let event_stream = async_task_event_stream(spawn_client, conn, key, task_id, replay);
+    let event_stream = async_task_event_stream(
+        move || {
+            let spawn_client = spawn_client.clone();
+            async move { spawn_client.get_task_result(task_id).await }
+        },
+        conn,
+        key,
+        task_id,
+        replay,
+    );
     Ok(
         Sse::new(event_stream.take_until(state.shutdown_token.clone().cancelled_owned()))
             .keep_alive(KeepAlive::new())
@@ -577,18 +585,25 @@ fn parse_stream_entry(entry: &StreamId) -> Result<StreamEntryAction, Error> {
 }
 
 /// Build the SSE event stream: replay existing entries, then follow the Redis
-/// stream with blocking XREADs until a terminal marker arrives or the task
+/// stream with non-blocking XREADs until a terminal marker arrives or the task
 /// reaches a terminal state in Postgres.
-fn async_task_event_stream(
-    spawn_client: Arc<SpawnClient>,
-    mut conn: ValkeyConnection,
+fn async_task_event_stream<C, P, F>(
+    mut poll_task: P,
+    mut conn: C,
     key: String,
     task_id: Uuid,
     replay: StreamRangeReply,
-) -> impl Stream<Item = Result<Event, Error>> + use<> {
+) -> impl Stream<Item = Result<Event, Error>> + use<C, P, F>
+where
+    C: redis::aio::ConnectionLike + Send + Sync + 'static,
+    P: FnMut() -> F + Send + 'static,
+    F: Future<Output = Result<TaskPollResult, SpawnError>> + Send,
+{
     async_stream::try_stream! {
         let mut last_id = "0-0".to_string();
         let mut finished = false;
+        let mut terminal_observed = false;
+        let mut next_status_check = Instant::now();
 
         for entry in replay.ids {
             last_id = entry.id.clone();
@@ -603,41 +618,47 @@ fn async_task_event_stream(
         }
 
         while !finished {
-            let options = StreamReadOptions::default().block(XREAD_BLOCK_MS);
+            let options = StreamReadOptions::default().count(256);
             let reply: Option<StreamReadReply> = match conn
                 .xread_options(&[key.as_str()], &[last_id.as_str()], &options)
                 .await
             {
                 Ok(reply) => reply,
-                // An idle blocking read normally returns empty server-side
-                // after `XREAD_BLOCK_MS` (the dedicated stream connection's
-                // response timeout is comfortably above it). A client-side
-                // timeout can still fire on a network hiccup; treat that like
-                // an empty blocking read and fall through to the task status
-                // re-check below.
-                Err(e) if e.is_timeout() => None,
-                Err(e) => Err(Error::new(ErrorDetails::InternalError {
-                    message: format!(
-                        "Failed to follow async inference event stream for task `{task_id}`: {e}"
-                    ),
-                }))?,
+                Err(e) => {
+                    // Once HTTP 200 has started, an Err stream item aborts the
+                    // response body. Give clients a protocol-level terminal
+                    // event instead, including during cluster recovery.
+                    tracing::warn!("Async inference stream interrupted for task `{task_id}`: {e}");
+                    yield Event::default().event("error").data(
+                        json!({"error": {"message": format!("Async event stream interrupted; fetch the complete result from GET /v1/async_tasks/{task_id}")}}).to_string()
+                    );
+                    break;
+                }
             };
 
             let Some(reply) = reply else {
-                // Block timed out with no new entries. Re-check the task status:
-                // if the worker crashed before writing a terminal marker, the
-                // task is terminal in Postgres and we end the stream here.
-                // Still emit the terminal frame the marker would have
-                // produced, so every exit path ends the stream deliberately
-                // instead of with a bare EOF.
-                let poll = spawn_client.get_task_result(task_id).await.map_err(|e| {
+                tokio::time::sleep(STREAM_POLL_INTERVAL).await;
+                if !terminal_observed && Instant::now() < next_status_check {
+                    continue;
+                }
+                next_status_check = Instant::now() + TASK_STATUS_POLL_INTERVAL;
+                let poll = poll_task().await.map_err(|e| {
                     Error::new(ErrorDetails::InternalError {
                         message: format!("Failed to poll async inference task `{task_id}`: {e}"),
                     })
                 })?;
                 if poll.status.is_terminal() {
+                    // The worker may have written its marker after our empty
+                    // Redis read but before this Postgres poll. Read once more
+                    // after observing completion before declaring data missing.
+                    if !terminal_observed {
+                        terminal_observed = true;
+                        continue;
+                    }
                     match poll.status {
-                        TaskStatus::Completed => yield done_sentinel_event(),
+                        TaskStatus::Completed => yield Event::default().event("error").data(
+                            json!({"error": {"message": format!("Async inference task `{task_id}` completed but its event stream is incomplete; fetch the result from the task status endpoint")}}).to_string()
+                        ),
                         _ => {
                             let body = poll
                                 .error
@@ -726,7 +747,7 @@ pub async fn run_async_inference(
     state: &AppStateData,
     task_id: Uuid,
     params: AsyncInferenceTaskParams,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let headers = rebuild_headers(&params.headers)?;
     let api_key_public_id = params.api_key_public_id.as_deref();
@@ -782,7 +803,7 @@ async fn run_openai_style(
     style: OpenAIStyle,
     task_id: Uuid,
     api_key_public_id: Option<&str>,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let mut openai_params: OpenAICompatibleParams = match style {
         OpenAIStyle::Chat => deserialize_stored_body(&request)?,
@@ -888,7 +909,7 @@ async fn run_messages_style(
     request: Value,
     task_id: Uuid,
     api_key_public_id: Option<&str>,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let mut params: AnthropicMessagesParams = deserialize_stored_body(&request)?;
     params.stream = Some(true);
@@ -981,7 +1002,7 @@ fn tee_stream(stream: InferenceStream, include_raw_response: bool) -> (Inference
 /// finish).
 async fn drive_frames(
     mut frames: Pin<Box<dyn Stream<Item = Result<SerializedSseEvent, Error>> + Send>>,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<(), AsyncInferenceError> {
     let mut first_error: Option<AsyncInferenceError> = None;
     while let Some(frame) = frames.next().await {
@@ -989,7 +1010,7 @@ async fn drive_frames(
             Ok(frame) => {
                 // If the receiver is gone (e.g. the task was cancelled), keep
                 // draining the stream so the inference finishes cleanly.
-                let _ = event_tx.send(frame);
+                let _ = event_tx.send(frame).await;
             }
             Err(error) => {
                 if first_error.is_none() {
@@ -1098,6 +1119,64 @@ mod tests {
     use std::collections::HashMap;
     use tensorzero_auth::key::TensorZeroApiKey;
     use tensorzero_auth::postgres::KeyInfo;
+
+    struct UnavailableRedis(std::io::ErrorKind);
+
+    impl redis::aio::ConnectionLike for UnavailableRedis {
+        fn req_packed_command<'a>(
+            &'a mut self,
+            _: &'a redis::Cmd,
+        ) -> redis::RedisFuture<'a, redis::Value> {
+            Box::pin(
+                async move { Err(std::io::Error::new(self.0, "connection recovering").into()) },
+            )
+        }
+        fn req_packed_commands<'a>(
+            &'a mut self,
+            _: &'a redis::Pipeline,
+            _: usize,
+            _: usize,
+        ) -> redis::RedisFuture<'a, Vec<redis::Value>> {
+            Box::pin(async { panic!("stream follower should not issue pipelines") })
+        }
+        fn get_db(&self) -> i64 {
+            0
+        }
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn established_sse_ends_with_error_event_during_redis_recovery() {
+        for kind in [
+            std::io::ErrorKind::NotConnected,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::ConnectionReset,
+        ] {
+            let task_id = Uuid::now_v7();
+            let stream = async_task_event_stream(
+                || async { panic!("Redis interruption should not depend on a Postgres query") },
+                UnavailableRedis(kind),
+                "test-stream".to_owned(),
+                task_id,
+                StreamRangeReply {
+                    ids: vec![stream_entry(&[(STREAM_FIELD_DATA, "partial output")])],
+                },
+            );
+            let response = Sse::new(stream).into_response();
+            expect_that!(response.status(), eq(StatusCode::OK));
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .expect("SSE body must finish without a transport error");
+            let body = std::str::from_utf8(&bytes).expect("UTF-8 SSE");
+            expect_that!(body, contains_substring("partial output"));
+            expect_that!(body, contains_substring("event: error"));
+            expect_that!(
+                body,
+                contains_substring(format!("/v1/async_tasks/{task_id}"))
+            );
+            expect_that!(body, not(contains_substring("[DONE]")));
+        }
+    }
 
     fn header_map(entries: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
