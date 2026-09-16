@@ -19,13 +19,16 @@ pub async fn render_samples<T: StoredSample>(
 ) -> Result<Vec<RenderedSample>, Error> {
     for (function_name, variant_name) in &variants {
         let function_config = config.get_function(function_name)?;
-        function_config.variants().get(variant_name).ok_or_else(|| {
-            crate::error::Error::new(crate::error::ErrorDetails::InvalidRequest {
-                message: format!(
-                    "Variant {variant_name} for function {function_name} not found.",
-                ),
-            })
-        })?;
+        function_config
+            .variants()
+            .get(variant_name)
+            .ok_or_else(|| {
+                crate::error::Error::new(crate::error::ErrorDetails::InvalidRequest {
+                    message: format!(
+                        "Variant {variant_name} for function {function_name} not found.",
+                    ),
+                })
+            })?;
     }
 
     let concurrency = concurrency.unwrap_or(DEFAULT_CONCURRENCY);

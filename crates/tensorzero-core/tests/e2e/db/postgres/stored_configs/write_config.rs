@@ -10,9 +10,8 @@ use serde::de::DeserializeOwned;
 use sqlx::{PgPool, Row};
 
 use tensorzero_core::config::{
-    ClickHouseConfig, MetricConfig, MetricConfigLevel, MetricConfigOptimize,
-    MetricConfigType, PostgresConfig, UninitializedConfig,
-    UninitializedToolConfig, path::ResolvedTomlPathData,
+    ClickHouseConfig, MetricConfig, MetricConfigLevel, MetricConfigOptimize, MetricConfigType,
+    PostgresConfig, UninitializedConfig, UninitializedToolConfig, path::ResolvedTomlPathData,
 };
 use tensorzero_core::db::postgres::PostgresConnectionInfo;
 use tensorzero_core::db::postgres::stored_config_queries::load_config_from_db;

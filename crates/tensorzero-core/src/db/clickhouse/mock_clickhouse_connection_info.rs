@@ -180,7 +180,6 @@ impl InferenceQueries for MockClickHouseConnectionInfo {
     }
 }
 
-
 #[async_trait]
 impl ConfigQueries for MockClickHouseConnectionInfo {
     async fn get_config_snapshot(

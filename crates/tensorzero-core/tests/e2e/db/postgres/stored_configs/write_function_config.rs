@@ -522,7 +522,6 @@ async fn write_function_config_reuses_unchanged_variants(pool: PgPool) {
         schemas: UninitializedSchemas::default(),
         output_schema: None,
         description: Some("reuse test v2".to_string()),
-
     });
 
     let result_v2 = postgres

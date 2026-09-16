@@ -2,7 +2,16 @@
   "name": "@delta-ai/ai-sdk-provider",
   "version": "0.2.1",
   "description": "Vercel AI SDK provider for the TensorZero gateway, with async batch inference",
+  "homepage": "https://github.com/TheDeltaLab/tensorzero/tree/main/sdk/typescript/packages/ai-sdk-provider",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheDeltaLab/tensorzero",
+    "directory": "sdk/typescript/packages/ai-sdk-provider"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -14,12 +23,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": [
-    "dist"
-  ],
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "scripts": {
     "build": "tsup",
@@ -32,14 +38,6 @@
     "@ai-sdk/provider": "^4.0.0",
     "@delta-ai/tensorzero-sdk": "workspace:*"
   },
-  "peerDependencies": {
-    "ai": "^6.0.0 || ^7.0.0"
-  },
-  "peerDependenciesMeta": {
-    "ai": {
-      "optional": true
-    }
-  },
   "devDependencies": {
     "ai": "^7.0.93",
     "tsup": "^8.3.5",
@@ -47,10 +45,12 @@
     "vitest": "^3.1.4",
     "zod": "^4.4.3"
   },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/TheDeltaLab/tensorzero",
-    "directory": "sdk/typescript/packages/ai-sdk-provider"
+  "peerDependencies": {
+    "ai": "^6.0.0 || ^7.0.0"
   },
-  "homepage": "https://github.com/TheDeltaLab/tensorzero/tree/main/sdk/typescript/packages/ai-sdk-provider"
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  }
 }

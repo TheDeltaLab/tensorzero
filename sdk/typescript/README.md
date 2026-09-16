@@ -2,9 +2,9 @@
 
 TypeScript clients for the TensorZero gateway's **async inference API**:
 
-| Package | Purpose |
-| --- | --- |
-| `@delta-ai/tensorzero-sdk` | Zero-dependency client for the async job HTTP API (submit / poll / stream / wait) |
+| Package                     | Purpose                                                                                |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `@delta-ai/tensorzero-sdk`  | Zero-dependency client for the async job HTTP API (submit / poll / stream / wait)      |
 | `@delta-ai/ai-sdk-provider` | Vercel AI SDK provider (`createTensorZero`) with batch support on top of the async API |
 
 Requires Node.js 18+ or a modern browser (global `fetch`, `ReadableStream`). No runtime dependencies.
@@ -26,7 +26,7 @@ import { createTensorZeroClient } from "@delta-ai/tensorzero-sdk";
 
 const client = createTensorZeroClient({
   baseURL: "https://gateway.example.com", // gateway origin; `/v1/...` paths are appended
-  apiKey: process.env.TENSORZERO_API_KEY,  // sent as `Authorization: Bearer ...`
+  apiKey: process.env.TENSORZERO_API_KEY, // sent as `Authorization: Bearer ...`
   // fetch: myFetch,                       // optional custom fetch
   // headers: { "x-request-id": "..." },   // optional extra headers
 });
@@ -45,9 +45,20 @@ const { taskId } = await client.submitChatCompletion({
 });
 
 // Equivalent generic form; also: submitResponses / submitMessages
-await client.submit("chat", { model: "openai::gpt-5", messages: [/* ... */] });
+await client.submit("chat", {
+  model: "openai::gpt-5",
+  messages: [
+    /* ... */
+  ],
+});
 await client.submitResponses({ model: "openai::gpt-5", input: "..." });
-await client.submitMessages({ model: "anthropic::claude-sonnet-4-5", max_tokens: 1024, messages: [/* ... */] });
+await client.submitMessages({
+  model: "anthropic::claude-sonnet-4-5",
+  max_tokens: 1024,
+  messages: [
+    /* ... */
+  ],
+});
 ```
 
 ### Poll
@@ -66,9 +77,9 @@ const status = await client.getTask(taskId);
 
 ```ts
 const final = await client.waitForCompletion(taskId, {
-  intervalMs: 1_000,     // initial poll interval (default 1s)
+  intervalMs: 1_000, // initial poll interval (default 1s)
   maxIntervalMs: 10_000, // backoff cap (default 10s)
-  timeoutMs: 300_000,    // throws TensorZeroTimeoutError after this (default: none)
+  timeoutMs: 300_000, // throws TensorZeroTimeoutError after this (default: none)
 });
 if (final.status === "completed") {
   console.log(final.response); // e.g. a chat completion body
@@ -120,15 +131,15 @@ await client.health(); // GET /health (no auth)
 
 All errors extend `TensorZeroError`:
 
-| Class | Condition |
-| --- | --- |
-| `TaskNotFoundError` | 404 — unknown task id |
-| `StreamGoneError` | 410 — event stream expired/gone (handled internally by `streamTask`) |
-| `AsyncInferenceDisabledError` | 500 — gateway lacks async inference config |
-| `TensorZeroHttpError` | any other non-2xx |
-| `TensorZeroTimeoutError` | `waitForCompletion` exceeded `timeoutMs` |
-| `TensorZeroStreamError` | event stream failed past the reconnect budget |
-| `TensorZeroParseError` | response didn't match the expected wire shape |
+| Class                         | Condition                                                            |
+| ----------------------------- | -------------------------------------------------------------------- |
+| `TaskNotFoundError`           | 404 — unknown task id                                                |
+| `StreamGoneError`             | 410 — event stream expired/gone (handled internally by `streamTask`) |
+| `AsyncInferenceDisabledError` | 500 — gateway lacks async inference config                           |
+| `TensorZeroHttpError`         | any other non-2xx                                                    |
+| `TensorZeroTimeoutError`      | `waitForCompletion` exceeded `timeoutMs`                             |
+| `TensorZeroStreamError`       | event stream failed past the reconnect budget                        |
+| `TensorZeroParseError`        | response didn't match the expected wire shape                        |
 
 ## `@delta-ai/ai-sdk-provider`
 

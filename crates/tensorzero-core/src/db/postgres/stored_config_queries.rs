@@ -4,18 +4,15 @@ use std::sync::Arc;
 
 use sqlx::{Executor, FromRow, PgPool, Postgres, QueryBuilder, Transaction};
 use tensorzero_stored_config::schema_dispatch::{
-    deserialize_clickhouse_config,
-    deserialize_embedding_model_config, deserialize_function_config,
+    deserialize_clickhouse_config, deserialize_embedding_model_config, deserialize_function_config,
     deserialize_gateway_config, deserialize_metric_config, deserialize_model_config,
     deserialize_postgres_config, deserialize_provider_types_config,
     deserialize_rate_limiting_config, deserialize_storage_kind, deserialize_tool_config,
     deserialize_variant_config,
 };
 use tensorzero_stored_config::{
-    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION,
-    StoredFile, StoredFileRef, StoredFunctionConfig,
-    StoredModelAlias, StoredToolConfig, StoredVariantConfig,
-    StoredVariantVersionConfig,
+    STORED_MODEL_ALIAS_CONFIG_SCHEMA_REVISION, StoredFile, StoredFileRef, StoredFunctionConfig,
+    StoredModelAlias, StoredToolConfig, StoredVariantConfig, StoredVariantVersionConfig,
 };
 use uuid::Uuid;
 

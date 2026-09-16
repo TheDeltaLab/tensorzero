@@ -13,8 +13,7 @@ use crate::inference::types::pyo3_helpers::{
 };
 use crate::inference::types::stored_input::StoredInput;
 use crate::inference::types::{
-    ContentBlockChatOutput, FunctionType, JsonInferenceOutput, ModelInput,
-    ResolvedInput, Text,
+    ContentBlockChatOutput, FunctionType, JsonInferenceOutput, ModelInput, ResolvedInput, Text,
 };
 use crate::tool::{StaticToolConfig, ToolCallConfigDatabaseInsert, deserialize_optional_tool_info};
 use crate::variant::{VariantConfig, chat_completion::prepare_model_input};
@@ -455,12 +454,10 @@ pub struct RenderedSample {
     pub tags: HashMap<String, String>,
 }
 
-impl RenderedSample {
-}
+impl RenderedSample {}
 
 #[cfg(feature = "pyo3")]
 impl RenderedSample {
-
     #[getter]
     pub fn get_input(&self) -> ModelInput {
         self.input.clone()
@@ -695,8 +692,8 @@ mod tests {
                 tool_choice: ToolChoice::Auto,
                 parallel_tool_calls: None,
                 description: None,
-                    all_explicit_templates_names: Default::default(),
-                })),
+                all_explicit_templates_names: Default::default(),
+            })),
         );
 
         // Add the json_function (Json function)
@@ -708,8 +705,8 @@ mod tests {
                 output_schema: JSONSchema::default(),
                 json_mode_tool_call_config: ToolCallConfig::default(),
                 description: None,
-                    all_explicit_template_names: Default::default(),
-                })),
+                all_explicit_template_names: Default::default(),
+            })),
         );
 
         config
@@ -883,7 +880,6 @@ mod tests {
             },
         }
     }
-
 
     #[test]
     fn test_stored_inference_id() {

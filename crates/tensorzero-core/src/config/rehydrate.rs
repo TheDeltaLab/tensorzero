@@ -483,8 +483,7 @@ mod tests {
 
     use googletest::prelude::*;
     use tensorzero_stored_config::{
-        StoredChatFunctionConfig, StoredFile,
-        StoredJsonFunctionConfig, StoredVariantRef,
+        StoredChatFunctionConfig, StoredFile, StoredJsonFunctionConfig, StoredVariantRef,
     };
     use tensorzero_types::inference_params::JsonMode;
 
@@ -953,5 +952,4 @@ mod tests {
         expect_that!(json.variants.contains_key("primary"), eq(true));
         Ok(())
     }
-
 }

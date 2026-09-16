@@ -20,4 +20,3 @@ pub struct UpsertVariantPayload {
     pub variant_name: String,
     pub variant: UninitializedVariantInfo,
 }
-

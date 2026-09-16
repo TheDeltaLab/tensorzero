@@ -205,7 +205,9 @@ pub struct TableBoundsWithCount {
     pub count: Option<u64>,
 }
 
-impl<T: EpisodeQueries + FeedbackQueries + HealthCheckable + Send + Sync> ClickHouseConnection for T {
+impl<T: EpisodeQueries + FeedbackQueries + HealthCheckable + Send + Sync> ClickHouseConnection
+    for T
+{
 }
 
 #[derive(ts_rs::TS, Debug, Default, Serialize, Deserialize)]
