@@ -147,3 +147,5 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.toml` — Removed evaluator/experimentation sections from the e2e config (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.weather_helper.toml` — Removed evaluator/experimentation sections from the e2e config (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.write_haiku.toml` — Removed evaluator sections from the e2e config (Delta-AI fork).
+
+- `crates/async-inference/Cargo.toml` — Add regression test dependencies for lease isolation during Redis outages.

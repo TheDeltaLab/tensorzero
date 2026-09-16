@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use crate::{
     db::HealthCheckable,
     utils::gateway::{AppState, AppStateData},
@@ -36,16 +37,34 @@ pub async fn health_handler(
         postgres_connection_info,
         valkey_connection_info,
         valkey_cache_connection_info,
+        config,
         ..
     }): AppState,
 ) -> Result<Json<Value>, (StatusCode, Json<Value>)> {
-    health_check_inner(
+    let base_health = health_check_inner(
         &clickhouse_connection_info,
         &postgres_connection_info,
         &valkey_connection_info,
         &valkey_cache_connection_info,
     )
-    .await
+    .await;
+    if !config.gateway.async_inference.enabled {
+        return base_health;
+    }
+    let async_health = valkey_connection_info.async_inference_health().await;
+    let (mut body, mut status) = match base_health {
+        Ok(Json(body)) => (body, StatusCode::OK),
+        Err((status, Json(body))) => (body, status),
+    };
+    body["valkey_async"] = json!(if async_health.is_ok() { "ok" } else { "error" });
+    if async_health.is_err() {
+        status = StatusCode::SERVICE_UNAVAILABLE;
+    }
+    if status == StatusCode::OK {
+        Ok(Json(body))
+    } else {
+        Err((status, Json(body)))
+    }
 }
 
 async fn health_check_inner(

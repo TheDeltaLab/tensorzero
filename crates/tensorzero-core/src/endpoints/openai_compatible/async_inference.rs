@@ -637,7 +637,9 @@ fn async_task_event_stream(
                 })?;
                 if poll.status.is_terminal() {
                     match poll.status {
-                        TaskStatus::Completed => yield done_sentinel_event(),
+                        TaskStatus::Completed => yield Event::default().event("error").data(
+                            json!({"error": {"message": format!("Async inference task `{task_id}` completed but its event stream is incomplete; fetch the result from the task status endpoint")}}).to_string()
+                        ),
                         _ => {
                             let body = poll
                                 .error
@@ -726,7 +728,7 @@ pub async fn run_async_inference(
     state: &AppStateData,
     task_id: Uuid,
     params: AsyncInferenceTaskParams,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let headers = rebuild_headers(&params.headers)?;
     let api_key_public_id = params.api_key_public_id.as_deref();
@@ -782,7 +784,7 @@ async fn run_openai_style(
     style: OpenAIStyle,
     task_id: Uuid,
     api_key_public_id: Option<&str>,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let mut openai_params: OpenAICompatibleParams = match style {
         OpenAIStyle::Chat => deserialize_stored_body(&request)?,
@@ -888,7 +890,7 @@ async fn run_messages_style(
     request: Value,
     task_id: Uuid,
     api_key_public_id: Option<&str>,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<Value, AsyncInferenceError> {
     let mut params: AnthropicMessagesParams = deserialize_stored_body(&request)?;
     params.stream = Some(true);
@@ -981,7 +983,7 @@ fn tee_stream(stream: InferenceStream, include_raw_response: bool) -> (Inference
 /// finish).
 async fn drive_frames(
     mut frames: Pin<Box<dyn Stream<Item = Result<SerializedSseEvent, Error>> + Send>>,
-    event_tx: mpsc::UnboundedSender<SerializedSseEvent>,
+    event_tx: mpsc::Sender<SerializedSseEvent>,
 ) -> Result<(), AsyncInferenceError> {
     let mut first_error: Option<AsyncInferenceError> = None;
     while let Some(frame) = frames.next().await {
@@ -989,7 +991,7 @@ async fn drive_frames(
             Ok(frame) => {
                 // If the receiver is gone (e.g. the task was cancelled), keep
                 // draining the stream so the inference finishes cleanly.
-                let _ = event_tx.send(frame);
+                let _ = event_tx.send(frame).await;
             }
             Err(error) => {
                 if first_error.is_none() {
