@@ -206,6 +206,23 @@ async fn test_async_chat_completions_submit_and_complete() {
 #[gtest]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_async_chat_completions_stream_matches_sync_shape() {
+    assert_chat_stream_matches_status().await;
+}
+
+#[gtest]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_concurrent_async_stream_readers_do_not_block_writers() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(
+            assert_chat_stream_matches_status(),
+            assert_chat_stream_matches_status()
+        );
+    })
+    .await
+    .expect("concurrent readers must not block event writers on the shared Redis connection");
+}
+
+async fn assert_chat_stream_matches_status() {
     let client = Client::new();
     skip_unless_async_inference!(client);
 

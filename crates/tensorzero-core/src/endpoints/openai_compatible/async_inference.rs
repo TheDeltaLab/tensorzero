@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use crate::db::valkey::ValkeyConnection;
 use axum::Extension;
@@ -82,11 +83,9 @@ pub const STREAM_MARKER_DONE: &str = "done";
 /// error body.
 pub const STREAM_MARKER_ERROR: &str = "error";
 
-/// How long an XREAD call blocks waiting for new stream entries before the
-/// handler re-checks the task status in Postgres. In practice the valkey
-/// client's 500ms default response timeout fires first on an idle stream;
-/// the follow loop treats that client-side timeout as an empty read.
-const XREAD_BLOCK_MS: usize = 5000;
+/// Never issue blocking reads on the multiplexed connection shared with writers.
+const STREAM_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const TASK_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Upper bound on the number of entries kept in a task's Redis stream.
 pub const STREAM_MAX_LEN: usize = 10000;
@@ -577,7 +576,7 @@ fn parse_stream_entry(entry: &StreamId) -> Result<StreamEntryAction, Error> {
 }
 
 /// Build the SSE event stream: replay existing entries, then follow the Redis
-/// stream with blocking XREADs until a terminal marker arrives or the task
+/// stream with non-blocking XREADs until a terminal marker arrives or the task
 /// reaches a terminal state in Postgres.
 fn async_task_event_stream(
     spawn_client: Arc<SpawnClient>,
@@ -589,6 +588,8 @@ fn async_task_event_stream(
     async_stream::try_stream! {
         let mut last_id = "0-0".to_string();
         let mut finished = false;
+        let mut terminal_observed = false;
+        let mut next_status_check = Instant::now();
 
         for entry in replay.ids {
             last_id = entry.id.clone();
@@ -603,18 +604,13 @@ fn async_task_event_stream(
         }
 
         while !finished {
-            let options = StreamReadOptions::default().block(XREAD_BLOCK_MS);
+            let options = StreamReadOptions::default().count(256);
             let reply: Option<StreamReadReply> = match conn
                 .xread_options(&[key.as_str()], &[last_id.as_str()], &options)
                 .await
             {
                 Ok(reply) => reply,
-                // An idle blocking read normally returns empty server-side
-                // after `XREAD_BLOCK_MS` (the dedicated stream connection's
-                // response timeout is comfortably above it). A client-side
-                // timeout can still fire on a network hiccup; treat that like
-                // an empty blocking read and fall through to the task status
-                // re-check below.
+                // A network timeout still allows checking the durable task result.
                 Err(e) if e.is_timeout() => None,
                 Err(e) => Err(Error::new(ErrorDetails::InternalError {
                     message: format!(
@@ -624,18 +620,24 @@ fn async_task_event_stream(
             };
 
             let Some(reply) = reply else {
-                // Block timed out with no new entries. Re-check the task status:
-                // if the worker crashed before writing a terminal marker, the
-                // task is terminal in Postgres and we end the stream here.
-                // Still emit the terminal frame the marker would have
-                // produced, so every exit path ends the stream deliberately
-                // instead of with a bare EOF.
+                tokio::time::sleep(STREAM_POLL_INTERVAL).await;
+                if !terminal_observed && Instant::now() < next_status_check {
+                    continue;
+                }
+                next_status_check = Instant::now() + TASK_STATUS_POLL_INTERVAL;
                 let poll = spawn_client.get_task_result(task_id).await.map_err(|e| {
                     Error::new(ErrorDetails::InternalError {
                         message: format!("Failed to poll async inference task `{task_id}`: {e}"),
                     })
                 })?;
                 if poll.status.is_terminal() {
+                    // The worker may have written its marker after our empty
+                    // Redis read but before this Postgres poll. Read once more
+                    // after observing completion before declaring data missing.
+                    if !terminal_observed {
+                        terminal_observed = true;
+                        continue;
+                    }
                     match poll.status {
                         TaskStatus::Completed => yield Event::default().event("error").data(
                             json!({"error": {"message": format!("Async inference task `{task_id}` completed but its event stream is incomplete; fetch the result from the task status endpoint")}}).to_string()

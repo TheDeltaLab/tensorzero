@@ -109,10 +109,9 @@ use crate::error::{DelayedError, ErrorDetails};
 /// Response timeout for the dedicated async inference event-stream connection.
 ///
 /// The shared manager keeps the redis-rs default (500ms) so request hot-path
-/// users like rate limiting fail fast. Async inference stream commands need
-/// more headroom: the initial `XRANGE` replay can straddle a loaded Valkey,
-/// and the follow loop's blocking `XREAD` waits up to `XREAD_BLOCK_MS` (5s)
-/// server-side before returning empty, so this must comfortably exceed that.
+/// users like rate limiting fail fast. Stream writes and replay reads have a
+/// bounded 10s budget. Stream following uses non-blocking reads so readers
+/// never hold the multiplexed connection ahead of writers or health checks.
 const ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Connection info for Valkey (Redis-compatible) rate limiting backend.
