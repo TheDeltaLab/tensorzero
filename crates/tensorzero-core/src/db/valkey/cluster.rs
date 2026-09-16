@@ -25,6 +25,10 @@ use super::ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT;
 const MAX_REDIRECTS: usize = 3;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+// Bootstrap connects the seed, discovers slots, and checks advertised peers.
+// Give redis-rs time to discard unavailable replicas after their own connection
+// and response deadlines. Reusing CONNECT_TIMEOUT would cancel discovery first.
+const CLUSTER_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
@@ -84,7 +88,7 @@ impl RecoveringClusterConnection {
             // command_with_redirects follows explicit rejections separately.
             .retries(0)
             .build()?;
-        let connection = timeout(connect_timeout, client.get_async_connection())
+        let connection = timeout(CLUSTER_BOOTSTRAP_TIMEOUT, client.get_async_connection())
             .await
             .map_err(|_| deadline_error())??;
         Ok(Self {
@@ -146,8 +150,11 @@ impl RecoveringClusterConnection {
                 let Some(shared) = weak.upgrade() else {
                     return;
                 };
-                let result =
-                    timeout(shared.connect_timeout, shared.client.get_async_connection()).await;
+                let result = timeout(
+                    CLUSTER_BOOTSTRAP_TIMEOUT,
+                    shared.client.get_async_connection(),
+                )
+                .await;
                 if let Ok(Ok(connection)) = result {
                     let mut state = shared.state.write().await;
                     state.connection = connection;
@@ -318,7 +325,10 @@ mod tests {
     use tokio::task::{JoinHandle, JoinSet};
 
     #[derive(Default)]
-    struct RedirectBehavior {
+    struct NodeBehavior {
+        replica: AtomicU16,
+        stall_readonly: AtomicBool,
+        readonly_requests: AtomicUsize,
         target: AtomicU16,
         moved: AtomicBool,
         require_asking: AtomicBool,
@@ -331,7 +341,7 @@ mod tests {
         port: u16,
         blackhole: Arc<AtomicBool>,
         task: JoinHandle<()>,
-        redirect: Arc<RedirectBehavior>,
+        redirect: Arc<NodeBehavior>,
     }
 
     impl Drop for Node {
@@ -364,13 +374,17 @@ mod tests {
         blackhole: Arc<AtomicBool>,
         discoveries: Arc<AtomicUsize>,
         writes: Arc<AtomicUsize>,
-        redirect: Arc<RedirectBehavior>,
+        redirect: Arc<NodeBehavior>,
     ) {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
         let mut asked = false;
         while let Some(args) = command(&mut reader).await {
             let name = args[0].to_ascii_uppercase();
+            if name == "READONLY" && redirect.stall_readonly.load(Ordering::SeqCst) {
+                redirect.readonly_requests.fetch_add(1, Ordering::SeqCst);
+                std::future::pending::<()>().await;
+            }
             let data_command = matches!(name.as_str(), "EXISTS" | "INCR" | "INCRBY");
             if data_command {
                 redirect.requests.fetch_add(1, Ordering::SeqCst);
@@ -410,10 +424,16 @@ mod tests {
             let response = match name.as_str() {
                 "CLUSTER" => {
                     discoveries.fetch_add(1, Ordering::SeqCst);
-                    format!(
-                        "*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{}\r\n",
+                    let replica = redirect.replica.load(Ordering::SeqCst);
+                    let node_count = if replica == 0 { 3 } else { 4 };
+                    let mut slots = format!(
+                        "*1\r\n*{node_count}\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{}\r\n",
                         topology.load(Ordering::SeqCst)
-                    )
+                    );
+                    if replica != 0 {
+                        slots.push_str(&format!("*2\r\n$9\r\n127.0.0.1\r\n:{replica}\r\n"));
+                    }
+                    slots
                 }
                 "ASKING" => {
                     asked = true;
@@ -446,7 +466,7 @@ mod tests {
         let port = listener.local_addr().expect("bound address").port();
         let blackhole = Arc::new(AtomicBool::new(false));
         let gate = blackhole.clone();
-        let redirect = Arc::new(RedirectBehavior::default());
+        let redirect = Arc::new(NodeBehavior::default());
         let behavior = redirect.clone();
         let task = tokio::spawn(async move {
             let mut clients = JoinSet::new();
@@ -466,6 +486,86 @@ mod tests {
             task,
             redirect,
         }
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn starts_with_unresponsive_replica_and_healthy_primary() {
+        let topology = Arc::new(AtomicU16::new(0));
+        let discoveries = Arc::new(AtomicUsize::new(0));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let primary = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        let replica = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        topology.store(primary.port, Ordering::SeqCst);
+        primary
+            .redirect
+            .replica
+            .store(replica.port, Ordering::SeqCst);
+        replica
+            .redirect
+            .stall_readonly
+            .store(true, Ordering::SeqCst);
+
+        let mut connection = RecoveringClusterConnection::with_timeouts(
+            format!("redis://127.0.0.1:{}", primary.port),
+            Duration::from_millis(600),
+            Duration::from_millis(200),
+        )
+        .await
+        .expect("startup must allow the optional replica response to time out");
+        let exists: bool = connection
+            .exists("test-key")
+            .await
+            .expect("healthy primary");
+        expect_that!(exists, eq(true));
+        expect_that!(
+            replica.redirect.readonly_requests.load(Ordering::SeqCst),
+            gt(0)
+        );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn recovers_with_unresponsive_replica_and_healthy_primary() {
+        let topology = Arc::new(AtomicU16::new(0));
+        let discoveries = Arc::new(AtomicUsize::new(0));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let old = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        let primary = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        let replica = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        let seed = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        topology.store(old.port, Ordering::SeqCst);
+        let mut connection = RecoveringClusterConnection::with_timeouts(
+            format!("redis://127.0.0.1:{}", seed.port),
+            Duration::from_millis(600),
+            Duration::from_millis(200),
+        )
+        .await
+        .expect("initial healthy topology");
+
+        topology.store(primary.port, Ordering::SeqCst);
+        seed.redirect.replica.store(replica.port, Ordering::SeqCst);
+        replica
+            .redirect
+            .stall_readonly
+            .store(true, Ordering::SeqCst);
+        old.blackhole.store(true, Ordering::SeqCst);
+        let result: RedisResult<bool> = connection.exists("test-key").await;
+        expect_that!(result.is_err(), eq(true));
+        timeout(Duration::from_secs(3), async {
+            loop {
+                if matches!(connection.exists::<_, bool>("test-key").await, Ok(true)) {
+                    break;
+                }
+                sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("recovery must skip the unresponsive replica and use the healthy primary");
+        expect_that!(
+            replica.redirect.readonly_requests.load(Ordering::SeqCst),
+            gt(0)
+        );
     }
 
     #[gtest]
