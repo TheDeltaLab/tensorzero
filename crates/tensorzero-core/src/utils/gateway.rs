@@ -511,7 +511,6 @@ impl GatewayHandle {
         .await
     }
 
-    #[expect(clippy::too_many_arguments)]
     async fn new_with_databases(
         config: UnwrittenConfig,
         clickhouse_url: Option<String>,
@@ -1164,16 +1163,6 @@ pub async fn setup_valkey_cache(
         None => Ok(valkey_connection_info.clone()),
     }
 }
-
-/// Sets up the Autopilot API client from the environment.
-/// Returns `Ok(Some(client))` if TENSORZERO_AUTOPILOT_API_KEY is set,
-/// `Ok(None)` if not set, or an error if client construction fails.
-/// Requires Postgres and ClickHouse (for deployment_id) to be enabled.
-///
-/// Environment variables:
-/// - `TENSORZERO_AUTOPILOT_API_KEY`: Required to enable the client
-/// - `TENSORZERO_AUTOPILOT_BASE_URL`: Optional custom base URL (for testing)
-/// - `TENSORZERO_AUTOPILOT_QUEUE_NAME`: Optional queue name for tool dispatching
 
 /// Custom Axum extractor that validates the JSON body and deserializes it into a custom type
 ///
