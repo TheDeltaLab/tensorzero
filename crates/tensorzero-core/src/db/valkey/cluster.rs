@@ -3,8 +3,9 @@
 //!
 //! A managed Redis failover can retire every advertised shard address at once.
 //! Retrying those addresses cannot discover the new topology. All clones share
-//! one replaceable connection and one recovery loop. Failed commands are NEVER
-//! replayed here: a timed-out XADD may already have committed on the server.
+//! one replaceable connection and one recovery loop. Ambiguous failures are NEVER
+//! replayed: a timed-out XADD may already have committed. Explicit ASK/MOVED
+//! rejections are followed within the original deadline and a redirect budget.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,11 +13,16 @@ use std::time::Duration;
 use redis::aio::ConnectionLike;
 use redis::cluster::ClusterClient;
 use redis::cluster_async::ClusterConnection;
-use redis::{Cmd, Pipeline, RedisError, RedisResult, Value};
+use redis::{
+    AsyncConnectionConfig, Client, Cmd, ConnectionAddr, ConnectionInfo, IntoConnectionInfo,
+    Pipeline, RedisError, RedisResult, Value,
+};
 use tokio::sync::RwLock;
 use tokio::time::{sleep, timeout};
 
 use super::ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT;
+
+const MAX_REDIRECTS: usize = 3;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
@@ -28,6 +34,7 @@ pub struct RecoveringClusterConnection {
 
 struct Shared {
     client: ClusterClient,
+    seed: ConnectionInfo,
     state: RwLock<State>,
     command_timeout: Duration,
     connect_timeout: Duration,
@@ -62,6 +69,10 @@ impl RecoveringClusterConnection {
         command_timeout: Duration,
         connect_timeout: Duration,
     ) -> RedisResult<Self> {
+        let seed = url.as_str().into_connection_info()?;
+        let mut address = seed.addr().clone();
+        address.set_danger_accept_invalid_hostnames(true);
+        let seed = seed.set_addr(address);
         let client = ClusterClient::builder(vec![url])
             // Azure advertises IPs while issuing certificates for the DNS name.
             // Preserve certificate-chain verification and existing TLS policy.
@@ -69,8 +80,8 @@ impl RecoveringClusterConnection {
             .connection_timeout(connect_timeout)
             .response_timeout(command_timeout)
             .overall_response_timeout(Some(command_timeout))
-            // Do not replay writes with an ambiguous outcome. A future command
-            // uses the refreshed topology after an error instead.
+            // Disable generic retries, which also replay ambiguous writes.
+            // command_with_redirects follows explicit rejections separately.
             .retries(0)
             .build()?;
         let connection = timeout(connect_timeout, client.get_async_connection())
@@ -79,6 +90,7 @@ impl RecoveringClusterConnection {
         Ok(Self {
             shared: Arc::new(Shared {
                 client,
+                seed,
                 state: RwLock::new(State {
                     connection,
                     generation: 0,
@@ -162,14 +174,106 @@ impl RecoveringClusterConnection {
 
     pub(super) async fn command(&self, cmd: &Cmd, deadline: Duration) -> RedisResult<Value> {
         let (mut connection, generation) = self.snapshot().await?;
-        let result = timeout(deadline, connection.req_packed_command(cmd))
-            .await
-            .unwrap_or_else(|_| Err(deadline_error()));
+        let result = timeout(
+            deadline,
+            command_with_redirects(
+                &mut connection,
+                cmd,
+                &self.shared.seed,
+                self.shared.connect_timeout,
+                deadline,
+            ),
+        )
+        .await
+        .unwrap_or_else(|_| Err(deadline_error()));
         if let Err(error) = &result {
             self.recover_after_error(generation, error).await;
         }
         result
     }
+}
+
+/// Only follow explicit redirects: Redis has rejected these commands without
+/// executing them. IO errors and timeouts never enter this retry loop.
+async fn command_with_redirects(
+    connection: &mut ClusterConnection,
+    cmd: &Cmd,
+    seed: &ConnectionInfo,
+    connect_timeout: Duration,
+    command_timeout: Duration,
+) -> RedisResult<Value> {
+    let mut result = connection.req_packed_command(cmd).await;
+    // Limit manual redirects to the single-node commands used by async
+    // streams. A multi-node command may already have written on other shards,
+    // so its aggregate error does not authorize replaying the whole command.
+    let mut args = cmd.args_iter();
+    let safe_to_redirect = match args.next() {
+        Some(redis::Arg::Simple(name)) => match name.to_ascii_uppercase().as_slice() {
+            b"DEL" | b"EXISTS" => args.len() == 1,
+            b"XADD" | b"XRANGE" | b"XREAD" | b"EXPIRE" | b"GET" | b"INCR" | b"INCRBY" => true,
+            _ => false,
+        },
+        _ => false,
+    };
+    if !safe_to_redirect {
+        return result;
+    }
+    for _ in 0..MAX_REDIRECTS {
+        let Err(error) = &result else {
+            return result;
+        };
+        let asking = match error.code() {
+            Some("ASK") => true,
+            Some("MOVED") => false,
+            _ => return result,
+        };
+        let Some((address, _slot)) = error.redirect_node() else {
+            return result;
+        };
+        let Some((host, port)) = address.rsplit_once(':') else {
+            return result;
+        };
+        let Ok(port) = port.parse::<u16>() else {
+            return result;
+        };
+        // Open a connection to the actual redirect target, which may not be
+        // in CLUSTER SLOTS yet. Copy authentication, protocol and TLS settings
+        // from the configured seed; never use a reconnecting manager here.
+        let mut address = seed.addr().clone();
+        match &mut address {
+            ConnectionAddr::Tcp(target_host, target_port)
+            | ConnectionAddr::TcpTls {
+                host: target_host,
+                port: target_port,
+                ..
+            } => {
+                host.trim_start_matches('[')
+                    .trim_end_matches(']')
+                    .clone_into(target_host);
+                *target_port = port;
+            }
+            _ => return result,
+        }
+        let mut redirected = Client::open(seed.clone().set_addr(address))?
+            .get_multiplexed_async_connection_with_config(
+                &AsyncConnectionConfig::new()
+                    .set_connection_timeout(Some(connect_timeout))
+                    .set_response_timeout(Some(command_timeout)),
+            )
+            .await?;
+        if asking {
+            // This connection is exclusive to this redirect, so no other
+            // caller can insert a command between ASKING and the data command.
+            redis::cmd("ASKING")
+                .query_async::<()>(&mut redirected)
+                .await?;
+        }
+        result = redirected
+            .req_packed_command(cmd)
+            .await
+            .and_then(Value::extract_error);
+    }
+    result
 }
 
 impl ConnectionLike for RecoveringClusterConnection {
@@ -213,10 +317,21 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::task::{JoinHandle, JoinSet};
 
+    #[derive(Default)]
+    struct RedirectBehavior {
+        target: AtomicU16,
+        moved: AtomicBool,
+        require_asking: AtomicBool,
+        asking_count: AtomicUsize,
+        requests: AtomicUsize,
+        stall_writes: AtomicBool,
+    }
+
     struct Node {
         port: u16,
         blackhole: Arc<AtomicBool>,
         task: JoinHandle<()>,
+        redirect: Arc<RedirectBehavior>,
     }
 
     impl Drop for Node {
@@ -249,13 +364,45 @@ mod tests {
         blackhole: Arc<AtomicBool>,
         discoveries: Arc<AtomicUsize>,
         writes: Arc<AtomicUsize>,
+        redirect: Arc<RedirectBehavior>,
     ) {
         let (reader, mut writer) = stream.into_split();
         let mut reader = BufReader::new(reader);
+        let mut asked = false;
         while let Some(args) = command(&mut reader).await {
             let name = args[0].to_ascii_uppercase();
+            let data_command = matches!(name.as_str(), "EXISTS" | "INCR" | "INCRBY");
+            if data_command {
+                redirect.requests.fetch_add(1, Ordering::SeqCst);
+                let target = redirect.target.load(Ordering::SeqCst);
+                if target != 0 {
+                    let kind = if redirect.moved.load(Ordering::SeqCst) {
+                        "MOVED"
+                    } else {
+                        "ASK"
+                    };
+                    if writer
+                        .write_all(format!("-{kind} 123 127.0.0.1:{target}\r\n").as_bytes())
+                        .await
+                        .is_err()
+                    {
+                        return;
+                    }
+                    continue;
+                }
+                if redirect.require_asking.load(Ordering::SeqCst) && !asked {
+                    if writer.write_all(b"-ERR ASKING required\r\n").await.is_err() {
+                        return;
+                    }
+                    continue;
+                }
+                asked = false;
+            }
             if name == "INCR" || name == "INCRBY" {
                 writes.fetch_add(1, Ordering::SeqCst);
+                if redirect.stall_writes.load(Ordering::SeqCst) {
+                    std::future::pending::<()>().await;
+                }
             }
             if blackhole.load(Ordering::SeqCst) {
                 std::future::pending::<()>().await;
@@ -267,6 +414,11 @@ mod tests {
                         "*1\r\n*3\r\n:0\r\n:16383\r\n*2\r\n$9\r\n127.0.0.1\r\n:{}\r\n",
                         topology.load(Ordering::SeqCst)
                     )
+                }
+                "ASKING" => {
+                    asked = true;
+                    redirect.asking_count.fetch_add(1, Ordering::SeqCst);
+                    "+OK\r\n".to_string()
                 }
                 "PING" => "+PONG\r\n".to_string(),
                 "GET" => "-WRONGTYPE test application error\r\n".to_string(),
@@ -294,13 +446,15 @@ mod tests {
         let port = listener.local_addr().expect("bound address").port();
         let blackhole = Arc::new(AtomicBool::new(false));
         let gate = blackhole.clone();
+        let redirect = Arc::new(RedirectBehavior::default());
+        let behavior = redirect.clone();
         let task = tokio::spawn(async move {
             let mut clients = JoinSet::new();
             loop {
                 tokio::select! {
                     accept = listener.accept() => {
                         let Ok((stream, _)) = accept else { break; };
-                        clients.spawn(serve(stream, topology.clone(), gate.clone(), discoveries.clone(), writes.clone()));
+                        clients.spawn(serve(stream, topology.clone(), gate.clone(), discoveries.clone(), writes.clone(), behavior.clone()));
                     }
                     _ = clients.join_next(), if !clients.is_empty() => {}
                 }
@@ -310,6 +464,7 @@ mod tests {
             port,
             blackhole,
             task,
+            redirect,
         }
     }
 
@@ -433,5 +588,89 @@ mod tests {
         );
         expect_that!(conn.shared.state.read().await.generation, eq(0));
         expect_that!(conn.shared.state.read().await.recovering, eq(false));
+    }
+    async fn redirect_fixture() -> (RecoveringClusterConnection, Node, Node, Arc<AtomicUsize>) {
+        let topology = Arc::new(AtomicU16::new(0));
+        let discoveries = Arc::new(AtomicUsize::new(0));
+        let writes = Arc::new(AtomicUsize::new(0));
+        let old = node(topology.clone(), discoveries.clone(), writes.clone()).await;
+        let target = node(topology.clone(), discoveries, writes.clone()).await;
+        topology.store(old.port, Ordering::SeqCst);
+        let conn = RecoveringClusterConnection::with_timeouts(
+            format!("redis://127.0.0.1:{}", old.port),
+            Duration::from_millis(500),
+            Duration::from_millis(500),
+        )
+        .await
+        .expect("initial cluster connection");
+        old.redirect.target.store(target.port, Ordering::SeqCst);
+        (conn, old, target, writes)
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn ask_follows_target_without_changing_slot_topology() {
+        let (mut conn, _old, target, writes) = redirect_fixture().await;
+        target.redirect.require_asking.store(true, Ordering::SeqCst);
+        for _ in 0..2 {
+            let result: i64 = conn
+                .incr("counter", 1)
+                .await
+                .expect("ASK followed with ASKING");
+            expect_that!(result, eq(1));
+        }
+        expect_that!(target.redirect.asking_count.load(Ordering::SeqCst), eq(2));
+        expect_that!(
+            writes.load(Ordering::SeqCst),
+            eq(2),
+            "execute each write exactly once"
+        );
+        expect_that!(
+            conn.shared.state.read().await.generation,
+            eq(0),
+            "ASK does not require reseeding"
+        );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn moved_follows_target_without_replaying_writes_on_old_node() {
+        let (mut conn, old, target, writes) = redirect_fixture().await;
+        old.redirect.moved.store(true, Ordering::SeqCst);
+        let _: i64 = conn.incr("counter", 1).await.expect("MOVED followed");
+        expect_that!(writes.load(Ordering::SeqCst), eq(1));
+        expect_that!(target.redirect.asking_count.load(Ordering::SeqCst), eq(0));
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn redirected_write_timeout_is_not_replayed() {
+        let (mut conn, _old, target, writes) = redirect_fixture().await;
+        target.redirect.require_asking.store(true, Ordering::SeqCst);
+        target.redirect.stall_writes.store(true, Ordering::SeqCst);
+        let result: RedisResult<i64> = conn.incr("counter", 1).await;
+        expect_that!(
+            result.expect_err("ambiguous write times out").is_timeout(),
+            eq(true)
+        );
+        expect_that!(writes.load(Ordering::SeqCst), eq(1));
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn redirect_loop_is_bounded() {
+        let (mut conn, old, target, writes) = redirect_fixture().await;
+        target.redirect.target.store(old.port, Ordering::SeqCst);
+        let result: RedisResult<i64> = conn.incr("counter", 1).await;
+        expect_that!(
+            result.expect_err("redirect budget exhausted").code(),
+            some(eq("ASK"))
+        );
+        expect_that!(
+            old.redirect.requests.load(Ordering::SeqCst)
+                + target.redirect.requests.load(Ordering::SeqCst),
+            eq(MAX_REDIRECTS + 1)
+        );
+        expect_that!(writes.load(Ordering::SeqCst), eq(0));
     }
 }

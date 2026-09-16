@@ -17,11 +17,11 @@
 //!   terminal frame: `data: [DONE]` on success, `event: error` on failure.
 
 use std::collections::{BTreeMap, HashMap};
+use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::db::valkey::ValkeyConnection;
 use axum::Extension;
 use axum::Json;
 use axum::extract::{Path, State};
@@ -485,7 +485,16 @@ pub async fn stream_async_task_handler(
         return Ok(async_stream_gone_response(task_id));
     }
 
-    let event_stream = async_task_event_stream(spawn_client, conn, key, task_id, replay);
+    let event_stream = async_task_event_stream(
+        move || {
+            let spawn_client = spawn_client.clone();
+            async move { spawn_client.get_task_result(task_id).await }
+        },
+        conn,
+        key,
+        task_id,
+        replay,
+    );
     Ok(
         Sse::new(event_stream.take_until(state.shutdown_token.clone().cancelled_owned()))
             .keep_alive(KeepAlive::new())
@@ -578,13 +587,18 @@ fn parse_stream_entry(entry: &StreamId) -> Result<StreamEntryAction, Error> {
 /// Build the SSE event stream: replay existing entries, then follow the Redis
 /// stream with non-blocking XREADs until a terminal marker arrives or the task
 /// reaches a terminal state in Postgres.
-fn async_task_event_stream(
-    spawn_client: Arc<SpawnClient>,
-    mut conn: ValkeyConnection,
+fn async_task_event_stream<C, P, F>(
+    mut poll_task: P,
+    mut conn: C,
     key: String,
     task_id: Uuid,
     replay: StreamRangeReply,
-) -> impl Stream<Item = Result<Event, Error>> + use<> {
+) -> impl Stream<Item = Result<Event, Error>> + use<C, P, F>
+where
+    C: redis::aio::ConnectionLike + Send + Sync + 'static,
+    P: FnMut() -> F + Send + 'static,
+    F: Future<Output = Result<TaskPollResult, SpawnError>> + Send,
+{
     async_stream::try_stream! {
         let mut last_id = "0-0".to_string();
         let mut finished = false;
@@ -610,13 +624,16 @@ fn async_task_event_stream(
                 .await
             {
                 Ok(reply) => reply,
-                // A network timeout still allows checking the durable task result.
-                Err(e) if e.is_timeout() => None,
-                Err(e) => Err(Error::new(ErrorDetails::InternalError {
-                    message: format!(
-                        "Failed to follow async inference event stream for task `{task_id}`: {e}"
-                    ),
-                }))?,
+                Err(e) => {
+                    // Once HTTP 200 has started, an Err stream item aborts the
+                    // response body. Give clients a protocol-level terminal
+                    // event instead, including during cluster recovery.
+                    tracing::warn!("Async inference stream interrupted for task `{task_id}`: {e}");
+                    yield Event::default().event("error").data(
+                        json!({"error": {"message": format!("Async event stream interrupted; fetch the complete result from GET /v1/async_tasks/{task_id}")}}).to_string()
+                    );
+                    break;
+                }
             };
 
             let Some(reply) = reply else {
@@ -625,7 +642,7 @@ fn async_task_event_stream(
                     continue;
                 }
                 next_status_check = Instant::now() + TASK_STATUS_POLL_INTERVAL;
-                let poll = spawn_client.get_task_result(task_id).await.map_err(|e| {
+                let poll = poll_task().await.map_err(|e| {
                     Error::new(ErrorDetails::InternalError {
                         message: format!("Failed to poll async inference task `{task_id}`: {e}"),
                     })
@@ -1102,6 +1119,64 @@ mod tests {
     use std::collections::HashMap;
     use tensorzero_auth::key::TensorZeroApiKey;
     use tensorzero_auth::postgres::KeyInfo;
+
+    struct UnavailableRedis(std::io::ErrorKind);
+
+    impl redis::aio::ConnectionLike for UnavailableRedis {
+        fn req_packed_command<'a>(
+            &'a mut self,
+            _: &'a redis::Cmd,
+        ) -> redis::RedisFuture<'a, redis::Value> {
+            Box::pin(
+                async move { Err(std::io::Error::new(self.0, "connection recovering").into()) },
+            )
+        }
+        fn req_packed_commands<'a>(
+            &'a mut self,
+            _: &'a redis::Pipeline,
+            _: usize,
+            _: usize,
+        ) -> redis::RedisFuture<'a, Vec<redis::Value>> {
+            Box::pin(async { panic!("stream follower should not issue pipelines") })
+        }
+        fn get_db(&self) -> i64 {
+            0
+        }
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn established_sse_ends_with_error_event_during_redis_recovery() {
+        for kind in [
+            std::io::ErrorKind::NotConnected,
+            std::io::ErrorKind::TimedOut,
+            std::io::ErrorKind::ConnectionReset,
+        ] {
+            let task_id = Uuid::now_v7();
+            let stream = async_task_event_stream(
+                || async { panic!("Redis interruption should not depend on a Postgres query") },
+                UnavailableRedis(kind),
+                "test-stream".to_owned(),
+                task_id,
+                StreamRangeReply {
+                    ids: vec![stream_entry(&[(STREAM_FIELD_DATA, "partial output")])],
+                },
+            );
+            let response = Sse::new(stream).into_response();
+            expect_that!(response.status(), eq(StatusCode::OK));
+            let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                .await
+                .expect("SSE body must finish without a transport error");
+            let body = std::str::from_utf8(&bytes).expect("UTF-8 SSE");
+            expect_that!(body, contains_substring("partial output"));
+            expect_that!(body, contains_substring("event: error"));
+            expect_that!(
+                body,
+                contains_substring(format!("/v1/async_tasks/{task_id}"))
+            );
+            expect_that!(body, not(contains_substring("[DONE]")));
+        }
+    }
 
     fn header_map(entries: &[(&str, &str)]) -> HeaderMap {
         let mut headers = HeaderMap::new();
