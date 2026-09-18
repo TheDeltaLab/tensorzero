@@ -84,14 +84,22 @@ lazy_static! {
     };
 }
 
-tokio::task_local! {
-    static VOLCENGINE_AUDIO_COMPAT: bool;
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum AudioCompatibility {
+    #[default]
+    OpenAI,
+    Alibaba,
+    Volcengine,
 }
 
-fn volcengine_audio_compat() -> bool {
-    VOLCENGINE_AUDIO_COMPAT
+tokio::task_local! {
+    static AUDIO_COMPATIBILITY: AudioCompatibility;
+}
+
+fn audio_compatibility() -> AudioCompatibility {
+    AUDIO_COMPATIBILITY
         .try_with(|value| *value)
-        .unwrap_or(false)
+        .unwrap_or_default()
 }
 
 const PROVIDER_NAME: &str = "OpenAI";
@@ -149,11 +157,10 @@ pub struct OpenAIProvider {
     provider_tools: Vec<Value>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     content_type_overrides: HashMap<String, ContentBlockType>,
-    /// Volcengine Ark wants `input_audio.url` for HTTP sources and always
-    /// includes `stream_options.include_usage` on streams (already the OpenAI default).
+    /// Provider-specific audio wire format; scoped to request preparation.
     #[serde(skip)]
     #[ts(skip)]
-    volcengine_audio_compat: bool,
+    audio_compatibility: AudioCompatibility,
     /// Set for endpoints whose Responses API does not honor structured-output
     /// constraints (e.g. Alibaba Bailian's `/compatible-mode/v1/responses`
     /// silently ignores `text.format`): an inbound Responses request that
@@ -190,6 +197,21 @@ impl OpenAIProvider {
             return Err(ErrorDetails::Config{message: "`provider_tools` are provided for an OpenAI provider but Responses API is not enabled. These will be ignored.".to_string()}.into());
         }
 
+        // DashScope accepts HTTP URLs or data URLs, not OpenAI's bare base64.
+        // Detect only official endpoints; custom Alibaba endpoints use the builder.
+        let audio_compatibility = if api_base
+            .as_ref()
+            .and_then(Url::host_str)
+            .is_some_and(|host| {
+                host == "dashscope.aliyuncs.com"
+                    || host.starts_with("dashscope-") && host.ends_with(".aliyuncs.com")
+                    || host.ends_with(".maas.aliyuncs.com")
+            }) {
+            AudioCompatibility::Alibaba
+        } else {
+            AudioCompatibility::OpenAI
+        };
+
         Ok(OpenAIProvider {
             model_name,
             api_base,
@@ -200,7 +222,7 @@ impl OpenAIProvider {
 
             provider_tools,
             content_type_overrides,
-            volcengine_audio_compat: false,
+            audio_compatibility,
             responses_structured_output_fallback_to_chat: false,
         })
     }
@@ -211,7 +233,12 @@ impl OpenAIProvider {
     }
 
     pub fn with_volcengine_audio_compat(mut self) -> Self {
-        self.volcengine_audio_compat = true;
+        self.audio_compatibility = AudioCompatibility::Volcengine;
+        self
+    }
+
+    pub fn with_alibaba_audio_compat(mut self) -> Self {
+        self.audio_compatibility = AudioCompatibility::Alibaba;
         self
     }
 
@@ -288,9 +315,9 @@ impl OpenAIProvider {
                 })
             })?),
             OpenAIAPIType::ChatCompletions => Ok(serde_json::to_value(
-                VOLCENGINE_AUDIO_COMPAT
+                AUDIO_COMPATIBILITY
                     .scope(
-                        self.volcengine_audio_compat,
+                        self.audio_compatibility,
                         OpenAIRequest::new(
                             &self.model_name,
                             request,
@@ -786,9 +813,9 @@ impl InferenceProvider for OpenAIProvider {
                     get_chat_url(self.api_base.as_ref().unwrap_or(&OPENAI_DEFAULT_BASE_URL))?;
 
                 let request_body = serde_json::to_value(
-                    VOLCENGINE_AUDIO_COMPAT
+                    AUDIO_COMPATIBILITY
                         .scope(
-                            self.volcengine_audio_compat,
+                            self.audio_compatibility,
                             OpenAIRequest::new(
                                 &self.model_name,
                                 request,
@@ -2233,22 +2260,26 @@ pub(super) async fn prepare_file_message(
                     filename: _,
                 },
             future: _,
-        } if volcengine_audio_compat()
+        } if matches!(
+            audio_compatibility(),
+            AudioCompatibility::Volcengine | AudioCompatibility::Alibaba
+        ) && matches!(url.scheme(), "http" | "https")
             && mime_type
                 .as_ref()
                 .is_some_and(|mime| mime.type_() == mime::AUDIO) =>
         {
-            // Some Synapse-compatible clients send `input_audio.data` as an HTTP URL.
-            // Forward it as `input_audio.url` so Volcengine Ark fetches the audio itself.
+            // Preserve remote audio URLs for providers that fetch audio themselves.
             let format = mime_type
                 .as_ref()
                 .and_then(|mime| mime_type_to_audio_format(mime).ok())
                 .map(ToOwned::to_owned);
             Ok(OpenAIContentBlock::InputAudio {
                 input_audio: OpenAIInputAudio {
-                    data: None,
+                    data: (audio_compatibility() == AudioCompatibility::Alibaba)
+                        .then(|| Cow::Owned(url.to_string())),
                     format: format.map(Cow::Owned),
-                    url: Some(Cow::Owned(url.to_string())),
+                    url: (audio_compatibility() == AudioCompatibility::Volcengine)
+                        .then(|| Cow::Owned(url.to_string())),
                 },
             })
         }
@@ -2291,7 +2322,7 @@ pub(super) async fn prepare_file_message(
                     })
                 }
                 ContentBlockType::InputAudio => {
-                    if volcengine_audio_compat()
+                    if audio_compatibility() == AudioCompatibility::Volcengine
                         && let Some(source_url) = file.source_url.as_ref()
                         && matches!(source_url.scheme(), "http" | "https")
                     {
@@ -2307,7 +2338,13 @@ pub(super) async fn prepare_file_message(
                     let format = mime_type_to_audio_format(&file.mime_type)?;
                     Ok(OpenAIContentBlock::InputAudio {
                         input_audio: OpenAIInputAudio {
-                            data: Some(Cow::Owned(data.clone())),
+                            data: Some(Cow::Owned(
+                                if audio_compatibility() == AudioCompatibility::Alibaba {
+                                    base64_url
+                                } else {
+                                    data.clone()
+                                },
+                            )),
                             format: Some(Cow::Owned(format.to_string())),
                             url: None,
                         },
@@ -3691,6 +3728,124 @@ mod tests {
         assert_eq!(value["input_audio"]["url"], "https://audio.test/a.wav");
         assert_eq!(value["input_audio"]["format"], "wav");
         assert!(value["input_audio"].get("data").is_none());
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn test_alibaba_audio_wire_format() {
+        for (endpoint, alibaba, volcengine) in [
+            (
+                "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                true,
+                false,
+            ),
+            (
+                "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+                true,
+                false,
+            ),
+            (
+                "https://workspace.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+                true,
+                false,
+            ),
+            ("https://api.openai.com/v1", false, false),
+            (
+                "https://dashscope.aliyuncs.com.example.com/v1",
+                false,
+                false,
+            ),
+            ("https://custom-alibaba.example.com/v1", true, false),
+            ("https://ark.cn-beijing.volces.com/api/v3", false, true),
+        ] {
+            let provider = OpenAIProvider::new(
+                "qwen3.5-omni-plus".to_owned(),
+                Some(Url::parse(endpoint).expect("valid test endpoint")),
+                OpenAICredentials::None,
+                OpenAIAPIType::ChatCompletions,
+                false,
+                vec![],
+                HashMap::new(),
+            )
+            .expect("provider should construct");
+            let provider = if volcengine {
+                provider.with_volcengine_audio_compat()
+            } else if endpoint.contains("custom-alibaba") {
+                provider.with_alibaba_audio_compat()
+            } else {
+                provider
+            };
+            for remote in [false, true] {
+                let data = BASE64_STANDARD.encode(b"audio fixture");
+                let resolved = ObjectStorageFile {
+                    file: ObjectStoragePointer {
+                        source_url: None,
+                        mime_type: "audio/mpeg".parse().expect("valid MIME"),
+                        storage_path: StoragePath {
+                            kind: StorageKind::Disabled,
+                            path: object_store::path::Path::from("audio.mp3"),
+                        },
+                        detail: None,
+                        filename: None,
+                    },
+                    data: data.clone(),
+                };
+                let url = "https://audio.example.com/fixture.mp3";
+                let file = if remote {
+                    LazyFile::Url {
+                        file_url: FileUrl {
+                            url: Url::parse(url).expect("valid fixture URL"),
+                            mime_type: Some("audio/mpeg".parse().expect("valid MIME")),
+                            detail: None,
+                            filename: None,
+                        },
+                        future: async move {
+                            assert!(
+                                !alibaba && !volcengine,
+                                "URL-compatible providers must not download remote audio"
+                            );
+                            Ok(resolved)
+                        }
+                        .boxed()
+                        .shared(),
+                    }
+                } else {
+                    LazyFile::Base64(PendingObjectStoreFile(resolved))
+                };
+                let request = ModelInferenceRequest {
+                    messages: vec![RequestMessage {
+                        role: Role::User,
+                        content: vec![ContentBlock::File(Box::new(file))],
+                    }],
+                    ..Default::default()
+                };
+                let body = provider
+                    .make_body_with_api_type(
+                        &request,
+                        "audio",
+                        "alibaba",
+                        OpenAIAPIType::ChatCompletions,
+                    )
+                    .await
+                    .expect("audio request should serialize");
+                let expected_data = if alibaba && remote {
+                    url.to_owned()
+                } else if alibaba {
+                    format!("data:audio/mpeg;base64,{data}")
+                } else {
+                    data
+                };
+                let expected_audio = if volcengine && remote {
+                    json!({"url": url, "format": "mp3"})
+                } else {
+                    json!({"data": expected_data, "format": "mp3"})
+                };
+                expect_that!(
+                    body["messages"][0]["content"][0],
+                    eq(&json!({"type": "input_audio", "input_audio": expected_audio}))
+                );
+            }
+        }
     }
 
     #[gtest]

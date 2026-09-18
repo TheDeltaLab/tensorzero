@@ -1882,7 +1882,8 @@ impl ShorthandModelConfig for ModelConfig {
                     "ALIBABA_API_KEY",
                     default_credentials,
                 )
-                .await?,
+                .await?
+                .with_alibaba_audio_compat(),
             ),
             "siliconflow" => ProviderConfig::OpenAI(
                 openai_compatible_shorthand_provider(
