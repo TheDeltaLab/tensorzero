@@ -13,6 +13,7 @@ use std::time::Duration;
 use redis::aio::ConnectionLike;
 use redis::cluster::ClusterClient;
 use redis::cluster_async::ClusterConnection;
+use redis::cluster_routing::Slot;
 use redis::{
     AsyncConnectionConfig, Client, Cmd, ConnectionAddr, ConnectionInfo, IntoConnectionInfo,
     Pipeline, RedisError, RedisResult, Value,
@@ -66,6 +67,17 @@ impl RecoveringClusterConnection {
             CONNECT_TIMEOUT,
         )
         .await
+    }
+
+    /// Build a cluster connection with a custom command timeout.
+    ///
+    /// The rate-limiting and cache hot path must fail fast (short budget)
+    /// rather than inherit the async inference stream's 10s budget.
+    pub(crate) async fn new_with_command_timeout(
+        url: String,
+        command_timeout: Duration,
+    ) -> RedisResult<Self> {
+        Self::with_timeouts(url, command_timeout, CONNECT_TIMEOUT).await
     }
 
     async fn with_timeouts(
@@ -200,6 +212,54 @@ impl RecoveringClusterConnection {
     }
 }
 
+/// Whether a command is safe to re-send to a MOVED/ASK redirect target: its
+/// effects must be atomic per shard. Single-key commands are always safe; a
+/// multi-key `FCALL`/`FCALL_RO` is safe when every key hashes to one slot.
+fn safe_to_redirect(cmd: &Cmd) -> bool {
+    let mut args = cmd.args_iter();
+    match args.next() {
+        Some(redis::Arg::Simple(name)) => match name.to_ascii_uppercase().as_slice() {
+            b"DEL" | b"EXISTS" => args.len() == 1,
+            b"XADD" | b"XRANGE" | b"XREAD" | b"EXPIRE" | b"GET" | b"INCR" | b"INCRBY" => true,
+            b"FCALL" | b"FCALL_RO" => fcall_keys_share_slot(cmd),
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether every key of an `FCALL`/`FCALL_RO` hashes to the same slot.
+/// Rate-limit keys carry a `{rate_limit}` hash tag, so the whole call is
+/// atomic per shard and safe to re-send after a redirect.
+fn fcall_keys_share_slot(cmd: &Cmd) -> bool {
+    // FCALL <fn> <numkeys> <key..> <argv..>
+    let mut args = cmd.args_iter();
+    let _ = args.next(); // FCALL
+    let _ = args.next(); // function name
+    let Some(numkeys) = args.next().and_then(arg_to_usize) else {
+        return false;
+    };
+    let keys: Vec<&[u8]> = args.take(numkeys).filter_map(arg_to_bytes).collect();
+    if keys.len() != numkeys {
+        return false;
+    }
+    let Some(first) = keys.first().map(|key| Slot::for_key(*key)) else {
+        return false;
+    };
+    keys.iter().all(|key| Slot::for_key(*key) == first)
+}
+
+fn arg_to_bytes(arg: redis::Arg<&[u8]>) -> Option<&[u8]> {
+    match arg {
+        redis::Arg::Simple(bytes) => Some(bytes),
+        _ => None,
+    }
+}
+
+fn arg_to_usize(arg: redis::Arg<&[u8]>) -> Option<usize> {
+    std::str::from_utf8(arg_to_bytes(arg)?).ok()?.parse().ok()
+}
+
 /// Only follow explicit redirects: Redis has rejected these commands without
 /// executing them. IO errors and timeouts never enter this retry loop.
 async fn command_with_redirects(
@@ -210,19 +270,10 @@ async fn command_with_redirects(
     command_timeout: Duration,
 ) -> RedisResult<Value> {
     let mut result = connection.req_packed_command(cmd).await;
-    // Limit manual redirects to the single-node commands used by async
-    // streams. A multi-node command may already have written on other shards,
-    // so its aggregate error does not authorize replaying the whole command.
-    let mut args = cmd.args_iter();
-    let safe_to_redirect = match args.next() {
-        Some(redis::Arg::Simple(name)) => match name.to_ascii_uppercase().as_slice() {
-            b"DEL" | b"EXISTS" => args.len() == 1,
-            b"XADD" | b"XRANGE" | b"XREAD" | b"EXPIRE" | b"GET" | b"INCR" | b"INCRBY" => true,
-            _ => false,
-        },
-        _ => false,
-    };
-    if !safe_to_redirect {
+    // Limit manual redirects to commands that are atomic per shard. A
+    // multi-node command may already have written on other shards, so its
+    // aggregate error does not authorize replaying the whole command.
+    if !safe_to_redirect(cmd) {
         return result;
     }
     for _ in 0..MAX_REDIRECTS {

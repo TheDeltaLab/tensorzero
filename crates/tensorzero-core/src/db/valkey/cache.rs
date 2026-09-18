@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use async_trait::async_trait;
 use redis::aio::ConnectionLike;
 use serde::{Deserialize, Serialize};
@@ -5,6 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::cache::CacheKey;
 use crate::db::cache::CacheQueries;
 use crate::error::{Error, ErrorDetails};
+
+use super::ValkeyConnection;
 
 const CACHE_KEY_PREFIX: &str = "tensorzero_cache:";
 
@@ -102,12 +105,12 @@ async fn execute_cache_write<C: ConnectionLike>(
 /// Valkey-backed cache client that pairs a connection with a TTL config.
 #[derive(Clone)]
 pub struct ValkeyCacheClient {
-    connection: Box<redis::aio::ConnectionManager>,
+    connection: Box<ValkeyConnection>,
     cache_ttl_s: u64,
 }
 
 impl ValkeyCacheClient {
-    pub fn new(connection: Box<redis::aio::ConnectionManager>, cache_ttl_s: u64) -> Self {
+    pub fn new(connection: Box<ValkeyConnection>, cache_ttl_s: u64) -> Self {
         Self {
             connection,
             cache_ttl_s,

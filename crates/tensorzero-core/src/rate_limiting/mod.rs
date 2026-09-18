@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
 use sqlx::postgres::types::PgInterval;
@@ -506,8 +507,12 @@ impl ActiveRateLimit {
             resource: self.limit.resource,
             scope_key: &self.scope_key,
         };
+        let json = serde_json::to_string(&key)?;
 
-        Ok(ActiveRateLimitKey(serde_json::to_string(&key)?))
+        // Hash-tag every rate-limit key so a multi-key `FCALL` (one entry per
+        // active limit) resolves to a single cluster slot, avoiding CROSSSLOT on
+        // cluster-mode Valkey (Azure). The tag is part of the stored key.
+        Ok(ActiveRateLimitKey(format!("{{rate_limit}}{json}")))
     }
 }
 
@@ -1731,6 +1736,12 @@ mod tests {
 
         // Test key content - should contain resource and scope info
         let key_str = key.to_string();
+        // Every rate-limit key carries a `{rate_limit}` hash tag so a multi-key
+        // FCALL resolves to one cluster slot (never CROSSSLOTs on Azure).
+        assert!(
+            key_str.starts_with("{rate_limit}"),
+            "rate-limit key must be hash-tagged, got: {key_str}"
+        );
         assert!(key_str.contains("token") || key_str.contains("Token"));
         assert!(key_str.contains("TagConcrete") || key_str.contains("tag_concrete"));
         assert!(key_str.contains("user_id"));

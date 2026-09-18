@@ -114,16 +114,23 @@ use crate::error::{DelayedError, ErrorDetails};
 /// never hold the multiplexed connection ahead of writers or health checks.
 const ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Response timeout for the rate-limiting and cache hot path.
+///
+/// Matches the redis-rs default (500ms) so rate limiting fails fast instead of
+/// stalling the request when Valkey is unreachable. The async inference stream
+/// keeps a larger budget ([`ASYNC_INFERENCE_STREAM_RESPONSE_TIMEOUT`]).
+const RATE_LIMITING_RESPONSE_TIMEOUT: Duration = Duration::from_millis(500);
+
 /// Connection info for Valkey (Redis-compatible) rate limiting backend.
 ///
-/// Uses `ConnectionManager` which provides:
-/// - Automatic reconnection on connection loss
-/// - Connection multiplexing for efficient async operations
-/// - No connection pool management needed
+/// The rate-limiting and cache connection is cluster-aware when the URL has a
+/// `#cluster` fragment (Azure Managed Valkey runs in cluster mode), so MOVED
+/// redirects are followed instead of surfacing as errors. The async inference
+/// event stream keeps a dedicated connection with a larger timeout.
 #[derive(Clone)]
 pub enum ValkeyConnectionInfo {
     Enabled {
-        connection: Box<ConnectionManager>,
+        connection: Box<ValkeyConnection>,
         /// Dedicated connection for the async inference event stream (submit
         /// endpoints, worker event publication, and
         /// `GET /v1/async_tasks/{task_id}/stream`), configured with
@@ -144,11 +151,29 @@ impl ValkeyConnectionInfo {
             })
         })?;
 
-        let mut connection = ConnectionManager::new(client.clone()).await.map_err(|e| {
-            DelayedError::new(ErrorDetails::ValkeyConnection {
-                message: format!("Failed to connect to Valkey: {e}"),
-            })
-        })?;
+        // Rate limiting and the model cache share this connection. It is
+        // cluster-aware when the URL has `#cluster`, so MOVED redirects are
+        // followed instead of surfacing as errors.
+        let mut connection = if cluster {
+            ValkeyConnection::Cluster(
+                RecoveringClusterConnection::new_with_command_timeout(
+                    cleaned_valkey_url.to_string(),
+                    RATE_LIMITING_RESPONSE_TIMEOUT,
+                )
+                .await
+                .map_err(|e| {
+                    DelayedError::new(ErrorDetails::ValkeyConnection {
+                        message: format!("Failed to connect to Valkey cluster: {e}"),
+                    })
+                })?,
+            )
+        } else {
+            ValkeyConnection::Single(ConnectionManager::new(client.clone()).await.map_err(|e| {
+                DelayedError::new(ErrorDetails::ValkeyConnection {
+                    message: format!("Failed to connect to Valkey: {e}"),
+                })
+            })?)
+        };
 
         let async_inference_stream_connection = if cluster {
             ValkeyConnection::Cluster(
@@ -191,17 +216,33 @@ impl ValkeyConnectionInfo {
     /// Unlike `new()`, this does NOT load rate limiting Lua functions
     /// or run key migrations, since the cache instance doesn't need them.
     pub async fn new_cache_only(valkey_url: &str) -> Result<Self, DelayedError> {
-        let client = Client::open(valkey_url).map_err(|e| {
+        let (cleaned_valkey_url, cluster) = strip_cluster_fragment(valkey_url);
+        let client = Client::open(cleaned_valkey_url.as_str()).map_err(|e| {
             DelayedError::new(ErrorDetails::ValkeyConnection {
                 message: format!("Failed to create Valkey client: {e}"),
             })
         })?;
 
-        let connection = ConnectionManager::new(client).await.map_err(|e| {
-            DelayedError::new(ErrorDetails::ValkeyConnection {
-                message: format!("Failed to connect to Valkey: {e}"),
-            })
-        })?;
+        let connection = if cluster {
+            ValkeyConnection::Cluster(
+                RecoveringClusterConnection::new_with_command_timeout(
+                    cleaned_valkey_url,
+                    RATE_LIMITING_RESPONSE_TIMEOUT,
+                )
+                .await
+                .map_err(|e| {
+                    DelayedError::new(ErrorDetails::ValkeyConnection {
+                        message: format!("Failed to connect to Valkey cluster: {e}"),
+                    })
+                })?,
+            )
+        } else {
+            ValkeyConnection::Single(ConnectionManager::new(client).await.map_err(|e| {
+                DelayedError::new(ErrorDetails::ValkeyConnection {
+                    message: format!("Failed to connect to Valkey: {e}"),
+                })
+            })?)
+        };
 
         Ok(Self::Enabled {
             connection: Box::new(connection),
@@ -213,7 +254,7 @@ impl ValkeyConnectionInfo {
         Self::Disabled
     }
 
-    pub fn get_connection(&self) -> Option<&ConnectionManager> {
+    pub fn get_connection(&self) -> Option<&ValkeyConnection> {
         match self {
             Self::Enabled { connection, .. } => Some(connection),
             Self::Disabled => None,
@@ -268,7 +309,7 @@ impl ValkeyConnectionInfo {
 
     /// Load the rate limiting function library into Valkey.
     /// This should be called once at startup.
-    async fn load_function_library(connection: &mut ConnectionManager) -> Result<(), DelayedError> {
+    async fn load_function_library(connection: &mut ValkeyConnection) -> Result<(), DelayedError> {
         let lua_code = include_str!("lua/tensorzero_ratelimit.lua");
 
         // Use FUNCTION LOAD with REPLACE to load/update the library
@@ -290,7 +331,7 @@ impl ValkeyConnectionInfo {
     /// Keys are only copied if the new key doesn't already exist.
     /// The migration runs entirely in Lua for efficiency (single round-trip).
     async fn migrate_old_ratelimit_keys(
-        connection: &mut ConnectionManager,
+        connection: &mut ValkeyConnection,
     ) -> Result<(), DelayedError> {
         // Call the Lua function to perform the migration atomically on the server
         let _result: String = redis::cmd("FCALL")
