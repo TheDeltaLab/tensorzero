@@ -461,6 +461,7 @@ impl<'a> From<&'a OpenAICustomTool> for OpenAIResponsesCustomTool<'a> {
 pub enum OpenAIResponsesToolChoice {
     String(OpenAIResponsesToolChoiceString),
     AllowedTools(OpenAIResponsesAllowedTools),
+    Specific(OpenAIResponsesToolReference),
 }
 
 #[derive(Serialize, Debug)]
@@ -549,6 +550,13 @@ impl<'a> OpenAIResponsesRequest<'a> {
 
         // For now, we don't allow selecting any provider tools
         let tool_choice = request.tool_config.as_ref().map(|tool_config| {
+            // Preserve forced selection even when a dynamic tool allowlist is present.
+            // Some Responses-compatible providers reject the `allowed_tools` format.
+            if let ToolChoice::Specific(name) = &tool_config.tool_choice {
+                return OpenAIResponsesToolChoice::Specific(
+                    OpenAIResponsesToolReference::Function { name: name.clone() },
+                );
+            }
             // If we have allowed_tools, create an AllowedTools variant
             if let Some(allowed_tool_names) = &allowed_tools_list {
                 let mode = match &tool_config.tool_choice {
@@ -580,15 +588,11 @@ impl<'a> OpenAIResponsesRequest<'a> {
                     ToolChoice::Required => {
                         OpenAIResponsesToolChoice::String(OpenAIResponsesToolChoiceString::Required)
                     }
-                    ToolChoice::Specific(tool_name) => {
-                        OpenAIResponsesToolChoice::AllowedTools(OpenAIResponsesAllowedTools {
-                            mode: OpenAIResponsesAllowedToolsMode::Required,
-                            tools: vec![OpenAIResponsesToolReference::Function {
-                                name: tool_name.clone(),
-                            }],
-                            r#type: StaticTypeAllowedTools,
-                        })
-                    }
+                    ToolChoice::Specific(tool_name) => OpenAIResponsesToolChoice::Specific(
+                        OpenAIResponsesToolReference::Function {
+                            name: tool_name.clone(),
+                        },
+                    ),
                 }
             }
         });
@@ -1926,11 +1930,13 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::providers::test_helpers::MULTI_TOOL_CONFIG;
     use googletest::assert_that;
     use googletest::expect_that;
     use googletest::gtest;
     use googletest::matchers::{container_eq, eq, none, some};
     use std::time::Duration;
+    use tensorzero_inference_types::{AllowedTools, AllowedToolsChoice, ProviderToolCallConfig};
     use uuid::Uuid;
 
     use tensorzero_inference_types::{ModelInferenceRequest, RequestMessage};
@@ -3985,7 +3991,7 @@ mod tests {
                     }
                 }
             }
-            OpenAIResponsesToolChoice::String(_) => panic!("Expected AllowedTools variant"),
+            _ => panic!("Expected AllowedTools variant"),
         }
     }
 
@@ -4045,7 +4051,7 @@ mod tests {
                 assert!(tool_names.contains(&"query_articles".to_string()));
                 assert!(tool_names.contains(&"get_temperature".to_string()));
             }
-            OpenAIResponsesToolChoice::String(_) => panic!("Expected AllowedTools variant"),
+            _ => panic!("Expected AllowedTools variant"),
         }
     }
 
@@ -4096,7 +4102,7 @@ mod tests {
                     OpenAIResponsesAllowedToolsMode::Auto
                 ));
             }
-            OpenAIResponsesToolChoice::String(_) => panic!("Expected AllowedTools variant"),
+            _ => panic!("Expected AllowedTools variant"),
         }
     }
 
@@ -4143,56 +4149,40 @@ mod tests {
         }
     }
 
+    #[gtest]
     #[tokio::test]
-    async fn test_openai_responses_request_with_specific_tool_without_allowed_tools() {
-        use crate::providers::test_helpers::WEATHER_TOOL_CONFIG;
-        use std::borrow::Cow;
-        use tensorzero_inference_types::ProviderToolCallConfig;
-
-        // Test that Specific tool choice without allowed_tools converts to AllowedTools with mode Required
-        let tool_config = WEATHER_TOOL_CONFIG.clone();
-        // This has ToolChoice::Specific and no explicit allowed_tools
-
-        let request = ModelInferenceRequest {
-            messages: vec![RequestMessage {
-                role: Role::User,
-                content: vec!["test".to_string().into()],
-            }],
-            tool_config: Some(Cow::Owned(ProviderToolCallConfig::from(&tool_config))),
-            ..Default::default()
-        };
-
-        let openai_responses_request = OpenAIResponsesRequest::new(
-            "gpt-4o-2024-08-06",
-            PROVIDER_TYPE,
-            &request,
-            false,
-            &[],
-            "test_model",
-            "openai",
-        )
-        .await
-        .unwrap();
-
-        assert!(openai_responses_request.tool_choice.is_some());
-        let tool_choice = openai_responses_request.tool_choice.unwrap();
-        // Specific without allowed_tools should convert to AllowedTools with mode Required
-        match tool_choice {
-            OpenAIResponsesToolChoice::AllowedTools(allowed_tools) => {
-                assert!(matches!(
-                    allowed_tools.mode,
-                    OpenAIResponsesAllowedToolsMode::Required
-                ));
-                assert_eq!(allowed_tools.tools.len(), 1);
-                match &allowed_tools.tools[0] {
-                    OpenAIResponsesToolReference::Function { name } => {
-                        assert_eq!(name, "get_temperature");
-                    }
-                }
+    async fn test_openai_responses_request_preserves_specific_tool_choice() {
+        for explicit_allowed_tools in [false, true] {
+            let mut tool_config = MULTI_TOOL_CONFIG.clone();
+            tool_config.tool_choice = ToolChoice::Specific("get_temperature".to_owned());
+            if explicit_allowed_tools {
+                tool_config.allowed_tools = AllowedTools {
+                    tools: vec!["get_temperature".to_owned()],
+                    choice: AllowedToolsChoice::Explicit,
+                };
             }
-            OpenAIResponsesToolChoice::String(_) => {
-                panic!("Expected AllowedTools variant, got {tool_choice:?}")
-            }
+            let request = ModelInferenceRequest {
+                tool_config: Some(Cow::Owned(ProviderToolCallConfig::from(&tool_config))),
+                ..Default::default()
+            };
+            let converted = OpenAIResponsesRequest::new(
+                "deepseek-v4-flash",
+                DEEPSEEK_PROVIDER_TYPE,
+                &request,
+                false,
+                &[],
+                "test_model",
+                "deepseek",
+            )
+            .await
+            .expect("specific tool request should convert");
+            let serialized =
+                serde_json::to_value(&converted).expect("provider request should serialize");
+            expect_that!(
+                serialized["tool_choice"],
+                eq(&serde_json::json!({"type": "function", "name": "get_temperature"}))
+            );
+            expect_that!(converted.tools.len(), eq(2));
         }
     }
 
@@ -4237,7 +4227,7 @@ mod tests {
             OpenAIResponsesToolChoice::AllowedTools(allowed_tools) => {
                 assert_eq!(allowed_tools.tools.len(), 0);
             }
-            OpenAIResponsesToolChoice::String(_) => {
+            _ => {
                 panic!("Expected AllowedTools variant with empty list")
             }
         }
