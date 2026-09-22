@@ -201,6 +201,8 @@ fn synapse_routes_register_v1_and_anthropic_aliases() {
         "/v1/responses",
         "/v1/rerank",
         "/v1/reranks",
+        "/v1/systemone",
+        "/openai/v1/systemone",
         "/v1/messages",
         "/openai/v1/messages",
         "/anthropic/v1/messages",

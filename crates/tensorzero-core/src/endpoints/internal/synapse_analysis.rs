@@ -11,7 +11,7 @@ use sqlx::QueryBuilder;
 use tracing::instrument;
 
 use crate::error::{Error, ErrorDetails};
-use crate::function::{EMBEDDING_FUNCTION_NAME, RERANK_FUNCTION_NAME};
+use crate::function::{EMBEDDING_FUNCTION_NAME, RERANK_FUNCTION_NAME, SYSTEMONE_FUNCTION_NAME};
 use crate::observability_tags::API_KEY_PUBLIC_ID_TAG;
 use crate::utils::gateway::{AppState, AppStateData};
 
@@ -354,6 +354,17 @@ fn require_pool(app_state: &AppStateData) -> Result<&sqlx::PgPool, Error> {
         })
 }
 
+fn exclude_non_chat_functions(query_builder: &mut QueryBuilder<sqlx::Postgres>) {
+    for function_name in [
+        EMBEDDING_FUNCTION_NAME,
+        RERANK_FUNCTION_NAME,
+        SYSTEMONE_FUNCTION_NAME,
+    ] {
+        query_builder.push(" AND i.function_name <> ");
+        query_builder.push_bind(function_name);
+    }
+}
+
 fn push_from_and_filters(
     query_builder: &mut QueryBuilder<sqlx::Postgres>,
     params: &AnalysisParams,
@@ -372,12 +383,7 @@ fn push_from_and_filters(
     query_builder.push(" AND mi.created_at < ");
     query_builder.push_bind(params.to);
     match params.kind {
-        AnalysisKind::Chat => {
-            query_builder.push(" AND i.function_name <> ");
-            query_builder.push_bind(EMBEDDING_FUNCTION_NAME);
-            query_builder.push(" AND i.function_name <> ");
-            query_builder.push_bind(RERANK_FUNCTION_NAME);
-        }
+        AnalysisKind::Chat => exclude_non_chat_functions(query_builder),
         AnalysisKind::Embedding => {
             query_builder.push(" AND i.function_name = ");
             query_builder.push_bind(EMBEDDING_FUNCTION_NAME);
@@ -487,12 +493,7 @@ async fn fetch_tag_keys(
     query_builder.push(" AND i.created_at < ");
     query_builder.push_bind(params.to);
     match params.kind {
-        AnalysisKind::Chat => {
-            query_builder.push(" AND i.function_name <> ");
-            query_builder.push_bind(EMBEDDING_FUNCTION_NAME);
-            query_builder.push(" AND i.function_name <> ");
-            query_builder.push_bind(RERANK_FUNCTION_NAME);
-        }
+        AnalysisKind::Chat => exclude_non_chat_functions(&mut query_builder),
         AnalysisKind::Embedding => {
             query_builder.push(" AND i.function_name = ");
             query_builder.push_bind(EMBEDDING_FUNCTION_NAME);

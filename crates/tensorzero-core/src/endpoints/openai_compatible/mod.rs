@@ -18,6 +18,7 @@ pub mod rerank;
 pub mod responses;
 pub mod stream_aggregator;
 pub mod synapse;
+pub mod systemone;
 pub mod types;
 
 pub use error::{OpenAICompatibleError, OpenAIStructuredJson};
@@ -32,6 +33,7 @@ use completions::completions_handler;
 use embeddings::embeddings_handler;
 use rerank::rerank_handler;
 use responses::responses_handler;
+use systemone::systemone_handler;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -67,6 +69,8 @@ pub fn build_openai_compatible_routes() -> RouteHandlers {
             ("/v1/rerank", post(rerank_handler)),
             ("/openai/v1/reranks", post(rerank_handler)),
             ("/v1/reranks", post(rerank_handler)),
+            ("/openai/v1/systemone", post(systemone_handler)),
+            ("/v1/systemone", post(systemone_handler)),
             ("/openai/v1/messages", post(messages_handler)),
             ("/v1/messages", post(messages_handler)),
             ("/anthropic/v1/messages", post(messages_handler)),
@@ -143,6 +147,8 @@ mod tests {
             "/v1/rerank",
             "/openai/v1/reranks",
             "/v1/reranks",
+            "/openai/v1/systemone",
+            "/v1/systemone",
             "/openai/v1/messages",
             "/v1/messages",
             "/anthropic/v1/messages",

@@ -62,3 +62,17 @@ targets = [{ provider = "mimo", model = "mimo-v2.6-pro" }]
 [model_aliases.mimo-v2.6-flash]
 task = "chat"
 targets = [{ provider = "mimo", model = "mimo-v2.6-flash" }]
+
+# TypeSafe Jev via OpenRouter System One (`POST /v1/systemone`).
+# Bare `jev` / `jev-latest` also resolve without this table.
+[model_aliases.jev]
+task = "systemone"
+targets = [{ provider = "openrouter", model = "~typesafe/jev-latest" }]
+
+[model_aliases."jev-latest"]
+task = "systemone"
+targets = [{ provider = "openrouter", model = "~typesafe/jev-latest" }]
+
+[model_aliases."jev-1.13"]
+task = "systemone"
+targets = [{ provider = "openrouter", model = "typesafe/jev-1.13" }]

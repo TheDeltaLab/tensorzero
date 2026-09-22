@@ -10,13 +10,17 @@ use crate::function::EMBEDDING_FUNCTION_NAME;
 use crate::function::FunctionConfig;
 use crate::function::FunctionConfigChat;
 use crate::function::RERANK_FUNCTION_NAME;
+use crate::function::SYSTEMONE_FUNCTION_NAME;
 
 /// Synthetic function names used when there is no `[functions]` entry
-/// (direct chat, embeddings, rerank).
+/// (direct chat, embeddings, rerank, System One).
 fn is_synthetic_function_name(function_name: &str) -> bool {
     matches!(
         function_name,
-        DEFAULT_FUNCTION_NAME | EMBEDDING_FUNCTION_NAME | RERANK_FUNCTION_NAME
+        DEFAULT_FUNCTION_NAME
+            | EMBEDDING_FUNCTION_NAME
+            | RERANK_FUNCTION_NAME
+            | SYSTEMONE_FUNCTION_NAME
     )
 }
 
