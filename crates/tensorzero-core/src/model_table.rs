@@ -23,7 +23,7 @@ lazy_static! {
         prefixes.push("tensorzero::".to_string());
         // OpenAI-compatible Chinese providers are shorthand-only (they reuse
         // OpenAIProvider) so they are not UninitializedProviderConfig variants.
-        for extra in ["alibaba::", "siliconflow::", "volcengine::"] {
+        for extra in ["alibaba::", "mimo::", "siliconflow::", "volcengine::"] {
             if !prefixes.iter().any(|prefix| prefix == extra) {
                 prefixes.push(extra.to_string());
             }

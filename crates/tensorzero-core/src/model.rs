@@ -1652,6 +1652,7 @@ pub use tensorzero_inference_types::credentials::{
 /// Default API roots for OpenAI-compatible Chinese providers.
 /// TensorZero appends `/v1` (except Volcengine Ark, which already includes `/api/v3`).
 pub(crate) const ALIBABA_DEFAULT_API_ROOT: &str = "https://dashscope.aliyuncs.com/compatible-mode";
+pub(crate) const MIMO_DEFAULT_API_ROOT: &str = "https://api.xiaomimimo.com";
 pub(crate) const SILICONFLOW_DEFAULT_API_ROOT: &str = "https://api.siliconflow.cn";
 pub(crate) const VOLCENGINE_DEFAULT_API_ROOT: &str = "https://ark.cn-beijing.volces.com/api/v3";
 
@@ -1733,6 +1734,7 @@ pub const SHORTHAND_MODEL_PREFIXES: &[&str] = &[
     "together::",
     "xai::",
     "alibaba::",
+    "mimo::",
     "siliconflow::",
     "volcengine::",
     "dummy::",
@@ -1884,6 +1886,22 @@ impl ShorthandModelConfig for ModelConfig {
                 )
                 .await?
                 .with_alibaba_audio_compat(),
+            ),
+            // MiMo Responses accepts `text.format` `json_object` and rejects
+            // `json_schema` (HTTP 400). Chat completions enforce
+            // `response_format.json_schema`, so strict schema requests fall
+            // back to chat. JSON mode stays on the Responses API.
+            "mimo" => ProviderConfig::OpenAI(
+                openai_compatible_shorthand_provider(
+                    model_name,
+                    "MIMO_BASE_URL",
+                    MIMO_DEFAULT_API_ROOT,
+                    true,
+                    "MIMO_API_KEY",
+                    default_credentials,
+                )
+                .await?
+                .with_responses_json_schema_fallback_to_chat(),
             ),
             "siliconflow" => ProviderConfig::OpenAI(
                 openai_compatible_shorthand_provider(
@@ -3286,12 +3304,16 @@ mod tests {
             volcengine.as_str(),
             "https://ark.cn-beijing.volces.com/api/v3"
         );
+        let mimo =
+            openai_compatible_shorthand_api_base_from_raw(MIMO_DEFAULT_API_ROOT, true).unwrap();
+        assert_eq!(mimo.as_str(), "https://api.xiaomimimo.com/v1");
     }
 
     #[tokio::test]
     async fn test_china_provider_shorthand_validate_and_get() {
         let table = ModelTable::default();
         table.validate("alibaba::qwen-plus").unwrap();
+        table.validate("mimo::mimo-v2.6-pro").unwrap();
         table.validate("siliconflow::Qwen/Qwen2-7B").unwrap();
         table.validate("volcengine::ep-xxx").unwrap();
 
@@ -3305,6 +3327,23 @@ mod tests {
             model.providers["alibaba"].config,
             crate::model::ProviderConfig::OpenAI(_)
         ));
+
+        let mimo = with_skip_credential_validation(async {
+            table.get("mimo::mimo-v2.6-flash", None).await
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(mimo.routing.as_slice(), &[std::sync::Arc::from("mimo")]);
+        match &mimo.providers["mimo"].config {
+            crate::model::ProviderConfig::OpenAI(provider) => {
+                assert!(
+                    provider.responses_json_schema_fallback_to_chat(),
+                    "mimo shorthand should keep json_object on Responses and send json_schema over chat"
+                );
+            }
+            other => panic!("expected OpenAI provider, got {other:?}"),
+        }
     }
 
     #[test]
@@ -3797,6 +3836,7 @@ mod tests {
                 provider_tools: vec![],
                 content_type_overrides: HashMap::new(),
                 responses_structured_output_fallback_to_chat: false,
+                responses_json_schema_fallback_to_chat: false,
             };
             let stored = StoredProviderConfig::from(&original);
             let restored: UninitializedProviderConfig =
@@ -3835,6 +3875,7 @@ mod tests {
                     provider_tools: vec![],
                     content_type_overrides: HashMap::new(),
                     responses_structured_output_fallback_to_chat: false,
+                    responses_json_schema_fallback_to_chat: false,
                 },
                 extra_body: Some(ExtraBodyConfig {
                     data: vec![ExtraBodyReplacement {

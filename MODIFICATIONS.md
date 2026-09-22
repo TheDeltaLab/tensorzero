@@ -35,7 +35,7 @@ See `NOTICE` for the overall attribution statement.
 - `crates/gateway/Dockerfile` — Default container bind address `0.0.0.0:3720`; cargo registry/target BuildKit cache mounts for faster rebuilds; `CARGO_BUILD_JOBS=4` default to cap parallelism on the shared CI runner; `PROFILE` defaults to `release` (no LTO) so ad-hoc local builds stay fast — CI passes an explicit `PROFILE` for thin/fat LTO images (Delta-AI fork).
 - `ui/Dockerfile` — Default UI listen port `3721`; cargo registry/target BuildKit cache mounts in the tensorzero-node build stage; `CARGO_BUILD_JOBS=4` default to cap parallelism on the shared CI runner (Delta-AI fork).
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.model_aliases.toml` — E2E alias failover fixtures (Delta-AI fork).
-- `examples/guides/synapse-compat/config/tensorzero.toml` — Synapse-compatible `[model_aliases]` for public providers (Delta-AI fork).
+- `examples/guides/synapse-compat/config/tensorzero.toml` — Synapse-compatible `[model_aliases]` for public providers, including Xiaomi MiMo (Delta-AI fork).
 - `crates/Cargo.lock` — Workspace lockfile for Synapse-compat auth (bcrypt) and HTTP timeout deps (Delta-AI fork).
 - `.github/workflows/modification-notice-check.yml` — Exclude generated ts-rs bindings from header notice check (Delta-AI fork).
 - `crates/Cargo.toml` — Added chrono-tz for peak/off-peak cost windows (Delta-AI fork).

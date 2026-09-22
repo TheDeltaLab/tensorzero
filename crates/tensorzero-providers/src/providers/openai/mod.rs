@@ -169,6 +169,14 @@ pub struct OpenAIProvider {
     #[serde(skip)]
     #[ts(skip)]
     responses_structured_output_fallback_to_chat: bool,
+    /// Set for endpoints whose Responses API accepts `text.format` `json_object`
+    /// but rejects `json_schema` (Xiaomi MiMo returns
+    /// `responses_feature_not_supported`). Strict schema requests go out over
+    /// chat completions, where `response_format.json_schema` is enforced.
+    /// `json_object` stays on the Responses API.
+    #[serde(skip)]
+    #[ts(skip)]
+    responses_json_schema_fallback_to_chat: bool,
 }
 
 impl OpenAIProvider {
@@ -224,12 +232,22 @@ impl OpenAIProvider {
             content_type_overrides,
             audio_compatibility,
             responses_structured_output_fallback_to_chat: false,
+            responses_json_schema_fallback_to_chat: false,
         })
     }
 
     pub fn with_responses_structured_output_fallback_to_chat(mut self) -> Self {
         self.responses_structured_output_fallback_to_chat = true;
         self
+    }
+
+    pub fn with_responses_json_schema_fallback_to_chat(mut self) -> Self {
+        self.responses_json_schema_fallback_to_chat = true;
+        self
+    }
+
+    pub fn responses_json_schema_fallback_to_chat(&self) -> bool {
+        self.responses_json_schema_fallback_to_chat
     }
 
     pub fn with_volcengine_audio_compat(mut self) -> Self {
@@ -257,30 +275,49 @@ impl OpenAIProvider {
     /// `/openai/v1/chat/completions` stays chat outbound; otherwise the
     /// provider's configured `api_type` is used.
     fn effective_api_type(&self, request: &ModelInferenceRequest) -> OpenAIAPIType {
-        match request.requested_api_type {
-            Some(ApiType::Responses) => {
-                // Endpoints flagged via `responses_structured_output_fallback_to_chat`
-                // (e.g. Alibaba Bailian) silently ignore `text.format` on their
-                // Responses API, so structured-output requests go out over chat
-                // completions, where `response_format` is enforced.
-                if self.responses_structured_output_fallback_to_chat
-                    && (request.json_mode != ModelInferenceRequestJsonMode::Off
-                        || request.output_schema.is_some())
-                {
-                    tracing::warn!(
-                        provider_model_name = %self.model_name,
-                        "This provider's Responses API does not support structured output \
-                         (json_schema / text.format is ignored); downgrading the outbound \
-                         request to chat completions where response_format is honored \
-                         (config: responses_structured_output_fallback_to_chat)"
-                    );
-                    return OpenAIAPIType::ChatCompletions;
-                }
-                OpenAIAPIType::Responses
-            }
+        let api_type = match request.requested_api_type {
+            Some(ApiType::Responses) => OpenAIAPIType::Responses,
             Some(ApiType::ChatCompletions) => OpenAIAPIType::ChatCompletions,
             _ => self.api_type,
+        };
+        if api_type != OpenAIAPIType::Responses {
+            return api_type;
         }
+        // Endpoints flagged via `responses_structured_output_fallback_to_chat`
+        // (e.g. Alibaba Bailian) silently ignore `text.format` on their
+        // Responses API, so any structured-output request goes out over chat
+        // completions, where `response_format` is enforced.
+        if self.responses_structured_output_fallback_to_chat
+            && (request.json_mode != ModelInferenceRequestJsonMode::Off
+                || request.output_schema.is_some())
+        {
+            tracing::warn!(
+                provider_model_name = %self.model_name,
+                "This provider's Responses API does not support structured output \
+                 (json_schema / text.format is ignored); downgrading the outbound \
+                 request to chat completions where response_format is honored \
+                 (config: responses_structured_output_fallback_to_chat)"
+            );
+            return OpenAIAPIType::ChatCompletions;
+        }
+        // Endpoints flagged via `responses_json_schema_fallback_to_chat`
+        // (Xiaomi MiMo) accept `text.format` `json_object` but reject
+        // `json_schema` with HTTP 400. Only strict schema requests move to
+        // chat completions; JSON mode stays on the Responses API.
+        if self.responses_json_schema_fallback_to_chat
+            && request.json_mode == ModelInferenceRequestJsonMode::Strict
+            && request.output_schema.is_some()
+        {
+            tracing::warn!(
+                provider_model_name = %self.model_name,
+                "This provider's Responses API rejects text.format json_schema \
+                 (only text and json_object are allowed); downgrading the outbound \
+                 request to chat completions where response_format json_schema is \
+                 enforced (config: responses_json_schema_fallback_to_chat)"
+            );
+            return OpenAIAPIType::ChatCompletions;
+        }
+        OpenAIAPIType::Responses
     }
 
     /// Builds the outbound body for `api_type`. `InferenceProvider::infer`
@@ -3987,6 +4024,74 @@ mod tests {
                 eq(OpenAIAPIType::Responses)
             );
         }
+    }
+
+    #[gtest]
+    fn test_effective_api_type_json_schema_fallback_keeps_json_object_on_responses() {
+        let provider = OpenAIProvider::new(
+            "mimo-v2.6-pro".to_string(),
+            None,
+            OpenAICredentials::None,
+            OpenAIAPIType::ChatCompletions,
+            false,
+            vec![],
+            HashMap::new(),
+        )
+        .expect("provider should construct")
+        .with_responses_json_schema_fallback_to_chat();
+        let schema = json!({
+            "type": "object",
+            "properties": {"city": {"type": "string"}},
+            "required": ["city"],
+            "additionalProperties": false
+        });
+
+        // JSON mode stays on Responses: MiMo honors text.format json_object.
+        let json_object = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::Responses),
+            json_mode: ModelInferenceRequestJsonMode::On,
+            ..Default::default()
+        };
+        expect_that!(
+            provider.effective_api_type(&json_object),
+            eq(OpenAIAPIType::Responses)
+        );
+
+        // Strict mode without a schema is sent as json_object, which MiMo accepts.
+        let strict_without_schema = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::Responses),
+            json_mode: ModelInferenceRequestJsonMode::Strict,
+            ..Default::default()
+        };
+        expect_that!(
+            provider.effective_api_type(&strict_without_schema),
+            eq(OpenAIAPIType::Responses)
+        );
+
+        // Strict mode with a schema would be text.format json_schema, which
+        // MiMo rejects. Send it over chat completions instead.
+        let strict_with_schema = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::Responses),
+            json_mode: ModelInferenceRequestJsonMode::Strict,
+            output_schema: Some(&schema),
+            ..Default::default()
+        };
+        expect_that!(
+            provider.effective_api_type(&strict_with_schema),
+            eq(OpenAIAPIType::ChatCompletions)
+        );
+
+        // Inbound chat completions stay on chat even when a schema is present.
+        let inbound_chat = ModelInferenceRequest {
+            requested_api_type: Some(ApiType::ChatCompletions),
+            json_mode: ModelInferenceRequestJsonMode::Strict,
+            output_schema: Some(&schema),
+            ..Default::default()
+        };
+        expect_that!(
+            provider.effective_api_type(&inbound_chat),
+            eq(OpenAIAPIType::ChatCompletions)
+        );
     }
 
     #[test]

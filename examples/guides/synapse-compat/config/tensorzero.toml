@@ -4,7 +4,7 @@
 # These aliases are public model names only. Do not add Merlin / cluster
 # internals here. Override api bases with env vars:
 #   ALIBABA_BASE_URL, ALIBABA_RERANK_BASE_URL, SILICONFLOW_BASE_URL,
-#   VOLCENGINE_BASE_URL, DEEPSEEK_BASE_URL, OPENROUTER_BASE_URL
+#   VOLCENGINE_BASE_URL, DEEPSEEK_BASE_URL, MIMO_BASE_URL, OPENROUTER_BASE_URL
 
 [gateway.observability]
 enabled = true
@@ -51,3 +51,14 @@ targets = [{ provider = "alibaba", model = "glm-5.2" }]
 [model_aliases."kimi-k2.6"]
 task = "chat"
 targets = [{ provider = "alibaba", model = "kimi-k2.6" }]
+
+# Xiaomi MiMo (OpenAI-compatible). Shorthand `mimo::mimo-v2.6-pro` also works
+# with MIMO_API_KEY. Responses `text.format` supports json_object only;
+# json_schema is sent over chat completions by the mimo shorthand.
+[model_aliases.mimo-v2.6-pro]
+task = "chat"
+targets = [{ provider = "mimo", model = "mimo-v2.6-pro" }]
+
+[model_aliases.mimo-v2.6-flash]
+task = "chat"
+targets = [{ provider = "mimo", model = "mimo-v2.6-flash" }]

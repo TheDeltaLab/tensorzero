@@ -262,6 +262,7 @@ impl TryFrom<StoredProviderConfig> for UninitializedProviderConfig {
                 provider_tools,
                 content_type_overrides,
                 responses_structured_output_fallback_to_chat,
+                responses_json_schema_fallback_to_chat,
             } => Ok(Self::OpenAI {
                 model_name,
                 api_base: parse_optional_url(api_base, "api_base")?,
@@ -276,6 +277,8 @@ impl TryFrom<StoredProviderConfig> for UninitializedProviderConfig {
                     .collect(),
                 responses_structured_output_fallback_to_chat:
                     responses_structured_output_fallback_to_chat.unwrap_or_default(),
+                responses_json_schema_fallback_to_chat: responses_json_schema_fallback_to_chat
+                    .unwrap_or_default(),
             }),
             StoredProviderConfig::OpenRouter {
                 model_name,
@@ -647,6 +650,11 @@ pub enum UninitializedProviderConfig {
         /// Skipped when false so config snapshot hashes are unchanged.
         #[serde(default, skip_serializing_if = "is_false")]
         responses_structured_output_fallback_to_chat: bool,
+        /// Delta-AI fork: Xiaomi MiMo's Responses API accepts `json_object`
+        /// but rejects `json_schema`. Strict schema requests go out over chat
+        /// completions. Skipped when false so config snapshot hashes are unchanged.
+        #[serde(default, skip_serializing_if = "is_false")]
+        responses_json_schema_fallback_to_chat: bool,
     },
     OpenRouter {
         model_name: String,
@@ -866,6 +874,7 @@ impl From<&UninitializedProviderConfig> for StoredProviderConfig {
                 provider_tools,
                 content_type_overrides,
                 responses_structured_output_fallback_to_chat,
+                responses_json_schema_fallback_to_chat,
             } => StoredProviderConfig::OpenAI {
                 model_name: model_name.clone(),
                 api_base: api_base.as_ref().map(ToString::to_string),
@@ -889,6 +898,11 @@ impl From<&UninitializedProviderConfig> for StoredProviderConfig {
                     } else {
                         None
                     },
+                responses_json_schema_fallback_to_chat: if *responses_json_schema_fallback_to_chat {
+                    Some(true)
+                } else {
+                    None
+                },
             },
             UninitializedProviderConfig::OpenRouter {
                 model_name,
@@ -1270,6 +1284,7 @@ impl UninitializedProviderConfig {
                 provider_tools,
                 content_type_overrides,
                 responses_structured_output_fallback_to_chat,
+                responses_json_schema_fallback_to_chat,
             } => {
                 // Use mock API base for testing if set, otherwise defer to the API base set
                 let api_base = get_mock_provider_api_base("openai").or(api_base);
@@ -1290,6 +1305,9 @@ impl UninitializedProviderConfig {
                 )?;
                 if responses_structured_output_fallback_to_chat {
                     provider = provider.with_responses_structured_output_fallback_to_chat();
+                }
+                if responses_json_schema_fallback_to_chat {
+                    provider = provider.with_responses_json_schema_fallback_to_chat();
                 }
                 ProviderConfig::OpenAI(provider)
             }
