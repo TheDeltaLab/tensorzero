@@ -52,6 +52,7 @@ export default [
   route("playground", "routes/playground/route.tsx"),
   route("playground/embeddings", "routes/playground/embeddings.tsx"),
   route("playground/rerank", "routes/playground/rerank.tsx"),
+  route("playground/jev", "routes/playground/jev.tsx"),
 
   // Observability
   ...prefix("observability", [

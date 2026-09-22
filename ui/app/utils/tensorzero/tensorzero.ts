@@ -173,6 +173,22 @@ export class TensorZeroClient extends BaseTensorZeroClient {
     return response.json();
   }
 
+  async systemOne(request: {
+    model: string;
+    state: string | Record<string, unknown> | unknown[];
+    questions: Record<string, unknown>;
+  }): Promise<unknown> {
+    const response = await this.fetch("/v1/systemone", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return response.json();
+  }
+
   async rerank(request: {
     model: string;
     query: string;
