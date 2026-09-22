@@ -118,6 +118,12 @@ export type UninitializedModelProvider = {
        * Skipped when false so config snapshot hashes are unchanged.
        */
       responses_structured_output_fallback_to_chat: boolean;
+      /**
+       * Delta-AI fork: Xiaomi MiMo's Responses API accepts `json_object`
+       * but rejects `json_schema`. Strict schema requests go out over chat
+       * completions. Skipped when false so config snapshot hashes are unchanged.
+       */
+      responses_json_schema_fallback_to_chat: boolean;
     }
   | { type: "openrouter"; model_name: string; api_key_location: string | null }
   | {

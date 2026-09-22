@@ -139,6 +139,10 @@ pub enum StoredProviderConfig {
         /// requests with a response format to chat completions outbound.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         responses_structured_output_fallback_to_chat: Option<bool>,
+        /// Delta-AI fork: Xiaomi MiMo accepts Responses `json_object` but
+        /// rejects `json_schema`. Strict schema requests go out over chat.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        responses_json_schema_fallback_to_chat: Option<bool>,
     },
     OpenRouter {
         model_name: String,

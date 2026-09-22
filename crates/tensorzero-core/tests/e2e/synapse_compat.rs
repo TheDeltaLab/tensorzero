@@ -213,7 +213,7 @@ fn synapse_routes_register_v1_and_anthropic_aliases() {
 
 #[gtest]
 fn synapse_domestic_shorthands_are_registered() {
-    for prefix in ["alibaba::", "siliconflow::", "volcengine::"] {
+    for prefix in ["alibaba::", "mimo::", "siliconflow::", "volcengine::"] {
         expect_that!(SHORTHAND_MODEL_PREFIXES.contains(&prefix), eq(true));
     }
     expect_that!(

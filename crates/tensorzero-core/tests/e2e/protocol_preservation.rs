@@ -149,6 +149,16 @@ api_base = "http://{addr}/v1/"
 api_key_location = "none"
 model_name = "gpt-4.1-mini"
 responses_structured_output_fallback_to_chat = true
+
+[models.proto_mock_json_schema_fallback]
+routing = ["mock-openai-json-schema-fallback"]
+
+[models.proto_mock_json_schema_fallback.providers.mock-openai-json-schema-fallback]
+type = "openai"
+api_base = "http://{addr}/v1/"
+api_key_location = "none"
+model_name = "mimo-v2.6-pro"
+responses_json_schema_fallback_to_chat = true
 "#
     )
 }
@@ -394,6 +404,81 @@ async fn flagged_provider_downgrades_structured_responses_to_chat() {
     .await;
     assert_that!(status, eq(StatusCode::OK));
     expect_that!(recorded_bodies(&recorded, "/v1/responses").len(), eq(1));
+}
+
+#[gtest]
+#[tokio::test(flavor = "multi_thread")]
+async fn json_schema_fallback_keeps_json_object_on_responses() {
+    let (addr, recorded, _shutdown) = make_recording_openai_server().await;
+    let client =
+        tensorzero::test_helpers::make_embedded_gateway_with_config(&gateway_config(&addr)).await;
+    let state = client.get_app_state_data().unwrap().load_latest();
+
+    // MiMo-style flag: Responses `json_schema` is rejected upstream, so a
+    // strict schema goes out over chat completions with `response_format`.
+    let (status, body) = json_of(
+        responses_handler(
+            State(state.clone()),
+            None,
+            HeaderMap::new(),
+            OpenAIStructuredJson(
+                serde_json::from_value(json!({
+                    "model": "proto_mock_json_schema_fallback",
+                    "input": unique_input("Hello"),
+                    "text": {"format": {"type": "json_schema", "name": "person", "schema": {
+                        "type": "object",
+                        "properties": {"name": {"type": "string"}},
+                        "required": ["name"],
+                        "additionalProperties": false
+                    }, "strict": true}}
+                }))
+                .unwrap(),
+            ),
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_that!(status, eq(StatusCode::OK));
+    expect_that!(body["object"].as_str(), some(eq("response")));
+    let chat_bodies = recorded_bodies(&recorded, "/v1/chat/completions");
+    assert_that!(chat_bodies.len(), eq(1));
+    expect_that!(
+        chat_bodies[0]["response_format"]["type"].as_str(),
+        some(eq("json_schema"))
+    );
+    expect_that!(recorded_bodies(&recorded, "/v1/responses").len(), eq(0));
+
+    // `json_object` is honored on the Responses API, so it stays there.
+    let (status, _) = json_of(
+        responses_handler(
+            State(state.clone()),
+            None,
+            HeaderMap::new(),
+            OpenAIStructuredJson(
+                serde_json::from_value(json!({
+                    "model": "proto_mock_json_schema_fallback",
+                    "input": unique_input("Hello"),
+                    "text": {"format": {"type": "json_object"}}
+                }))
+                .unwrap(),
+            ),
+        )
+        .await
+        .unwrap(),
+    )
+    .await;
+    assert_that!(status, eq(StatusCode::OK));
+    let responses_bodies = recorded_bodies(&recorded, "/v1/responses");
+    assert_that!(responses_bodies.len(), eq(1));
+    expect_that!(
+        responses_bodies[0]["text"]["format"]["type"].as_str(),
+        some(eq("json_object"))
+    );
+    expect_that!(
+        recorded_bodies(&recorded, "/v1/chat/completions").len(),
+        eq(1)
+    );
 }
 
 #[gtest]
