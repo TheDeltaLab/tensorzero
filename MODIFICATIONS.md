@@ -10,6 +10,8 @@ See `NOTICE` for the overall attribution statement.
 
 ## Modified non-source-code files
 
+- `docs/integrations/model-providers/openrouter.mdx` — Document `POST /v1/systemone` for TypeSafe Jev via OpenRouter (Delta-AI fork).
+- `examples/guides/synapse-compat/config/tensorzero.toml` — Alias `jev`, `jev-latest`, and `jev-1.13` to OpenRouter System One models (Delta-AI fork).
 - `crates/tensorzero-providers/Cargo.toml` — Made the AWS SDK deps and `google-cloud-auth` optional behind new `aws` / `google` cargo features, **off by default**; removed the dead `pyo3` feature/dep (Python SDK stripped in #60) (Delta-AI fork).
 - `crates/tensorzero-core/Cargo.toml` — Forward `aws` / `google` provider features to `tensorzero-providers` (off by default); removed the now-unused direct AWS/GCP dependencies, swapped `aws_smithy_types::base64` helpers for the `base64` crate, and removed the dead `pyo3` feature/dep plus the dangling `pyo3_helpers` module declaration (Delta-AI fork).
 - `crates/gateway/Cargo.toml` — `aws` / `google` features (off by default) forwarded through `tensorzero-core`, `async-inference`, and `tensorzero-client`; plain `cargo build -p gateway` is now lean (Delta-AI fork).

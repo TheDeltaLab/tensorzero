@@ -51,3 +51,17 @@ targets = [{ provider = "alibaba", model = "glm-5.2" }]
 [model_aliases."kimi-k2.6"]
 task = "chat"
 targets = [{ provider = "alibaba", model = "kimi-k2.6" }]
+
+# TypeSafe Jev via OpenRouter System One (`POST /v1/systemone`).
+# Bare `jev` / `jev-latest` also resolve without this table.
+[model_aliases.jev]
+task = "systemone"
+targets = [{ provider = "openrouter", model = "~typesafe/jev-latest" }]
+
+[model_aliases."jev-latest"]
+task = "systemone"
+targets = [{ provider = "openrouter", model = "~typesafe/jev-latest" }]
+
+[model_aliases."jev-1.13"]
+task = "systemone"
+targets = [{ provider = "openrouter", model = "typesafe/jev-1.13" }]

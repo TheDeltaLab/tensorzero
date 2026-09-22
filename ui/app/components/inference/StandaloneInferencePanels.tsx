@@ -16,6 +16,7 @@ import {
   formatRelevanceScore,
   parseStandaloneOutput,
   rerankInputView,
+  systemoneInputView,
   type ObservabilityInferenceKind,
 } from "~/utils/observability/standaloneInference";
 
@@ -78,6 +79,16 @@ export function StandaloneInputElement({
     );
   }
 
+  if (kind === "systemone") {
+    const { state, questions } = systemoneInputView(input);
+    return (
+      <Panel testId="systemone-input">
+        <LabeledText label="State" text={state || "(empty state)"} />
+        <LabeledText label="Questions" text={questions || "(no questions)"} />
+      </Panel>
+    );
+  }
+
   const { query, documents } = rerankInputView(input);
   return (
     <Panel testId="rerank-input">
@@ -127,6 +138,32 @@ export function StandaloneOutputElement({
             inference for the provider raw request and response.
           </p>
         </div>
+      </Panel>
+    );
+  }
+
+  if (kind === "systemone") {
+    const view =
+      parsed?.kind === "systemone"
+        ? parsed
+        : {
+            model: undefined,
+            summary: "No System One output",
+            answers: "",
+          };
+    return (
+      <Panel testId="systemone-output">
+        <div className="text-fg-primary text-sm font-medium">
+          {view.summary}
+          {view.model ? ` · ${view.model}` : ""}
+        </div>
+        {view.answers ? (
+          <pre className="bg-bg-secondary text-fg-primary max-h-96 overflow-auto rounded-sm p-3 font-mono text-xs whitespace-pre-wrap">
+            {view.answers}
+          </pre>
+        ) : (
+          <EmptyMessage message="No answers" />
+        )}
       </Panel>
     );
   }

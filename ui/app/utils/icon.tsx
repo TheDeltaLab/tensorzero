@@ -47,6 +47,12 @@ export function getFunctionTypeIcon(functionType: string): IconConfig {
         iconBg: "bg-bg-type-rerank",
         label: "Function type: Rerank",
       };
+    case "systemone":
+      return {
+        icon: <TypeJson className="text-fg-type-json h-4 w-4" />,
+        iconBg: "bg-bg-type-json",
+        label: "Function type: System One",
+      };
     default:
       return {
         icon: <QuestionMark className="text-neutral-600" />,

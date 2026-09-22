@@ -132,3 +132,25 @@ curl -X POST http://localhost:3000/openai/v1/chat/completions \
 
 The OpenRouter model provider supports generating embeddings.
 You can find a [complete code example on GitHub](https://github.com/tensorzero/tensorzero/tree/main/examples/guides/embeddings/providers/openai).
+
+### Jev (System One)
+
+[Jev](https://openrouter.ai/typesafe/jev-1.13) is TypeSafe's System One model. It does not generate chat text. Send a `state` and typed `questions`; OpenRouter returns a yes/no probability (`noul`), a `choice`, or a `score`.
+
+TensorZero forwards `POST /v1/systemone` (and `/openai/v1/systemone`) to OpenRouter's System One API. Set `OPENROUTER_API_KEY`. Bare names `jev` and `jev-latest` route to `~typesafe/jev-latest`. `jev-1.13` routes to `typesafe/jev-1.13`.
+
+```bash
+curl -X POST http://localhost:3000/v1/systemone \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TENSORZERO_API_KEY" \
+  -d '{
+    "model": "jev-1.13",
+    "state": "I was charged twice for my subscription.",
+    "questions": {
+      "refund": {
+        "type": "noul",
+        "instructions": "Is the customer asking for money back?"
+      }
+    }
+  }'
+```

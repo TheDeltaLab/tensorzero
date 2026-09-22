@@ -9,8 +9,8 @@
 //!
 //! Rows still live in `chat_inferences` (Postgres/ClickHouse only distinguish
 //! chat vs json). We use dedicated function names (`tensorzero::embedding` /
-//! `tensorzero::rerank`) and structured output JSON so the UI can show them as
-//! their own types instead of chat completions.
+//! `tensorzero::rerank` / `tensorzero::systemone`) and structured output JSON
+//! so the UI can show them as their own types instead of chat completions.
 //!
 //! Embedding vectors are not stored in `chat_inferences.output` (too large);
 //! we keep count/dimensions there and on the model-inference row's
@@ -35,7 +35,9 @@ use crate::db::model_inferences::ModelInferenceQueries;
 use crate::db::postgres::PostgresConnectionInfo;
 use crate::embeddings::{Embedding, EmbeddingInput};
 use crate::endpoints::inference::InferenceParams;
-use crate::function::{DEFAULT_FUNCTION_NAME, EMBEDDING_FUNCTION_NAME, RERANK_FUNCTION_NAME};
+use crate::function::{
+    DEFAULT_FUNCTION_NAME, EMBEDDING_FUNCTION_NAME, RERANK_FUNCTION_NAME, SYSTEMONE_FUNCTION_NAME,
+};
 use crate::inference::types::extra_body::UnfilteredInferenceExtraBody;
 use crate::inference::types::{
     ChatInferenceDatabaseInsert, ContentBlockChatOutput, ContentBlockOutput, Latency,
@@ -47,6 +49,7 @@ use crate::observability_tags::apply_usage_observability_tags;
 pub(crate) const ENDPOINT_TAG: &str = "tensorzero::endpoint";
 pub(crate) const EMBEDDINGS_ENDPOINT: &str = "embeddings";
 pub(crate) const RERANK_ENDPOINT: &str = "rerank";
+pub(crate) const SYSTEMONE_ENDPOINT: &str = "systemone";
 
 #[derive(Clone, Debug)]
 pub(crate) enum StandaloneInput {
@@ -56,6 +59,10 @@ pub(crate) enum StandaloneInput {
     Rerank {
         query: String,
         documents: Vec<String>,
+    },
+    SystemOne {
+        state: String,
+        questions: String,
     },
 }
 
@@ -232,6 +239,7 @@ pub(crate) fn function_name_for_endpoint(endpoint: &str) -> &'static str {
     match endpoint {
         EMBEDDINGS_ENDPOINT => EMBEDDING_FUNCTION_NAME,
         RERANK_ENDPOINT => RERANK_FUNCTION_NAME,
+        SYSTEMONE_ENDPOINT => SYSTEMONE_FUNCTION_NAME,
         _ => DEFAULT_FUNCTION_NAME,
     }
 }
@@ -286,6 +294,23 @@ pub(crate) fn rerank_output_payload(body: &Value) -> String {
     .to_string()
 }
 
+pub(crate) fn systemone_output_payload(body: &Value) -> String {
+    let answers = body.get("answers").cloned().unwrap_or_else(|| json!({}));
+    let count = answers.as_object().map(serde_json::Map::len).unwrap_or(0);
+    let summary = if count == 1 {
+        "Answered 1 question".to_string()
+    } else {
+        format!("Answered {count} questions")
+    };
+    json!({
+        "kind": "systemone",
+        "model": body.get("model").cloned().unwrap_or(Value::Null),
+        "answers": answers,
+        "summary": summary,
+    })
+    .to_string()
+}
+
 pub(crate) fn usage_from_json(value: &Value) -> Usage {
     let Some(usage) = value.get("usage") else {
         return Usage::default();
@@ -336,6 +361,15 @@ fn stored_input_from_standalone(input: &StandaloneInput) -> StoredInput {
                 })
                 .collect(),
         },
+        StandaloneInput::SystemOne { state, questions } => StoredInput {
+            system: Some(System::Text(questions.clone())),
+            messages: vec![StoredInputMessage {
+                role: Role::User,
+                content: vec![StoredInputMessageContent::Text(Text {
+                    text: state.clone(),
+                })],
+            }],
+        },
     }
 }
 
@@ -347,6 +381,9 @@ fn request_messages_from_standalone(input: &StandaloneInput) -> Vec<RequestMessa
             texts.push(query.clone());
             texts.extend(documents.iter().cloned());
             texts_to_request_messages(&texts)
+        }
+        StandaloneInput::SystemOne { state, questions } => {
+            texts_to_request_messages(&[state.clone(), questions.clone()])
         }
     }
 }
@@ -484,5 +521,24 @@ mod tests {
             function_name_for_endpoint(RERANK_ENDPOINT),
             RERANK_FUNCTION_NAME
         );
+        expect_eq!(
+            function_name_for_endpoint(SYSTEMONE_ENDPOINT),
+            SYSTEMONE_FUNCTION_NAME
+        );
+    }
+
+    #[gtest]
+    fn systemone_output_payload_keeps_answers() {
+        let payload = systemone_output_payload(&json!({
+            "model": "typesafe/jev-1.13",
+            "answers": {
+                "refund": { "type": "noul", "noul": 0.98 }
+            }
+        }));
+        let value: Value =
+            serde_json::from_str(&payload).expect("systemone payload should be JSON");
+        expect_eq!(value["kind"], "systemone");
+        expect_eq!(value["answers"]["refund"]["noul"], 0.98);
+        expect_eq!(value["summary"], "Answered 1 question");
     }
 }
