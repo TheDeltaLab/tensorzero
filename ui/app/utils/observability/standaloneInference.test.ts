@@ -5,7 +5,11 @@ import type {
   StoredChatInference,
   StoredInference,
 } from "~/types/tensorzero";
-import { EMBEDDING_FUNCTION, RERANK_FUNCTION } from "~/utils/constants";
+import {
+  EMBEDDING_FUNCTION,
+  RERANK_FUNCTION,
+  SYSTEMONE_FUNCTION,
+} from "~/utils/constants";
 import {
   embeddingInputTexts,
   formatRelevanceScore,
@@ -13,6 +17,7 @@ import {
   observabilityInferenceKind,
   parseStandaloneOutput,
   rerankInputView,
+  systemoneInputView,
 } from "./standaloneInference";
 
 function chatInference(
@@ -169,6 +174,60 @@ describe("input views", () => {
     expect(rerankInputView(input)).toEqual({
       query: "capital",
       documents: ["Paris"],
+    });
+  });
+});
+
+describe("systemone", () => {
+  test("uses the systemone function name and endpoint tag", () => {
+    expect(
+      observabilityInferenceKind({ functionName: SYSTEMONE_FUNCTION }),
+    ).toBe("systemone");
+    expect(
+      observabilityInferenceKind({
+        functionName: "tensorzero::default",
+        tags: { "tensorzero::endpoint": "systemone" },
+      }),
+    ).toBe("systemone");
+  });
+
+  test("parses answers and reads state from the user message", () => {
+    const inference = chatInference({
+      function_name: SYSTEMONE_FUNCTION,
+      input: {
+        system: '{"refund":{"type":"noul"}}',
+        messages: [
+          {
+            role: "user",
+            content: [{ type: "text", text: "charged twice" }],
+          },
+        ],
+      },
+      output: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            kind: "systemone",
+            model: "typesafe/jev-1.13",
+            answers: { refund: { type: "noul", noul: 0.98 } },
+            summary: "Answered 1 question",
+          }),
+        },
+      ],
+    });
+    expect(parseStandaloneOutput(inference, "systemone")).toEqual({
+      kind: "systemone",
+      model: "typesafe/jev-1.13",
+      summary: "Answered 1 question",
+      answers: JSON.stringify(
+        { refund: { type: "noul", noul: 0.98 } },
+        null,
+        2,
+      ),
+    });
+    expect(systemoneInputView(inference.input)).toEqual({
+      state: "charged twice",
+      questions: '{"refund":{"type":"noul"}}',
     });
   });
 });

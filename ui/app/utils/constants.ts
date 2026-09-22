@@ -2,3 +2,4 @@
 export const DEFAULT_FUNCTION = "tensorzero::default";
 export const EMBEDDING_FUNCTION = "tensorzero::embedding";
 export const RERANK_FUNCTION = "tensorzero::rerank";
+export const SYSTEMONE_FUNCTION = "tensorzero::systemone";

@@ -10,6 +10,7 @@ import {
   DEFAULT_FUNCTION,
   EMBEDDING_FUNCTION,
   RERANK_FUNCTION,
+  SYSTEMONE_FUNCTION,
 } from "~/utils/constants";
 
 export const ENDPOINT_TAG = "tensorzero::endpoint";
@@ -18,7 +19,8 @@ export type ObservabilityInferenceKind =
   | "chat"
   | "json"
   | "embedding"
-  | "rerank";
+  | "rerank"
+  | "systemone";
 
 type InferenceInput = Input | StoredInput;
 
@@ -33,6 +35,9 @@ export function observabilityInferenceKind(args: {
   }
   if (endpoint === "rerank" || args.functionName === RERANK_FUNCTION) {
     return "rerank";
+  }
+  if (endpoint === "systemone" || args.functionName === SYSTEMONE_FUNCTION) {
+    return "systemone";
   }
   if (args.functionType === "json") {
     return "json";
@@ -53,12 +58,14 @@ export function inferenceKindFromStored(
 export function isStandaloneInferenceKind(
   kind: ObservabilityInferenceKind,
 ): boolean {
-  return kind === "embedding" || kind === "rerank";
+  return kind === "embedding" || kind === "rerank" || kind === "systemone";
 }
 
 export function isStandaloneFunctionName(functionName: string): boolean {
   return (
-    functionName === EMBEDDING_FUNCTION || functionName === RERANK_FUNCTION
+    functionName === EMBEDDING_FUNCTION ||
+    functionName === RERANK_FUNCTION ||
+    functionName === SYSTEMONE_FUNCTION
   );
 }
 
@@ -69,6 +76,7 @@ export function variantTypeForKind(
 ): string {
   if (kind === "embedding") return "embedding";
   if (kind === "rerank") return "rerank";
+  if (kind === "systemone") return "systemone";
   if (configuredType) return configuredType;
   return functionName === DEFAULT_FUNCTION ? "chat_completion" : "unknown";
 }
@@ -92,7 +100,17 @@ export type RerankOutputView = {
   summary: string;
 };
 
-export type StandaloneOutputView = EmbeddingOutputView | RerankOutputView;
+export type SystemOneOutputView = {
+  kind: "systemone";
+  model?: string;
+  summary: string;
+  answers: string;
+};
+
+export type StandaloneOutputView =
+  | EmbeddingOutputView
+  | RerankOutputView
+  | SystemOneOutputView;
 
 function firstOutputText(
   output: StoredInference["output"] | undefined,
@@ -205,6 +223,16 @@ export function parseStandaloneOutput(
     };
   }
 
+  if (kind === "systemone") {
+    const answers = json?.answers;
+    return {
+      kind: "systemone",
+      model: asString(json?.model),
+      summary: asString(json?.summary) ?? text,
+      answers: answers === undefined ? text : JSON.stringify(answers, null, 2),
+    };
+  }
+
   return undefined;
 }
 
@@ -241,6 +269,17 @@ const DOCUMENT_PREFIX = /^Document \d+:\s*/;
 
 export function embeddingInputTexts(input?: InferenceInput): string[] {
   return messageTexts(input);
+}
+
+export function systemoneInputView(input?: InferenceInput): {
+  state: string;
+  questions: string;
+} {
+  const texts = messageTexts(input);
+  return {
+    state: texts[0] ?? "",
+    questions: systemText(input?.system) ?? texts[1] ?? "",
+  };
 }
 
 export function rerankInputView(input?: InferenceInput): {

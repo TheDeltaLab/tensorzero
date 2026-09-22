@@ -51,6 +51,8 @@ pub const DEFAULT_FUNCTION_NAME: &str = "tensorzero::default";
 pub const EMBEDDING_FUNCTION_NAME: &str = "tensorzero::embedding";
 /// Observability-only function names for standalone `/v1/rerank` calls.
 pub const RERANK_FUNCTION_NAME: &str = "tensorzero::rerank";
+/// Observability-only function name for standalone `/v1/systemone` calls (Jev).
+pub const SYSTEMONE_FUNCTION_NAME: &str = "tensorzero::systemone";
 
 #[derive(ts_rs::TS, Debug, Serialize)]
 #[ts(export)]
@@ -2805,5 +2807,4 @@ mod tests {
             _ => panic!("Expected Thought block"),
         }
     }
-
 }
