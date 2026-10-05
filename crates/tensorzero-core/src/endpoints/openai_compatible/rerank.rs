@@ -4,13 +4,22 @@
 //! Callers send `{ model, query, documents }` with `x-synapse-provider: alibaba`.
 //! DashScope's compatible-api path is `/v1/reranks` (note the trailing `s`).
 //!
+//! A rerank `[model_aliases]` entry's `targets` are an ordered fallback chain:
+//! candidates are tried head-first and the request fails over to the next
+//! target (which may be a different provider AND a different model) on
+//! network errors, timeouts, 401/402/403/408/429 and 5xx — the Synapse
+//! `isFailoverableStatus` set. `x-synapse-fallback: false` keeps the head
+//! candidate only. A provider-header pin (or `provider::model` shorthand)
+//! rotates the matching alias target to the head of the chain, same as the
+//! chat/embedding paths.
+//!
 //! `instruct` (task instruction) and `return_documents` are forwarded to the
 //! upstream when present — DashScope rerank honors them, and providers without
 //! support ignore unknown keys. Inbound `instruction` (flat or `parameters.*`)
 //! is normalized to `instruct` because DashScope silently ignores `instruction`.
 
 use std::collections::HashMap;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::State;
@@ -29,7 +38,7 @@ use crate::error::{Error, ErrorDetails};
 use crate::http::TensorzeroHttpClient;
 use crate::inference::types::{Latency, Usage};
 use crate::model::{SILICONFLOW_DEFAULT_API_ROOT, openai_compatible_shorthand_api_base};
-use crate::model_alias::ModelAliasTable;
+use crate::model_alias::{ModelAlias, ModelAliasTable};
 use crate::utils::gateway::{AppState, AppStateData};
 
 use super::OpenAIStructuredJson;
@@ -122,43 +131,51 @@ pub async fn rerank_handler(
             ));
         }
     };
-    let model = match resolve_rerank_model(
+    let candidates = match resolve_rerank_candidates(
         &params.model,
         synapse.provider.as_deref(),
         &config.models.model_aliases,
+        synapse.fallback_disabled,
     ) {
-        Ok(model) => model,
+        Ok(candidates) => candidates,
         Err(error) => return Ok(error_response(error, false, &synapse)),
     };
-    synapse.served_by = Some(served_by_from_model_name(&model));
 
     let args = match extract_rerank_args(&params) {
         Ok(args) => args,
         Err(error) => return Ok(error_response(error, false, &synapse)),
     };
 
-    let (provider, upstream_model) = match split_provider_model(&model) {
-        Ok(parts) => parts,
-        Err(error) => return Ok(error_response(error, false, &synapse)),
-    };
-    let provider_name = provider.to_string();
-    let upstream_name = upstream_model.to_string();
-    let raw_request =
-        serde_json::to_string(&build_upstream_body(upstream_model, &args, &params.extra))
-            .unwrap_or_else(|_| "{}".to_string());
     let start = Instant::now();
-    let dispatch_result = Box::pin(run_with_request_timeout(
+    let dispatch = dispatch_with_fallback(
+        &http_client,
+        &candidates,
+        &args,
+        &params.extra,
         synapse.request_timeout,
-        dispatch_rerank(&http_client, provider, upstream_model, &args, &params.extra),
-    ))
+    )
     .await;
     let latency = Latency::NonStreaming {
         response_time: start.elapsed(),
     };
 
-    let (status, mut body) = match dispatch_result {
-        Ok(result) => result,
-        Err(error) => return Ok(error_response(error, false, &synapse)),
+    let (status, mut body, provider_name, upstream_name, raw_request) = match dispatch {
+        RerankDispatch::Served {
+            index,
+            provider_name,
+            upstream_name,
+            raw_request,
+            status,
+            body,
+        } => {
+            synapse.served_by = Some(served_by_from_model_name(&format!(
+                "{provider_name}::{upstream_name}"
+            )));
+            synapse.fallback_count = u32::try_from(index).unwrap_or(u32::MAX);
+            (status, body, provider_name, upstream_name, raw_request)
+        }
+        RerankDispatch::Error(error) => return Ok(error_response(error, false, &synapse)),
+        RerankDispatch::Exhausted { failure } => return Ok(failure.into_response(&synapse)),
     };
 
     if status.is_success() {
@@ -180,10 +197,10 @@ pub async fn rerank_handler(
             false,
             StandaloneInferenceRecord {
                 endpoint: RERANK_ENDPOINT,
-                variant_name: model,
-                model_name: upstream_name,
+                variant_name: format!("{provider_name}::{upstream_name}"),
+                model_name: upstream_name.clone(),
                 model_provider_name: provider_name.clone(),
-                provider_type: provider_name,
+                provider_type: provider_name.clone(),
                 input: StandaloneInput::Rerank { query, documents },
                 output_text: rerank_output_payload(&body),
                 raw_request,
@@ -209,23 +226,216 @@ pub async fn rerank_handler(
     Ok(response)
 }
 
-/// Provider header wins; otherwise a `[model_aliases]` entry with `task = "rerank"`
-/// supplies the head `provider::model` (Synapse bare-name semantics).
-fn resolve_rerank_model(
+/// Ordered `provider::model` candidates for this request (Synapse semantics,
+/// mirroring the chat/embedding alias paths):
+///
+/// - A provider header (or `provider::model` in the body) pins a pair; when a
+///   rerank alias lists that pair as a target, the alias's full target list is
+///   borrowed with the pinned pair rotated to the head. Otherwise the explicit
+///   shorthand is the only candidate.
+/// - A bare name resolves through a `[model_aliases]` entry with
+///   `task = "rerank"`; its ordered `targets` form the fallback chain, so the
+///   chain may cross providers AND models (e.g. `qwen3.7-text-rerank` on
+///   alibaba falling back to `qwen3-rerank`).
+/// - `fallback_disabled` (`x-synapse-fallback: false`) keeps the head only.
+///
+/// Candidates whose provider has no rerank upstream configured are dropped
+/// (aliases are shared across tasks, so a chain may list chat-only providers).
+fn resolve_rerank_candidates(
     model: &str,
     provider: Option<&str>,
     aliases: &ModelAliasTable,
-) -> Result<String, Error> {
+    fallback_disabled: bool,
+) -> Result<Vec<String>, Error> {
     let resolved = resolve_openai_compatible_model(model, provider)?;
-    if resolved.contains("::") {
-        return Ok(resolved);
+    let mut candidates: Vec<String> =
+        if let Some((provider_type, model_name)) = resolved.split_once("::") {
+            match aliases.find_containing(provider_type, model_name, Some("rerank")) {
+                Some(alias) => rotated_alias_targets(alias, provider_type, model_name),
+                None => vec![resolved],
+            }
+        } else if let Some(alias) = aliases.resolve(resolved.trim(), Some("rerank")) {
+            alias
+                .targets
+                .iter()
+                .map(|target| format!("{}::{}", target.provider_type, target.model_name))
+                .collect()
+        } else {
+            return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+                message: format!(
+                    "Rerank model `{resolved}` is not a provider shorthand or rerank model alias. \
+                 Use `alibaba::qwen3-rerank`, set `x-synapse-provider`, or add a \
+                 `[model_aliases]` entry with `task = \"rerank\"`."
+                ),
+            }));
+        };
+    if candidates.len() > 1 && fallback_disabled {
+        candidates.truncate(1);
     }
-    if let Some(alias) = aliases.resolve(model.trim(), Some("rerank"))
-        && let Some(target) = alias.targets.first()
+    Ok(candidates
+        .into_iter()
+        .filter(|candidate| {
+            let supported = split_provider_model(candidate)
+                .map(|(provider, _)| rerank_provider_supported(provider))
+                .unwrap_or(false);
+            if !supported {
+                tracing::warn!(
+                    candidate,
+                    "Dropping rerank alias candidate whose provider has no rerank upstream"
+                );
+            }
+            supported
+        })
+        .collect())
+}
+
+/// `provider::model` targets of `alias` with `head_provider::head_model`
+/// rotated to the front (no-op when it already leads).
+fn rotated_alias_targets(alias: &ModelAlias, head_provider: &str, head_model: &str) -> Vec<String> {
+    let head = format!("{head_provider}::{head_model}");
+    let mut targets: Vec<String> = alias
+        .targets
+        .iter()
+        .map(|target| format!("{}::{}", target.provider_type, target.model_name))
+        .collect();
+    if let Some(index) = targets.iter().position(|candidate| candidate == &head)
+        && index != 0
     {
-        return Ok(format!("{}::{}", target.provider_type, target.model_name));
+        targets.swap(0, index);
     }
-    Ok(resolved)
+    targets
+}
+
+/// Providers with a rerank upstream in `rerank_upstream` (dummy is dispatched
+/// locally). Aliases are shared across tasks, so chains may list providers
+/// that only serve chat/embeddings.
+fn rerank_provider_supported(provider: &str) -> bool {
+    matches!(provider, "dummy" | "alibaba" | "openrouter" | "siliconflow")
+}
+
+/// Outcome of walking a rerank candidate chain.
+enum RerankDispatch {
+    /// A candidate answered; `index` is its position in the chain (fallback count).
+    Served {
+        index: usize,
+        provider_name: String,
+        upstream_name: String,
+        raw_request: String,
+        status: StatusCode,
+        body: Value,
+    },
+    /// Non-failoverable error (client error) — aborts the chain.
+    Error(Error),
+    /// Every candidate failed failoverably; carries the last failure to return.
+    Exhausted { failure: RerankFailure },
+}
+
+/// The last failure of an exhausted chain: either a dispatch error or a
+/// non-success upstream response to pass through.
+enum RerankFailure {
+    Error(Error),
+    Upstream { status: StatusCode, body: Value },
+}
+
+impl RerankFailure {
+    fn into_response(self, synapse: &SynapseRequestContext) -> Response {
+        match self {
+            RerankFailure::Error(error) => error_response(error, false, synapse),
+            RerankFailure::Upstream { status, body } => {
+                let mut response = (status, Json(body)).into_response();
+                if let Ok(value) = HeaderValue::from_str("application/json") {
+                    response
+                        .headers_mut()
+                        .insert(axum::http::header::CONTENT_TYPE, value);
+                }
+                synapse.apply_to_response(&mut response);
+                response
+            }
+        }
+    }
+}
+
+/// Whether an upstream HTTP status should fail over to the next candidate.
+/// Same set as Synapse `isFailoverableStatus` / `is_failoverable`:
+/// 401/402/403/408/429 and 5xx. Other 4xx are client errors — every
+/// provider would reject them, so they short-circuit.
+fn is_failoverable_status(status: StatusCode) -> bool {
+    matches!(status.as_u16(), 401 | 402 | 403 | 408 | 429 | 500..=599)
+}
+
+/// Try each candidate in order. Failoverable failures (network error,
+/// timeout, 401/402/403/408/429, 5xx) advance to the next candidate; the
+/// first success or non-failoverable failure wins. When the chain is
+/// exhausted the last failure is returned. Each attempt gets its own
+/// request-timeout budget.
+async fn dispatch_with_fallback(
+    http_client: &TensorzeroHttpClient,
+    candidates: &[String],
+    args: &RerankArgs,
+    extra: &serde_json::Map<String, Value>,
+    request_timeout: Option<Duration>,
+) -> RerankDispatch {
+    for (index, candidate) in candidates.iter().enumerate() {
+        let more_candidates = index + 1 < candidates.len();
+        let (provider, upstream_model) = match split_provider_model(candidate) {
+            Ok(parts) => parts,
+            Err(error) => return RerankDispatch::Error(error),
+        };
+        let provider_name = provider.to_string();
+        let upstream_name = upstream_model.to_string();
+        let raw_request = serde_json::to_string(&build_upstream_body(upstream_model, args, extra))
+            .unwrap_or_else(|_| "{}".to_string());
+        let dispatch_result = Box::pin(run_with_request_timeout(
+            request_timeout,
+            dispatch_rerank(http_client, provider, upstream_model, args, extra),
+        ))
+        .await;
+        let (status, body) = match dispatch_result {
+            Ok(result) => result,
+            Err(error) => {
+                if !crate::routing::is_failoverable(&error) {
+                    return RerankDispatch::Error(error);
+                }
+                if !more_candidates {
+                    return RerankDispatch::Exhausted {
+                        failure: RerankFailure::Error(error),
+                    };
+                }
+                tracing::warn!(
+                    candidate,
+                    error = %error,
+                    "Rerank candidate failed; failing over to next alias target"
+                );
+                continue;
+            }
+        };
+        if !status.is_success() && is_failoverable_status(status) {
+            if !more_candidates {
+                return RerankDispatch::Exhausted {
+                    failure: RerankFailure::Upstream { status, body },
+                };
+            }
+            tracing::warn!(
+                candidate,
+                status = status.as_u16(),
+                "Rerank candidate returned failoverable status; failing over to next alias target"
+            );
+            continue;
+        }
+        return RerankDispatch::Served {
+            index,
+            provider_name,
+            upstream_name,
+            raw_request,
+            status,
+            body,
+        };
+    }
+    RerankDispatch::Exhausted {
+        failure: RerankFailure::Error(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+            message: "Rerank request had no dispatchable candidates".to_string(),
+        })),
+    }
 }
 
 fn extract_rerank_args(params: &OpenAICompatibleRerankParams) -> Result<RerankArgs, Error> {
@@ -561,6 +771,8 @@ mod tests {
     use googletest_matchers::matches_json_literal;
 
     use super::*;
+    use crate::model_alias::ModelAliasTarget;
+    use std::sync::Arc;
 
     #[test]
     fn extract_cohere_style() {
@@ -737,29 +949,202 @@ mod tests {
         );
     }
 
-    #[test]
-    fn resolve_bare_name_via_rerank_alias() {
-        use crate::model_alias::{ModelAlias, ModelAliasTarget};
-        use std::sync::Arc;
+    #[gtest]
+    fn resolve_bare_name_returns_full_alias_chain_dropping_unsupported_providers() {
         let aliases = ModelAliasTable {
             aliases: vec![ModelAlias {
-                name: Arc::from("qwen3-rerank"),
+                name: Arc::from("qwen3.7-text-rerank"),
                 task: Some(Arc::from("rerank")),
-                targets: vec![ModelAliasTarget {
-                    provider_type: Arc::from("alibaba"),
-                    model_name: Arc::from("qwen3-rerank"),
-                }],
+                targets: vec![
+                    ModelAliasTarget {
+                        provider_type: Arc::from("alibaba"),
+                        model_name: Arc::from("qwen3.7-text-rerank"),
+                    },
+                    ModelAliasTarget {
+                        provider_type: Arc::from("alibaba"),
+                        model_name: Arc::from("qwen3-rerank"),
+                    },
+                    // Chat-only provider on a shared alias — must be dropped.
+                    ModelAliasTarget {
+                        provider_type: Arc::from("deepseek"),
+                        model_name: Arc::from("deepseek-v4-flash"),
+                    },
+                ],
                 min_tokens_per_sec: None,
             }],
         };
-        assert_eq!(
-            resolve_rerank_model("qwen3-rerank", None, &aliases).unwrap(),
-            "alibaba::qwen3-rerank"
+        expect_eq!(
+            resolve_rerank_candidates("qwen3.7-text-rerank", None, &aliases, false).unwrap(),
+            vec![
+                "alibaba::qwen3.7-text-rerank".to_string(),
+                "alibaba::qwen3-rerank".to_string(),
+            ]
         );
-        assert_eq!(
-            resolve_rerank_model("qwen3-rerank", Some("dummy"), &aliases).unwrap(),
-            "dummy::qwen3-rerank"
+    }
+
+    #[gtest]
+    fn resolve_fallback_disabled_keeps_head_only() {
+        let aliases = ModelAliasTable {
+            aliases: vec![ModelAlias {
+                name: Arc::from("qwen3.7-text-rerank"),
+                task: Some(Arc::from("rerank")),
+                targets: vec![
+                    ModelAliasTarget {
+                        provider_type: Arc::from("alibaba"),
+                        model_name: Arc::from("qwen3.7-text-rerank"),
+                    },
+                    ModelAliasTarget {
+                        provider_type: Arc::from("alibaba"),
+                        model_name: Arc::from("qwen3-rerank"),
+                    },
+                ],
+                min_tokens_per_sec: None,
+            }],
+        };
+        expect_eq!(
+            resolve_rerank_candidates("qwen3.7-text-rerank", None, &aliases, true).unwrap(),
+            vec!["alibaba::qwen3.7-text-rerank".to_string()]
         );
+    }
+
+    #[gtest]
+    fn resolve_provider_header_without_alias_keeps_single_candidate() {
+        let aliases = ModelAliasTable::default();
+        expect_eq!(
+            resolve_rerank_candidates("qwen3-rerank", Some("dummy"), &aliases, false).unwrap(),
+            vec!["dummy::qwen3-rerank".to_string()]
+        );
+    }
+
+    #[gtest]
+    fn resolve_explicit_shorthand_borrows_alias_chain_rotated_to_head() {
+        let aliases = ModelAliasTable {
+            aliases: vec![ModelAlias {
+                name: Arc::from("qwen3.7-text-rerank"),
+                task: Some(Arc::from("rerank")),
+                targets: vec![
+                    ModelAliasTarget {
+                        provider_type: Arc::from("alibaba"),
+                        model_name: Arc::from("qwen3.7-text-rerank"),
+                    },
+                    ModelAliasTarget {
+                        provider_type: Arc::from("alibaba"),
+                        model_name: Arc::from("qwen3-rerank"),
+                    },
+                ],
+                min_tokens_per_sec: None,
+            }],
+        };
+        // Pinning the tail target rotates it to the head but keeps the chain
+        // (chat/embedding Synapse semantics).
+        expect_eq!(
+            resolve_rerank_candidates("alibaba::qwen3-rerank", None, &aliases, false).unwrap(),
+            vec![
+                "alibaba::qwen3-rerank".to_string(),
+                "alibaba::qwen3.7-text-rerank".to_string(),
+            ]
+        );
+        // A provider header pin behaves the same as an explicit shorthand.
+        expect_eq!(
+            resolve_rerank_candidates("qwen3-rerank", Some("alibaba"), &aliases, false).unwrap(),
+            vec![
+                "alibaba::qwen3-rerank".to_string(),
+                "alibaba::qwen3.7-text-rerank".to_string(),
+            ]
+        );
+    }
+
+    #[gtest]
+    fn resolve_unknown_bare_name_errors() {
+        let aliases = ModelAliasTable::default();
+        expect_that!(
+            resolve_rerank_candidates("mystery-rerank", None, &aliases, false).is_err(),
+            eq(true)
+        );
+    }
+
+    #[gtest]
+    fn failoverable_status_matches_synapse_set() {
+        expect_that!(is_failoverable_status(StatusCode::UNAUTHORIZED), eq(true));
+        expect_that!(
+            is_failoverable_status(StatusCode::PAYMENT_REQUIRED),
+            eq(true)
+        );
+        expect_that!(is_failoverable_status(StatusCode::FORBIDDEN), eq(true));
+        expect_that!(
+            is_failoverable_status(StatusCode::REQUEST_TIMEOUT),
+            eq(true)
+        );
+        expect_that!(
+            is_failoverable_status(StatusCode::TOO_MANY_REQUESTS),
+            eq(true)
+        );
+        expect_that!(is_failoverable_status(StatusCode::BAD_GATEWAY), eq(true));
+        // Client errors short-circuit: every provider would reject them.
+        expect_that!(is_failoverable_status(StatusCode::BAD_REQUEST), eq(false));
+        expect_that!(is_failoverable_status(StatusCode::NOT_FOUND), eq(false));
+        expect_that!(
+            is_failoverable_status(StatusCode::UNPROCESSABLE_ENTITY),
+            eq(false)
+        );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn dispatch_falls_over_on_failoverable_error() {
+        // `dummy::error` returns a 500 InferenceClient error — failoverable.
+        let args = RerankArgs {
+            query: "capital".to_string(),
+            documents: vec!["Paris".to_string()],
+            top_n: None,
+            return_documents: None,
+            instruct: None,
+        };
+        let dispatch = dispatch_with_fallback(
+            &TensorzeroHttpClient::new_testing().expect("test http client"),
+            &["dummy::error".to_string(), "dummy::good".to_string()],
+            &args,
+            &serde_json::Map::new(),
+            None,
+        )
+        .await;
+        let RerankDispatch::Served {
+            index,
+            provider_name,
+            upstream_name,
+            status,
+            ..
+        } = dispatch
+        else {
+            panic!("expected RerankDispatch::Served");
+        };
+        expect_that!(index, eq(1));
+        expect_eq!(provider_name, "dummy".to_string());
+        expect_eq!(upstream_name, "good".to_string());
+        expect_that!(status, eq(StatusCode::OK));
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn dispatch_exhausted_returns_last_error() {
+        let args = RerankArgs {
+            query: "capital".to_string(),
+            documents: vec!["Paris".to_string()],
+            top_n: None,
+            return_documents: None,
+            instruct: None,
+        };
+        let dispatch = dispatch_with_fallback(
+            &TensorzeroHttpClient::new_testing().expect("test http client"),
+            &["dummy::error".to_string()],
+            &args,
+            &serde_json::Map::new(),
+            None,
+        )
+        .await;
+        let RerankDispatch::Exhausted { .. } = dispatch else {
+            panic!("expected RerankDispatch::Exhausted");
+        };
     }
 
     #[test]

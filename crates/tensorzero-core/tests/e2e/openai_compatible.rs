@@ -1623,3 +1623,74 @@ async fn test_openai_compatible_rerank_dummy() {
     expect_that!(body["results"][0]["index"].as_u64().unwrap(), eq(0));
     expect_that!(body["results"].as_array().unwrap().len(), eq(1));
 }
+
+#[gtest]
+#[tokio::test]
+async fn test_openai_compatible_rerank_alias_failover_and_fallback_header() {
+    // Cross-model rerank fallback: the head target errors and the request
+    // must be served by the second alias target (different upstream model).
+    let config = r#"
+[model_aliases.rerank_failover]
+task = "rerank"
+targets = [
+  { provider = "dummy", model = "error" },
+  { provider = "dummy", model = "good" },
+]
+"#;
+    let client = tensorzero::test_helpers::make_embedded_gateway_with_config(config).await;
+
+    let response = rerank_handler(
+        State(client.get_app_state_data().unwrap().load_latest()),
+        HeaderMap::new(),
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "rerank_failover",
+                "query": "capital",
+                "documents": ["Paris is the capital of France."],
+                "top_n": 1
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::OK));
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-served-by")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("dummy/good")
+    );
+    expect_that!(
+        response
+            .headers()
+            .get("x-synapse-fallback-count")
+            .unwrap()
+            .to_str()
+            .unwrap(),
+        eq("1")
+    );
+
+    // `x-synapse-fallback: false` pins the head candidate — the error surfaces.
+    let mut headers = HeaderMap::new();
+    headers.insert("x-synapse-fallback", "false".parse().unwrap());
+    let response = rerank_handler(
+        State(client.get_app_state_data().unwrap().load_latest()),
+        headers,
+        OpenAIStructuredJson(
+            serde_json::from_value(json!({
+                "model": "rerank_failover",
+                "query": "capital",
+                "documents": ["Paris is the capital of France."],
+                "top_n": 1
+            }))
+            .unwrap(),
+        ),
+    )
+    .await
+    .unwrap();
+    assert_that!(response.status(), eq(StatusCode::INTERNAL_SERVER_ERROR));
+}
