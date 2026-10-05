@@ -3,6 +3,11 @@
 //!
 //! Callers send `{ model, query, documents }` with `x-synapse-provider: alibaba`.
 //! DashScope's compatible-api path is `/v1/reranks` (note the trailing `s`).
+//!
+//! `instruct` (task instruction) and `return_documents` are forwarded to the
+//! upstream when present — DashScope rerank honors them, and providers without
+//! support ignore unknown keys. Inbound `instruction` (flat or `parameters.*`)
+//! is normalized to `instruct` because DashScope silently ignores `instruction`.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -64,6 +69,22 @@ pub struct DashScopeRerankInput {
 #[derive(Debug, Deserialize)]
 pub struct DashScopeRerankParameters {
     pub top_n: Option<u32>,
+    pub return_documents: Option<bool>,
+    pub instruct: Option<String>,
+    /// Lenient alias for `instruct`; the real upstream param is `instruct` and
+    /// DashScope silently ignores `instruction`, so we normalize to `instruct`.
+    pub instruction: Option<String>,
+}
+
+/// Normalized rerank arguments extracted from either the Cohere-style flat
+/// shape or the DashScope-style `input` / `parameters` shape.
+#[derive(Debug)]
+struct RerankArgs {
+    query: String,
+    documents: Vec<String>,
+    top_n: Option<u32>,
+    return_documents: Option<bool>,
+    instruct: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -111,7 +132,7 @@ pub async fn rerank_handler(
     };
     synapse.served_by = Some(served_by_from_model_name(&model));
 
-    let (query, documents, top_n) = match extract_rerank_args(&params) {
+    let args = match extract_rerank_args(&params) {
         Ok(args) => args,
         Err(error) => return Ok(error_response(error, false, &synapse)),
     };
@@ -122,26 +143,13 @@ pub async fn rerank_handler(
     };
     let provider_name = provider.to_string();
     let upstream_name = upstream_model.to_string();
-    let raw_request = serde_json::to_string(&build_upstream_body(
-        upstream_model,
-        &query,
-        &documents,
-        top_n,
-        &params.extra,
-    ))
-    .unwrap_or_else(|_| "{}".to_string());
+    let raw_request =
+        serde_json::to_string(&build_upstream_body(upstream_model, &args, &params.extra))
+            .unwrap_or_else(|_| "{}".to_string());
     let start = Instant::now();
     let dispatch_result = Box::pin(run_with_request_timeout(
         synapse.request_timeout,
-        dispatch_rerank(
-            &http_client,
-            provider,
-            upstream_model,
-            &query,
-            &documents,
-            top_n,
-            &params.extra,
-        ),
+        dispatch_rerank(&http_client, provider, upstream_model, &args, &params.extra),
     ))
     .await;
     let latency = Latency::NonStreaming {
@@ -154,6 +162,9 @@ pub async fn rerank_handler(
     };
 
     if status.is_success() {
+        let RerankArgs {
+            query, documents, ..
+        } = args;
         let usage = apply_rerank_cost(&config, &provider_name, &upstream_name, &body);
         overlay_rerank_usage(&mut body, &usage);
         let mut episode_id = None;
@@ -217,9 +228,7 @@ fn resolve_rerank_model(
     Ok(resolved)
 }
 
-fn extract_rerank_args(
-    params: &OpenAICompatibleRerankParams,
-) -> Result<(String, Vec<String>, Option<u32>), Error> {
+fn extract_rerank_args(params: &OpenAICompatibleRerankParams) -> Result<RerankArgs, Error> {
     let query = params
         .query
         .clone()
@@ -252,20 +261,42 @@ fn extract_rerank_args(
     let top_n = params
         .top_n
         .or_else(|| params.parameters.as_ref().and_then(|p| p.top_n));
-    Ok((query, documents, top_n))
+    let return_documents = params
+        .parameters
+        .as_ref()
+        .and_then(|p| p.return_documents)
+        .or_else(|| params.extra.get("return_documents")?.as_bool());
+    // `parameters.*` wins over flat; `instruct` wins over the `instruction` alias.
+    let extra_str = |key: &str| {
+        params
+            .extra
+            .get(key)
+            .and_then(|value| value.as_str().map(str::to_string))
+    };
+    let instruct = params
+        .parameters
+        .as_ref()
+        .and_then(|p| p.instruct.as_ref().or(p.instruction.as_ref()).cloned())
+        .or_else(|| extra_str("instruct"))
+        .or_else(|| extra_str("instruction"));
+    Ok(RerankArgs {
+        query,
+        documents,
+        top_n,
+        return_documents,
+        instruct,
+    })
 }
 
 async fn dispatch_rerank(
     http_client: &TensorzeroHttpClient,
     provider: &str,
     upstream_model: &str,
-    query: &str,
-    documents: &[String],
-    top_n: Option<u32>,
+    args: &RerankArgs,
     extra: &serde_json::Map<String, Value>,
 ) -> Result<(StatusCode, Value), Error> {
     if provider == "dummy" {
-        return dummy_rerank(upstream_model, documents, top_n);
+        return dummy_rerank(upstream_model, &args.documents, args.top_n);
     }
 
     let (url, api_key_env) = rerank_upstream(provider)?;
@@ -276,7 +307,7 @@ async fn dispatch_rerank(
         })
     })?;
 
-    let body = build_upstream_body(upstream_model, query, documents, top_n, extra);
+    let body = build_upstream_body(upstream_model, args, extra);
 
     let request = http_client
         .post(url)
@@ -314,24 +345,41 @@ async fn dispatch_rerank(
     ))
 }
 
+/// One flat body shape for every provider: `{model, query, documents, top_n?}`
+/// plus `return_documents` / `instruct` when resolved. Upstreams without support
+/// ignore unknown keys. Consumed keys (`return_documents`, `instruct`, and the
+/// `instruction` alias) are skipped in the `extra` passthrough so they never
+/// appear twice; `instruction` is never sent upstream (DashScope ignores it).
 fn build_upstream_body(
     upstream_model: &str,
-    query: &str,
-    documents: &[String],
-    top_n: Option<u32>,
+    args: &RerankArgs,
     extra: &serde_json::Map<String, Value>,
 ) -> Value {
     let mut body = serde_json::Map::new();
     body.insert("model".to_string(), json!(upstream_model));
-    body.insert("query".to_string(), json!(query));
-    body.insert("documents".to_string(), json!(documents));
-    if let Some(top_n) = top_n {
+    body.insert("query".to_string(), json!(args.query));
+    body.insert("documents".to_string(), json!(args.documents));
+    if let Some(top_n) = args.top_n {
         body.insert("top_n".to_string(), json!(top_n));
+    }
+    if let Some(return_documents) = args.return_documents {
+        body.insert("return_documents".to_string(), json!(return_documents));
+    }
+    if let Some(instruct) = &args.instruct {
+        body.insert("instruct".to_string(), json!(instruct));
     }
     for (key, value) in extra {
         if matches!(
             key.as_str(),
-            "model" | "query" | "documents" | "top_n" | "input" | "parameters"
+            "model"
+                | "query"
+                | "documents"
+                | "top_n"
+                | "input"
+                | "parameters"
+                | "return_documents"
+                | "instruct"
+                | "instruction"
         ) {
             continue;
         }
@@ -509,6 +557,9 @@ fn dummy_rerank(
 
 #[cfg(test)]
 mod tests {
+    use googletest::prelude::*;
+    use googletest_matchers::matches_json_literal;
+
     use super::*;
 
     #[test]
@@ -520,10 +571,12 @@ mod tests {
             "top_n": 1
         }))
         .unwrap();
-        let (query, documents, top_n) = extract_rerank_args(&params).unwrap();
-        assert_eq!(query, "capital");
-        assert_eq!(documents, vec!["Paris", "London"]);
-        assert_eq!(top_n, Some(1));
+        let args = extract_rerank_args(&params).unwrap();
+        assert_eq!(args.query, "capital");
+        assert_eq!(args.documents, vec!["Paris", "London"]);
+        assert_eq!(args.top_n, Some(1));
+        assert_eq!(args.return_documents, None);
+        assert_eq!(args.instruct, None);
     }
 
     #[test]
@@ -534,10 +587,90 @@ mod tests {
             "parameters": { "top_n": 2 }
         }))
         .unwrap();
-        let (query, documents, top_n) = extract_rerank_args(&params).unwrap();
-        assert_eq!(query, "capital");
-        assert_eq!(documents, vec!["Paris"]);
-        assert_eq!(top_n, Some(2));
+        let args = extract_rerank_args(&params).unwrap();
+        assert_eq!(args.query, "capital");
+        assert_eq!(args.documents, vec!["Paris"]);
+        assert_eq!(args.top_n, Some(2));
+    }
+
+    #[gtest]
+    fn extract_dashscope_parameters_instruct_and_return_documents() {
+        let params: OpenAICompatibleRerankParams = serde_json::from_value(json!({
+            "model": "qwen3.7-text-rerank",
+            "input": { "query": "capital", "documents": ["Paris"] },
+            "parameters": { "instruct": "rank by relevance", "return_documents": false }
+        }))
+        .expect("DashScope-style params should parse");
+        let args = extract_rerank_args(&params).expect("extract_rerank_args should succeed");
+        expect_that!(args.instruct, some(eq("rank by relevance")));
+        expect_that!(args.return_documents, some(eq(false)));
+    }
+
+    #[gtest]
+    fn extract_flat_instruct_and_return_documents_fallback() {
+        let params: OpenAICompatibleRerankParams = serde_json::from_value(json!({
+            "model": "qwen3.7-text-rerank",
+            "query": "capital",
+            "documents": ["Paris"],
+            "instruct": "flat instruct",
+            "return_documents": true
+        }))
+        .expect("flat params should parse");
+        let args = extract_rerank_args(&params).expect("extract_rerank_args should succeed");
+        expect_that!(args.instruct, some(eq("flat instruct")));
+        expect_that!(args.return_documents, some(eq(true)));
+    }
+
+    #[gtest]
+    fn extract_nested_instruction_normalizes_to_instruct() {
+        let params: OpenAICompatibleRerankParams = serde_json::from_value(json!({
+            "model": "qwen3.7-text-rerank",
+            "input": { "query": "capital", "documents": ["Paris"] },
+            "parameters": { "instruction": "nested instruction" }
+        }))
+        .expect("params should parse");
+        let args = extract_rerank_args(&params).expect("extract_rerank_args should succeed");
+        expect_that!(args.instruct, some(eq("nested instruction")));
+    }
+
+    #[gtest]
+    fn extract_flat_instruction_normalizes_to_instruct() {
+        let params: OpenAICompatibleRerankParams = serde_json::from_value(json!({
+            "model": "qwen3.7-text-rerank",
+            "query": "capital",
+            "documents": ["Paris"],
+            "instruction": "flat instruction"
+        }))
+        .expect("params should parse");
+        let args = extract_rerank_args(&params).expect("extract_rerank_args should succeed");
+        expect_that!(args.instruct, some(eq("flat instruction")));
+    }
+
+    #[gtest]
+    fn extract_parameters_win_over_flat() {
+        let params: OpenAICompatibleRerankParams = serde_json::from_value(json!({
+            "model": "qwen3.7-text-rerank",
+            "input": { "query": "capital", "documents": ["Paris"] },
+            "parameters": { "instruct": "nested instruct", "return_documents": false },
+            "instruct": "flat instruct",
+            "instruction": "flat instruction",
+            "return_documents": true
+        }))
+        .expect("params should parse");
+        let args = extract_rerank_args(&params).expect("extract_rerank_args should succeed");
+        expect_that!(args.instruct, some(eq("nested instruct")));
+        expect_that!(args.return_documents, some(eq(false)));
+
+        // `parameters.instruction` still beats flat `instruct`.
+        let params: OpenAICompatibleRerankParams = serde_json::from_value(json!({
+            "model": "qwen3.7-text-rerank",
+            "input": { "query": "capital", "documents": ["Paris"] },
+            "parameters": { "instruction": "nested instruction" },
+            "instruct": "flat instruct"
+        }))
+        .expect("params should parse");
+        let args = extract_rerank_args(&params).expect("extract_rerank_args should succeed");
+        expect_that!(args.instruct, some(eq("nested instruction")));
     }
 
     #[test]
@@ -558,19 +691,50 @@ mod tests {
     #[test]
     fn build_upstream_body_rewrites_model_and_keeps_extra() {
         let mut extra = serde_json::Map::new();
-        extra.insert("return_documents".to_string(), json!(true));
+        extra.insert("custom_key".to_string(), json!("kept"));
         extra.insert("query".to_string(), json!("should-not-win"));
-        let body = build_upstream_body(
-            "qwen3-rerank",
-            "capital",
-            &["Paris".into()],
-            Some(1),
-            &extra,
-        );
+        let args = RerankArgs {
+            query: "capital".to_string(),
+            documents: vec!["Paris".to_string()],
+            top_n: Some(1),
+            return_documents: Some(true),
+            instruct: None,
+        };
+        let body = build_upstream_body("qwen3-rerank", &args, &extra);
         assert_eq!(body["model"], "qwen3-rerank");
         assert_eq!(body["query"], "capital");
         assert_eq!(body["top_n"], 1);
         assert_eq!(body["return_documents"], true);
+        assert_eq!(body["custom_key"], "kept");
+    }
+
+    #[gtest]
+    fn build_body_forwards_instruct_and_return_documents_flat() {
+        let args = RerankArgs {
+            query: "capital".to_string(),
+            documents: vec!["Paris".to_string(), "London".to_string()],
+            top_n: Some(1),
+            return_documents: Some(true),
+            instruct: Some("rank by relevance".to_string()),
+        };
+        // Consumed keys in `extra` must be skipped so they never appear twice;
+        // `instruction` must never be sent upstream.
+        let mut extra = serde_json::Map::new();
+        extra.insert("instruct".to_string(), json!("stale flat instruct"));
+        extra.insert("instruction".to_string(), json!("stale flat instruction"));
+        extra.insert("return_documents".to_string(), json!(false));
+        let body = build_upstream_body("qwen3.7-text-rerank", &args, &extra);
+        expect_that!(
+            body,
+            matches_json_literal!({
+                "model": "qwen3.7-text-rerank",
+                "query": "capital",
+                "documents": ["Paris", "London"],
+                "top_n": 1,
+                "return_documents": true,
+                "instruct": "rank by relevance"
+            })
+        );
     }
 
     #[test]
