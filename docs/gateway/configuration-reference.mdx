@@ -107,6 +107,41 @@ If you use a single Valkey instance for both rate limiting and caching, see [Inf
 
 See [Inference Caching](/gateway/guides/inference-caching) for more details.
 
+### `cleanup.enabled`
+
+- **Type:** boolean
+- **Required:** no (default: `false`)
+
+Enable the background worker that periodically deletes inference payload data (the `*_data` tables, which store large inputs/outputs and raw requests/responses) matching tag-based cleanup rules.
+Cleanup rules are managed from the TensorZero UI (Storage page) or the internal API (`/internal/cleanup/rules`), not from the configuration file.
+
+Only rows older than each rule's `older_than_days` are deleted, and rows in the current day's partition are never touched.
+Inference metadata (for example, function name, variant, timestamps, and usage metrics) is preserved; only the large payload columns are removed.
+Inferences marked as protected from the UI are exempt from cleanup.
+
+You must set up Postgres to use cleanup features.
+The gateway will fail to start if cleanup is enabled but `TENSORZERO_POSTGRES_URL` is not set.
+
+```toml title="tensorzero.toml"
+[gateway.cleanup]
+enabled = true
+interval_secs = 3600
+```
+
+### `cleanup.interval_secs`
+
+- **Type:** integer
+- **Required:** no (default: `3600`, minimum: `60`)
+
+The interval in seconds between scheduled cleanup passes.
+The worker also runs a pass immediately when one is triggered manually from the TensorZero UI or with `POST /internal/cleanup/run`.
+
+```toml title="tensorzero.toml"
+[gateway.cleanup]
+enabled = true
+interval_secs = 86_400  # Daily
+```
+
 ### `debug`
 
 - **Type:** boolean

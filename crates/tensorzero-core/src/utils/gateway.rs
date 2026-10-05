@@ -21,6 +21,7 @@ use sqlx::ConnectOptions;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use tensorzero_auth::postgres::AuthResult;
 use tokio::runtime::Handle;
+use tokio::sync::Notify;
 use tokio::sync::oneshot::Sender;
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
@@ -252,6 +253,9 @@ pub struct AppStateData {
     /// Which database backend is the primary datastore for observability data.
     /// Derived from config (`observability.backend`) at startup.
     pub primary_datastore: PrimaryDatastore,
+    /// Signals the cleanup worker to run a pass immediately
+    /// (`POST /internal/cleanup/run`).
+    pub cleanup_notify: Arc<Notify>,
     /// Whether the gateway config was loaded from the database (as opposed to a file on disk).
     /// Used by the UI to decide whether to show the config editor.
     pub config_in_database: bool,
@@ -282,6 +286,9 @@ pub struct SwappableAppStateData {
     /// The deployment ID from ClickHouse (64-char hex string)
     pub deployment_id: Option<String>,
     pub shutdown_token: CancellationToken,
+    /// Signals the cleanup worker to run a pass immediately. Shared with every
+    /// `AppStateData` produced by `load_latest`.
+    pub cleanup_notify: Arc<Notify>,
     /// Whether the gateway config was loaded from the database (as opposed to a file on disk).
     /// Used by the UI to decide whether to show the config editor.
     pub config_in_database: bool,
@@ -418,6 +425,7 @@ impl SwappableAppStateData {
             rate_limiting_manager: live_state.rate_limiting_manager.clone(),
             shutdown_token: self.shutdown_token.clone(),
             primary_datastore: live_state.primary_datastore,
+            cleanup_notify: self.cleanup_notify.clone(),
             config_in_database: self.config_in_database,
             _private: (),
         }
@@ -610,6 +618,7 @@ impl GatewayHandle {
                 async_inference_spawn_client: None,
                 deployment_id: None,
                 shutdown_token: cancel_token,
+                cleanup_notify: Arc::new(Notify::new()),
                 config_in_database: false,
             },
             drop_wrapper: None,
@@ -768,6 +777,7 @@ impl GatewayHandle {
                 async_inference_spawn_client,
                 deployment_id,
                 shutdown_token: cancel_token,
+                cleanup_notify: Arc::new(Notify::new()),
                 config_in_database,
             },
             drop_wrapper,
@@ -809,6 +819,7 @@ impl SwappableAppStateData {
             async_inference_spawn_client: None,
             deployment_id: None,
             shutdown_token: CancellationToken::new(),
+            cleanup_notify: Arc::new(Notify::new()),
             config_in_database: self.config_in_database,
         }
     }
@@ -902,6 +913,7 @@ impl AppStateData {
             rate_limiting_manager,
             shutdown_token,
             primary_datastore,
+            cleanup_notify: Arc::new(Notify::new()),
             config_in_database: false,
             _private: (),
         })
@@ -1354,6 +1366,7 @@ mod tests {
             cache: Default::default(),
             ui: Default::default(),
             async_inference: Default::default(),
+            cleanup: Default::default(),
         };
 
         let config = Config {
@@ -1439,6 +1452,7 @@ mod tests {
             cache: Default::default(),
             ui: Default::default(),
             async_inference: Default::default(),
+            cleanup: Default::default(),
         };
 
         let config = Config {
@@ -1485,6 +1499,7 @@ mod tests {
             cache: Default::default(),
             ui: Default::default(),
             async_inference: Default::default(),
+            cleanup: Default::default(),
         };
         let config = Config {
             gateway: gateway_config,
@@ -1531,6 +1546,7 @@ mod tests {
             cache: Default::default(),
             ui: Default::default(),
             async_inference: Default::default(),
+            cleanup: Default::default(),
         };
         let config = Config {
             gateway: gateway_config,

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT d.id\n                FROM tensorzero.batch_request_data d\n                JOIN tensorzero.batch_requests br ON br.id = d.id\n                WHERE br.batch_id IN (\n                    SELECT batch_id\n                    FROM tensorzero.batch_model_inferences\n                    WHERE tags ? $1\n                      AND ($2::TEXT IS NULL OR tags ->> $1 = $2)\n                )\n                  AND d.created_at < $3\n                  AND d.created_at < date_trunc('day', now())\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.batch_request_data",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "592bc7d24877bad8313156cda53d62029b9543e10b57471359b5e97168e8ac2d"
+}

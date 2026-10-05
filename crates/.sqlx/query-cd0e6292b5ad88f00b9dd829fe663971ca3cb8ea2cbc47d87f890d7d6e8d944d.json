@@ -1,0 +1,32 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO tensorzero.cleanup_run_steps\n            (id, run_id, rule_id, table_name, status, total_rows)\n        VALUES ($1, $2, $3, $4, 'running', $5)\n        RETURNING id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "cd0e6292b5ad88f00b9dd829fe663971ca3cb8ea2cbc47d87f890d7d6e8d944d"
+}

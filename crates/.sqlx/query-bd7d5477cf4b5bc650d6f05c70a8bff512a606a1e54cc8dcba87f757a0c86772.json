@@ -1,0 +1,136 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, run_id, rule_id, table_name, status, total_rows, rows_deleted,\n               started_at, finished_at, error\n        FROM tensorzero.cleanup_run_steps\n        WHERE run_id = ANY($1)\n        ORDER BY started_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "ordinal": 1,
+        "name": "run_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "run_id"
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "rule_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "rule_id"
+          }
+        }
+      },
+      {
+        "ordinal": 3,
+        "name": "table_name",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "table_name"
+          }
+        }
+      },
+      {
+        "ordinal": 4,
+        "name": "status",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "status"
+          }
+        }
+      },
+      {
+        "ordinal": 5,
+        "name": "total_rows",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "total_rows"
+          }
+        }
+      },
+      {
+        "ordinal": 6,
+        "name": "rows_deleted",
+        "type_info": "Int8",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "rows_deleted"
+          }
+        }
+      },
+      {
+        "ordinal": 7,
+        "name": "started_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "started_at"
+          }
+        }
+      },
+      {
+        "ordinal": 8,
+        "name": "finished_at",
+        "type_info": "Timestamptz",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "finished_at"
+          }
+        }
+      },
+      {
+        "ordinal": 9,
+        "name": "error",
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.cleanup_run_steps",
+            "name": "error"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "bd7d5477cf4b5bc650d6f05c70a8bff512a606a1e54cc8dcba87f757a0c86772"
+}

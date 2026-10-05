@@ -1,5 +1,6 @@
 // Modified by Delta-AI under Apache 2.0
 pub mod async_tasks;
+pub mod cleanup;
 pub mod config;
 pub mod config_toml;
 pub mod count_inferences;

@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT d.inference_id\n                FROM tensorzero.batch_model_inference_data d\n                JOIN tensorzero.batch_model_inferences bmi ON bmi.inference_id = d.inference_id\n                WHERE bmi.tags ? $1\n                  AND ($2::TEXT IS NULL OR bmi.tags ->> $1 = $2)\n                  AND d.created_at < $3\n                  AND d.created_at < date_trunc('day', now())\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "inference_id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.batch_model_inference_data",
+            "name": "inference_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e8ebf72e6d2e89cc5da56da8674955561077770ff199dbf173f92cd9b510d96a"
+}

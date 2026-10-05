@@ -569,4 +569,45 @@ mod tests {
         expect_that!(async_inference.concurrency, eq(4));
         expect_that!(async_inference.stream_ttl_seconds, eq(600));
     }
+
+    /// Historical snapshots predate `[gateway.cleanup]`. They must still parse
+    /// and convert cleanly with `cleanup = None`, and a snapshot written by a
+    /// newer gateway with the section set must round-trip into the
+    /// uninitialized config.
+    #[gtest]
+    fn test_historical_stored_gateway_config_without_cleanup() {
+        let toml_str = r"
+            [gateway]
+            debug = true
+        ";
+
+        let stored: StoredConfig =
+            toml::from_str(toml_str).expect("legacy gateway config should parse from snapshot");
+        let uninit: UninitializedConfig = stored
+            .try_into()
+            .expect("should convert to UninitializedConfig");
+
+        let gateway = uninit.gateway.expect("gateway config should be present");
+        expect_that!(
+            gateway.cleanup,
+            none(),
+            "legacy snapshots without `[gateway.cleanup]` should convert to None"
+        );
+
+        let toml_str = r"
+            [gateway.cleanup]
+            enabled = true
+            interval_secs = 300
+        ";
+        let stored: StoredConfig = toml::from_str(toml_str).expect("cleanup section should parse");
+        let uninit: UninitializedConfig = stored
+            .try_into()
+            .expect("should convert to UninitializedConfig");
+        let cleanup = uninit
+            .gateway
+            .and_then(|g| g.cleanup)
+            .expect("cleanup config should be present");
+        expect_that!(cleanup.enabled, eq(true));
+        expect_that!(cleanup.interval_secs, eq(300));
+    }
 }

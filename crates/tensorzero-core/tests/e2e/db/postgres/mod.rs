@@ -1,4 +1,5 @@
 // Modified by Delta-AI under Apache 2.0
+mod cleanup;
 mod inference_protection;
 mod inference_storage;
 mod postgres_setup_tests;

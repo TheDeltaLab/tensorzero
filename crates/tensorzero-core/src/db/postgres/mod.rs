@@ -17,6 +17,7 @@ use super::HealthCheckable;
 pub mod api_key_usage;
 pub mod batch_inference;
 pub mod batching;
+pub mod cleanup;
 pub mod config_queries;
 pub mod dashboard_users;
 pub mod deployment_queries;
