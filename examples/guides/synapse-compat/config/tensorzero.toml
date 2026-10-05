@@ -38,6 +38,12 @@ targets = [
     { provider = "alibaba", model = "qwen3-rerank" },
 ]
 
+# DashScope rerank honors flat `instruct` (task instruction) and
+# `return_documents`; providers without support ignore unknown keys.
+[model_aliases."qwen3.7-text-rerank"]
+task = "rerank"
+targets = [{ provider = "alibaba", model = "qwen3.7-text-rerank" }]
+
 # Dotted alias names must be quoted. Unquoted `[model_aliases.glm-5.1]`
 # is nested table `glm-5` + field `1`.
 [model_aliases."glm-5.1"]

@@ -10,6 +10,7 @@ See `NOTICE` for the overall attribution statement.
 
 ## Modified non-source-code files
 
+- `examples/guides/synapse-compat/config/tensorzero.toml` — Alias `qwen3.7-text-rerank` to DashScope rerank (`alibaba` provider), which honors forwarded `instruct` / `return_documents` (Delta-AI fork).
 - `docs/integrations/model-providers/openrouter.mdx` — Document `POST /v1/systemone` for TypeSafe Jev via OpenRouter (Delta-AI fork).
 - `examples/guides/synapse-compat/config/tensorzero.toml` — Alias `jev`, `jev-latest`, and `jev-1.13` to OpenRouter System One models (Delta-AI fork).
 - `crates/tensorzero-providers/Cargo.toml` — Made the AWS SDK deps and `google-cloud-auth` optional behind new `aws` / `google` cargo features, **off by default**; removed the dead `pyo3` feature/dep (Python SDK stripped in #60) (Delta-AI fork).
