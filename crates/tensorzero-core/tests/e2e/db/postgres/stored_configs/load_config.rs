@@ -153,6 +153,7 @@ fn sample_function() -> UninitializedFunctionConfig {
     })
 }
 
+#[expect(dead_code)]
 fn sample_tool() -> UninitializedToolConfig {
     UninitializedToolConfig {
         description: "Search docs".to_string(),
@@ -165,6 +166,7 @@ fn sample_tool() -> UninitializedToolConfig {
     }
 }
 
+#[expect(dead_code)]
 async fn insert_file(pool: &PgPool, file_path: &str, source_body: &str) -> Uuid {
     let id = Uuid::now_v7();
     let content_hash = blake3::hash(source_body.as_bytes()).as_bytes().to_vec();

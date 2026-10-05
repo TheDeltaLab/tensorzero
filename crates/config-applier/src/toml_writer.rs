@@ -1,3 +1,4 @@
+// Modified by Delta-AI under Apache 2.0
 use serde::Serialize;
 use toml_edit::{DocumentMut, InlineTable, Item, Table, Value};
 
@@ -110,6 +111,7 @@ pub fn upsert_variant(
 }
 
 /// Upsert an experimentation config into a function.
+#[expect(dead_code)]
 pub fn upsert_experimentation(
     doc: &mut DocumentMut,
     function_name: &str,
@@ -121,6 +123,7 @@ pub fn upsert_experimentation(
 }
 
 /// Upsert an evaluation into the evaluations table.
+#[expect(dead_code)]
 pub fn upsert_evaluation(
     doc: &mut DocumentMut,
     evaluation_name: &str,
@@ -188,6 +191,7 @@ fn strip_empty_inline_tables(inline: &mut InlineTable) {
 }
 
 /// Upsert an evaluator into an evaluation's evaluators table.
+#[expect(dead_code)]
 pub fn upsert_evaluator(
     doc: &mut DocumentMut,
     evaluation_name: &str,
