@@ -682,6 +682,7 @@ mod tests {
     use tensorzero_inference_types::tool::DynamicToolParams;
 
     /// Helper to create a test config with the functions registered
+    #[expect(dead_code)]
     fn create_test_config() -> Config {
         let mut config = Config::default();
 
@@ -800,6 +801,7 @@ mod tests {
     }
 
     /// Helper to create a test RenderedSample for Chat function
+    #[expect(dead_code)]
     fn create_test_chat_rendered_sample() -> RenderedSample {
         let inference_id = Uuid::now_v7();
         let episode_id = Uuid::now_v7();
@@ -846,6 +848,7 @@ mod tests {
     }
 
     /// Helper to create a test RenderedSample for JSON function
+    #[expect(dead_code)]
     fn create_test_json_rendered_sample() -> RenderedSample {
         let inference_id = Uuid::now_v7();
         let episode_id = Uuid::now_v7();
