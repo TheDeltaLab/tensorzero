@@ -2,7 +2,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::gateway::{
-    AsyncInferenceConfig, AuthConfig, DashboardUiConfig, MetricsConfig, UninitializedGatewayConfig,
+    AsyncInferenceConfig, AuthConfig, CleanupConfig, DashboardUiConfig, MetricsConfig,
+    UninitializedGatewayConfig,
 };
 use crate::config::{ExportConfig, TemplateFilesystemAccess, UninitializedRelayConfig};
 
@@ -46,10 +47,16 @@ pub struct StoredGatewayConfig {
     pub ui: DashboardUiConfig,
     #[serde(default, skip_serializing_if = "async_inference_config_is_default")]
     pub async_inference: AsyncInferenceConfig,
+    #[serde(default, skip_serializing_if = "cleanup_config_is_default")]
+    pub cleanup: CleanupConfig,
 }
 
 fn async_inference_config_is_default(config: &AsyncInferenceConfig) -> bool {
     config == &AsyncInferenceConfig::default()
+}
+
+fn cleanup_config_is_default(config: &CleanupConfig) -> bool {
+    config == &CleanupConfig::default()
 }
 
 impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
@@ -73,6 +80,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
             cache,
             ui,
             async_inference,
+            cleanup,
         } = config;
         Self {
             bind_address,
@@ -95,6 +103,7 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
             cache: cache.unwrap_or_default().into(),
             ui: ui.unwrap_or_default(),
             async_inference: async_inference.unwrap_or_default(),
+            cleanup: cleanup.unwrap_or_default(),
         }
     }
 }
@@ -120,6 +129,7 @@ impl From<StoredGatewayConfig> for UninitializedGatewayConfig {
             cache,
             ui,
             async_inference,
+            cleanup,
         } = stored;
         Self {
             bind_address,
@@ -145,6 +155,11 @@ impl From<StoredGatewayConfig> for UninitializedGatewayConfig {
                 None
             } else {
                 Some(async_inference)
+            },
+            cleanup: if cleanup_config_is_default(&cleanup) {
+                None
+            } else {
+                Some(cleanup)
             },
         }
     }

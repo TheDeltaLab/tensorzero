@@ -1,0 +1,30 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                SELECT d.id\n                FROM tensorzero.json_inference_data d\n                JOIN tensorzero.json_inferences i ON i.id = d.id\n                WHERE i.tags ? $1\n                  AND ($2::TEXT IS NULL OR i.tags ->> $1 = $2)\n                  AND i.protected_at IS NULL\n                  AND d.created_at < $3\n                  AND d.created_at < date_trunc('day', now())\n                ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid",
+        "origin": {
+          "Table": {
+            "table": "tensorzero.json_inference_data",
+            "name": "id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "ef3776cb7fe99915301e863b3cc591938f8f459b424c1c0e7ac3380e95eab1ad"
+}

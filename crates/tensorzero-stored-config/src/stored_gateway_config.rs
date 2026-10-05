@@ -32,6 +32,14 @@ pub struct StoredGatewayConfig {
     #[serde(default)]
     pub ui: Option<StoredDashboardUiConfig>,
     pub async_inference: Option<StoredAsyncInferenceConfig>,
+    pub cleanup: Option<StoredCleanupConfig>,
+}
+
+#[serde_with::skip_serializing_none]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StoredCleanupConfig {
+    pub enabled: Option<bool>,
+    pub interval_secs: Option<u64>,
 }
 
 #[serde_with::skip_serializing_none]

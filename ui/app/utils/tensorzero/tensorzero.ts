@@ -57,6 +57,13 @@ import type {
   AsyncTaskStatus,
   AsyncTaskStatusResponse,
   ListAsyncTasksResponse,
+  CleanupRule,
+  CreateCleanupRuleRequest,
+  DeleteCleanupRuleResponse,
+  ListCleanupRulesResponse,
+  ListCleanupRunsResponse,
+  TriggerCleanupRunResponse,
+  UpdateCleanupRuleRequest,
 } from "~/types/tensorzero";
 import type { AnalysisResponse } from "~/routes/observability/analysis/analysisQuery";
 
@@ -1187,6 +1194,109 @@ export class TensorZeroClient extends BaseTensorZeroClient {
       this.handleHttpError({ message, response });
     }
     return (await response.json()) as InferenceRetentionConfig;
+  }
+
+  /**
+   * Lists the tag-based cleanup rules. Requires Postgres.
+   */
+  async getCleanupRules(): Promise<ListCleanupRulesResponse> {
+    const response = await this.fetch("/internal/cleanup/rules", {
+      method: "GET",
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as ListCleanupRulesResponse;
+  }
+
+  /**
+   * Creates a tag-based cleanup rule. When `tag_value` is omitted, the rule
+   * matches every row carrying `tag_key`.
+   */
+  async createCleanupRule(
+    request: CreateCleanupRuleRequest,
+  ): Promise<CleanupRule> {
+    const response = await this.fetch("/internal/cleanup/rules", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as CleanupRule;
+  }
+
+  /**
+   * Full-replace update of a tag-based cleanup rule (`tag_value: undefined`
+   * clears the value filter).
+   */
+  async updateCleanupRule(
+    ruleId: string,
+    request: UpdateCleanupRuleRequest,
+  ): Promise<CleanupRule> {
+    const response = await this.fetch(
+      `/internal/cleanup/rules/${encodeURIComponent(ruleId)}`,
+      {
+        method: "PUT",
+        body: JSON.stringify(request),
+      },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as CleanupRule;
+  }
+
+  /**
+   * Deletes a tag-based cleanup rule.
+   */
+  async deleteCleanupRule(ruleId: string): Promise<DeleteCleanupRuleResponse> {
+    const response = await this.fetch(
+      `/internal/cleanup/rules/${encodeURIComponent(ruleId)}`,
+      { method: "DELETE" },
+    );
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as DeleteCleanupRuleResponse;
+  }
+
+  /**
+   * Triggers a cleanup run immediately. The run is a no-op when
+   * `[gateway.cleanup]` is disabled in the gateway config; the returned
+   * `cleanup_enabled` flag says which.
+   */
+  async triggerCleanupRun(): Promise<TriggerCleanupRunResponse> {
+    const response = await this.fetch("/internal/cleanup/run", {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as TriggerCleanupRunResponse;
+  }
+
+  /**
+   * Lists recent cleanup runs with their per-table steps. Requires Postgres.
+   */
+  async getCleanupRuns(limit?: number): Promise<ListCleanupRunsResponse> {
+    const searchParams = new URLSearchParams();
+    if (limit !== undefined) {
+      searchParams.set("limit", limit.toString());
+    }
+    const queryString = searchParams.toString();
+    const endpoint = `/internal/cleanup/runs${queryString ? `?${queryString}` : ""}`;
+    const response = await this.fetch(endpoint, { method: "GET" });
+    if (!response.ok) {
+      const message = await this.getErrorText(response);
+      this.handleHttpError({ message, response });
+    }
+    return (await response.json()) as ListCleanupRunsResponse;
   }
 
   /**

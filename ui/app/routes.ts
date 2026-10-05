@@ -95,7 +95,6 @@ export default [
   // Inference storage management
   route("storage", "routes/storage/route.tsx"),
 
-
   // Async Tasks (Delta-AI fork: restored after the #60 strip)
   route("async-tasks", "routes/async-tasks/route.tsx"),
   route("async-tasks/:taskId", "routes/async-tasks/$taskId/route.tsx"),

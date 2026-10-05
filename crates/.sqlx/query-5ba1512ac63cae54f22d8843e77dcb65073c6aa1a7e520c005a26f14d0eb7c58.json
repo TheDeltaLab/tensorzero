@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE tensorzero.cleanup_run_steps\n        SET status = $2, error = $3, finished_at = now()\n        WHERE id = $1\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "5ba1512ac63cae54f22d8843e77dcb65073c6aa1a7e520c005a26f14d0eb7c58"
+}

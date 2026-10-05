@@ -604,6 +604,9 @@ async fn run() -> Result<(), ExitCode> {
     // (Delta-AI fork: restored after the #60 strip)
     spawn_async_inference_worker_if_configured(&gateway_handle).await?;
 
+    // Start the tag-based cleanup worker if `[gateway.cleanup]` is enabled
+    spawn_cleanup_worker_if_configured(&gateway_handle)?;
+
     // Create a new observability_enabled_pretty string for the log message below
     let postgres_enabled_pretty =
         get_postgres_status_string(&gateway_handle.app_state.postgres_connection_info());
@@ -1011,6 +1014,54 @@ async fn spawn_async_inference_worker_if_configured(
     )
     .await
     .log_err_pretty("Failed to spawn async inference worker")?;
+    Ok(())
+}
+
+/// Spawn the tag-based cleanup worker if `[gateway.cleanup]` is enabled.
+///
+/// The worker periodically deletes old rows from the daily-partitioned payload
+/// tables (`*_data`) whose inference tags match the rules stored in Postgres.
+/// Cleanup requires Postgres (rules, run history, and the payload tables all
+/// live there); enabled config without Postgres is a startup error.
+fn spawn_cleanup_worker_if_configured(
+    gateway_handle: &gateway::GatewayHandle,
+) -> Result<(), ExitCode> {
+    let cleanup_config = gateway_handle
+        .app_state
+        .config()
+        .load()
+        .gateway
+        .cleanup
+        .clone();
+    if !cleanup_config.enabled {
+        return Ok(());
+    }
+
+    let pool = match gateway_handle.app_state.postgres_connection_info() {
+        PostgresConnectionInfo::Enabled { pool, .. } => pool,
+        PostgresConnectionInfo::Disabled => {
+            tracing::error!(
+                "`gateway.cleanup.enabled` is set, but Postgres is not enabled. \
+                 Tag-based cleanup requires Postgres for rules, run history, and payload tables."
+            );
+            return Err(ExitCode::FAILURE);
+        }
+        #[cfg(test)]
+        #[expect(unreachable_patterns)]
+        _ => return Err(ExitCode::FAILURE),
+    };
+
+    let config = gateway_handle.app_state.config();
+    let cleanup_notify = gateway_handle.app_state.cleanup_notify.clone();
+    let shutdown_token = gateway_handle.app_state.shutdown_token.clone();
+    gateway_handle.app_state.deferred_tasks.spawn(async move {
+        tensorzero_core::cleanup::cleanup_worker_loop(config, cleanup_notify, pool, shutdown_token)
+            .await;
+    });
+    tracing::info!(
+        interval_secs = cleanup_config.interval_secs,
+        "Tag-based cleanup worker started"
+    );
     Ok(())
 }
 

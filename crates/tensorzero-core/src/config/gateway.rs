@@ -16,7 +16,7 @@ use crate::{
 use chrono::Duration;
 use serde::{Deserialize, Deserializer, Serialize};
 use tensorzero_stored_config::{
-    StoredAsyncInferenceConfig, StoredAuthConfig, StoredBatchWritesConfig,
+    StoredAsyncInferenceConfig, StoredAuthConfig, StoredBatchWritesConfig, StoredCleanupConfig,
     StoredCredentialLocationWithFallback, StoredDashboardUiConfig, StoredExportConfig,
     StoredGatewayAuthCacheConfig, StoredGatewayConfig, StoredGatewayMetricsConfig,
     StoredInferenceCacheBackend, StoredModelInferenceCacheConfig, StoredObservabilityBackend,
@@ -290,6 +290,55 @@ impl AsyncInferenceConfig {
     }
 }
 
+pub fn default_cleanup_interval_secs() -> u64 {
+    3600
+}
+
+/// Smallest accepted `gateway.cleanup.interval_secs` value.
+pub const MIN_CLEANUP_INTERVAL_SECS: u64 = 60;
+
+/// Configuration for scheduled tag-based payload cleanup (`[gateway.cleanup]`).
+///
+/// When enabled, an embedded worker periodically deletes old rows from the
+/// daily-partitioned payload tables (`chat_inference_data`,
+/// `json_inference_data`, `model_inference_data`, `batch_model_inference_data`,
+/// `batch_request_data`) whose inference tags match the cleanup rules stored
+/// in Postgres. Requires Postgres.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CleanupConfig {
+    /// Master switch for the embedded cleanup worker.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Interval between scheduled cleanup passes, in seconds.
+    #[serde(default = "default_cleanup_interval_secs")]
+    pub interval_secs: u64,
+}
+
+impl Default for CleanupConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_secs: default_cleanup_interval_secs(),
+        }
+    }
+}
+
+impl CleanupConfig {
+    fn normalized(self) -> Result<Self, Error> {
+        if self.interval_secs < MIN_CLEANUP_INTERVAL_SECS {
+            return Err(Error::new(ErrorDetails::Config {
+                message: format!(
+                    "Invalid `gateway.cleanup.interval_secs` `{}`. \
+                     Must be at least {MIN_CLEANUP_INTERVAL_SECS}.",
+                    self.interval_secs
+                ),
+            }));
+        }
+        Ok(self)
+    }
+}
+
 #[serde_with::skip_serializing_none]
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -336,6 +385,9 @@ pub struct UninitializedGatewayConfig {
     /// SSE stream-attach endpoints, embedded durable worker).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub async_inference: Option<AsyncInferenceConfig>,
+    /// Scheduled tag-based payload cleanup worker (`[gateway.cleanup]`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<CleanupConfig>,
 }
 
 impl UninitializedGatewayConfig {
@@ -404,6 +456,7 @@ impl UninitializedGatewayConfig {
             cache: self.cache.unwrap_or_default(),
             ui: self.ui.unwrap_or_default().normalized()?,
             async_inference: self.async_inference.unwrap_or_default().normalized()?,
+            cleanup: self.cleanup.unwrap_or_default().normalized()?,
         })
     }
 }
@@ -624,6 +677,12 @@ impl TryFrom<StoredGatewayConfig> for UninitializedGatewayConfig {
                     .stream_ttl_seconds
                     .unwrap_or_else(default_async_inference_stream_ttl_seconds),
             }),
+            cleanup: stored.cleanup.map(|c| CleanupConfig {
+                enabled: c.enabled.unwrap_or_default(),
+                interval_secs: c
+                    .interval_secs
+                    .unwrap_or_else(default_cleanup_interval_secs),
+            }),
         })
     }
 }
@@ -735,6 +794,10 @@ impl From<UninitializedGatewayConfig> for StoredGatewayConfig {
                 concurrency: Some(ai.concurrency as u64),
                 stream_ttl_seconds: Some(ai.stream_ttl_seconds),
             }),
+            cleanup: config.cleanup.map(|c| StoredCleanupConfig {
+                enabled: Some(c.enabled),
+                interval_secs: Some(c.interval_secs),
+            }),
         }
     }
 }
@@ -766,6 +829,7 @@ pub struct GatewayConfig {
     pub cache: ModelInferenceCacheConfig,
     pub ui: DashboardUiConfig,
     pub async_inference: AsyncInferenceConfig,
+    pub cleanup: CleanupConfig,
 }
 
 impl Default for GatewayConfig {
@@ -789,6 +853,7 @@ impl Default for GatewayConfig {
             cache: Default::default(),
             ui: Default::default(),
             async_inference: Default::default(),
+            cleanup: Default::default(),
         }
     }
 }
@@ -1022,6 +1087,10 @@ mod tests {
                 concurrency: 4,
                 stream_ttl_seconds: 600,
             }),
+            cleanup: Some(CleanupConfig {
+                enabled: true,
+                interval_secs: 300,
+            }),
         };
 
         let stored: StoredGatewayConfig = original.clone().into();
@@ -1111,5 +1180,102 @@ mod tests {
             err.to_string(),
             contains_substring("Invalid `gateway.ui.admin_emails` entry")
         );
+    }
+
+    // ── CleanupConfig ──────────────────────────────────────────────────
+
+    #[gtest]
+    fn test_cleanup_config_toml_parses() {
+        let parsed: UninitializedGatewayConfig = toml::from_str(
+            r"
+            [cleanup]
+            enabled = true
+            interval_secs = 120
+            ",
+        )
+        .expect("gateway.cleanup TOML should parse");
+        let loaded = parsed.load(None).expect("gateway.cleanup should load");
+        expect_that!(loaded.cleanup.enabled, eq(true));
+        expect_that!(loaded.cleanup.interval_secs, eq(120));
+    }
+
+    #[gtest]
+    fn test_cleanup_config_defaults() {
+        let parsed: UninitializedGatewayConfig =
+            toml::from_str("").expect("empty gateway TOML should parse");
+        let loaded = parsed
+            .load(None)
+            .expect("default gateway config should load");
+        expect_that!(loaded.cleanup.enabled, eq(false));
+        expect_that!(loaded.cleanup.interval_secs, eq(3600));
+
+        // An empty `[cleanup]` section should pick up the same defaults.
+        let parsed: UninitializedGatewayConfig =
+            toml::from_str("[cleanup]").expect("empty cleanup TOML should parse");
+        let loaded = parsed.load(None).expect("empty cleanup config should load");
+        expect_that!(loaded.cleanup.enabled, eq(false));
+        expect_that!(loaded.cleanup.interval_secs, eq(3600));
+    }
+
+    #[gtest]
+    fn test_cleanup_config_rejects_too_small_interval() {
+        let parsed: UninitializedGatewayConfig = toml::from_str(
+            r"
+            [cleanup]
+            enabled = true
+            interval_secs = 30
+            ",
+        )
+        .expect("gateway.cleanup TOML should parse before load validation");
+        let err = parsed
+            .load(None)
+            .expect_err("interval below the minimum should fail config load");
+        expect_that!(
+            err.to_string(),
+            contains_substring("Invalid `gateway.cleanup.interval_secs` `30`")
+        );
+    }
+
+    #[gtest]
+    fn test_cleanup_config_rejects_unknown_fields() {
+        let result: std::result::Result<UninitializedGatewayConfig, toml::de::Error> =
+            toml::from_str(
+                r"
+            [cleanup]
+            bogus_field = 1
+            ",
+            );
+        expect_that!(result, err(anything()));
+    }
+
+    #[gtest]
+    fn test_cleanup_config_stored_round_trip() {
+        // Round-trip through the actual StoredGatewayConfig conversions.
+        let original = UninitializedGatewayConfig {
+            cleanup: Some(CleanupConfig {
+                enabled: true,
+                interval_secs: 300,
+            }),
+            ..Default::default()
+        };
+        let stored = StoredGatewayConfig::from(original.clone());
+        expect_that!(
+            stored.cleanup,
+            some(eq(&StoredCleanupConfig {
+                enabled: Some(true),
+                interval_secs: Some(300),
+            }))
+        );
+        let restored = UninitializedGatewayConfig::try_from(stored)
+            .expect("StoredGatewayConfig should convert back");
+        expect_that!(restored.cleanup, eq(&original.cleanup));
+
+        // A stored gateway config without `cleanup` (predates the field)
+        // converts to `None`, which loads with defaults.
+        let legacy: StoredGatewayConfig =
+            serde_json::from_str("{}").expect("empty stored gateway config should deserialize");
+        let restored = UninitializedGatewayConfig::try_from(legacy)
+            .expect("legacy StoredGatewayConfig should convert");
+        expect_that!(restored.cleanup, none());
     }
 }

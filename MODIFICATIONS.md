@@ -152,3 +152,28 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `crates/tensorzero-core/tests/e2e/config/tensorzero.functions.write_haiku.toml` — Removed evaluator sections from the e2e config (Delta-AI fork).
 
 - `crates/async-inference/Cargo.toml` — Add regression test dependencies for lease isolation during Redis outages.
+
+- `docs/gateway/configuration-reference.mdx` — Documented `[gateway.cleanup]` (`enabled`, `interval_secs`) for the scheduled tag-based payload cleanup feature (Delta-AI fork).
+
+- `crates/.sqlx/query-35f5a3b23ac6f67c5cb2079ac3af556a48ff7a5977c8e922ea46f6513578403e.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-3a13ad79efc4a8ca78efee618e4d52f863a332f2354a72d3a6af7394c1eb6306.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-3e375207f06ad8f3c87804dacb232a92775bfefc106e80c6406007630d03cb30.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-3f528cb252ee27a0a58fba67c84aad230fcca279f8039271bc032d640292473e.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-428c050a96e020f707b5fdf44d5711044b8400d3bde7faedc8aa9cf8be2cda35.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-4ed41f1cdca4bd102a14e6d7c65871e33b84136f18285f23d673f6c1de614097.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-592bc7d24877bad8313156cda53d62029b9543e10b57471359b5e97168e8ac2d.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-5ba1512ac63cae54f22d8843e77dcb65073c6aa1a7e520c005a26f14d0eb7c58.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-5e9af0cc0bfd765519fe3c40b997a739ffc5f406c9223e3ac0f6f952ed48cb0b.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-64313546e5ce09f3ed29a173e85053cb9f412ebc21667cd8fe86d3d0b31ef39d.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-a50d150017b73eb402c90c8a3557cec9ed5c7c8102a74f9318565f49f237dc35.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-a5525fde8bd12a3006c871f373877ee33358f8ad095a35c4829da015761d012e.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-b6a5ee658d1e1a30b37e85436960d8cc4e43477d0a6879595262617043113ddb.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-bd7d5477cf4b5bc650d6f05c70a8bff512a606a1e54cc8dcba87f757a0c86772.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-c5afea1a752f1357a60612512e161503796d74836834575a3bf4be837451feea.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-c79861dd7634addafdd37c81299a3549a5ae57ea6560e176871a0b3f67958b3c.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-c89da02b3b28583c065a22d440cb724c11cc3eb000b1ee423ca0f1e277fcff39.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-cd0e6292b5ad88f00b9dd829fe663971ca3cb8ea2cbc47d87f890d7d6e8d944d.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-e7873d3c49dfbfdf1218827738218c58c5998aaa5288a47fd7d7362e22a6544f.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-e8ebf72e6d2e89cc5da56da8674955561077770ff199dbf173f92cd9b510d96a.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-ef3776cb7fe99915301e863b3cc591938f8f459b424c1c0e7ac3380e95eab1ad.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+- `crates/.sqlx/query-f7224d415441d3018000525d3f6d319463a71f8e8a3b92649c168f7f9771cfa1.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).

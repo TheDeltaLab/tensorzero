@@ -6,7 +6,7 @@
 
 use axum::{
     Router,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use tensorzero_core::endpoints;
 use tensorzero_core::feature_flags;
@@ -112,6 +112,25 @@ pub fn build_internal_non_otel_enabled_routes() -> Router<SwappableAppStateData>
         .route(
             "/internal/inference_storage/retention",
             post(endpoints::internal::inference_storage::update_inference_retention_handler),
+        )
+        // Tag-based cleanup endpoints
+        .route(
+            "/internal/cleanup/rules",
+            get(endpoints::internal::cleanup::list_cleanup_rules_handler)
+                .post(endpoints::internal::cleanup::create_cleanup_rule_handler),
+        )
+        .route(
+            "/internal/cleanup/rules/{rule_id}",
+            put(endpoints::internal::cleanup::update_cleanup_rule_handler)
+                .delete(endpoints::internal::cleanup::delete_cleanup_rule_handler),
+        )
+        .route(
+            "/internal/cleanup/run",
+            post(endpoints::internal::cleanup::trigger_cleanup_run_handler),
+        )
+        .route(
+            "/internal/cleanup/runs",
+            get(endpoints::internal::cleanup::list_cleanup_runs_handler),
         )
         // Inference protection endpoints
         .route(

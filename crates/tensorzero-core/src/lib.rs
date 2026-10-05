@@ -5,6 +5,7 @@
 #![recursion_limit = "256"]
 
 pub mod cache;
+pub mod cleanup; // scheduled tag-based payload cleanup for Postgres
 pub mod client; // Rust client for TensorZero
 pub mod config; // TensorZero config file
 pub mod cost; // cost configuration for model and embedding providers
