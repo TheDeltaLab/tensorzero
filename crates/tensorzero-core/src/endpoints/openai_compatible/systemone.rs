@@ -1,14 +1,22 @@
 // Modified by Delta-AI under Apache 2.0
-//! `POST /v1/systemone` for TypeSafe System One models such as Jev.
+//! `POST /v1/systemone` for TypeSafe System One models such as Jev and the
+//! Aliyun Bailian decision model (`decision-model-preview`).
 //!
-//! Jev does not generate text. Callers send `{ model, state, questions }` and
-//! receive typed answers. TensorZero forwards the call to OpenRouter's System
-//! One API (`POST /api/v1/systemone`) with `OPENROUTER_API_KEY`.
+//! These models do not generate text. Callers send `{ model, state, questions }`
+//! and receive typed answers. Both upstreams speak the same System One wire
+//! protocol (questions keyed by question id). Jev forwards to OpenRouter's
+//! System One API (`POST /api/v1/systemone`) with `OPENROUTER_API_KEY`; the
+//! decision model forwards to Bailian with `ALIBABA_API_KEY`. Bailian serves
+//! the decision model only on workspace-scoped MaaS endpoints, so deployments
+//! point `ALIBABA_SYSTEMONE_BASE_URL` at their workspace root (the public
+//! `compatible-mode` root is only the fallback default).
 //!
 //! Bare names `jev` and `jev-latest` route to `~typesafe/jev-latest`.
-//! `jev-1.13` and `jev-1.13.0` route to `typesafe/jev-1.13`. An explicit
-//! `openrouter::…` shorthand is forwarded as-is after the same normalization,
-//! so a future Jev id works without a gateway change.
+//! `jev-1.13` and `jev-1.13.0` route to `typesafe/jev-1.13`. Bare
+//! `decision-model` and `decision-model-preview` route to Aliyun's
+//! `decision-model-preview`. An explicit `openrouter::…` / `alibaba::…`
+//! shorthand is forwarded as-is after the same normalization, so a future
+//! model id works without a gateway change.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -43,6 +51,11 @@ use super::synapse::{
 const TENSORZERO_MODEL_NAME_PREFIX: &str = "tensorzero::model_name::";
 /// $0.042 per million input tokens. Output tokens are free.
 const JEV_INPUT_USD_PER_TOKEN: Decimal = Decimal::from_parts(42, 0, 0, false, 9);
+/// Bailian's decision model lives on workspace-scoped MaaS endpoints
+/// (`{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone`),
+/// so deployments set `ALIBABA_SYSTEMONE_BASE_URL` to their workspace root;
+/// this public root is only the fallback default.
+const ALIBABA_SYSTEMONE_DEFAULT_API_ROOT: &str = "https://dashscope.aliyuncs.com/compatible-mode";
 
 #[derive(Debug, Deserialize)]
 pub struct SystemOneParams {
@@ -117,7 +130,7 @@ pub async fn systemone_handler(
     };
 
     if status.is_success() {
-        let usage = usage_from_systemone(&body);
+        let usage = usage_from_systemone(&provider_name, &body);
         overlay_systemone_usage(&mut body, &usage);
         let mut episode_id = None;
         let mut tags = HashMap::new();
@@ -167,7 +180,7 @@ pub async fn systemone_handler(
 
 /// Provider header wins. Otherwise a `[model_aliases]` entry with
 /// `task = "systemone"` supplies `provider::model`. Known bare Jev names
-/// default to OpenRouter.
+/// default to OpenRouter; known bare decision-model names default to Aliyun.
 pub(crate) fn resolve_systemone_model(
     model: &str,
     provider: Option<&str>,
@@ -192,18 +205,21 @@ pub(crate) fn resolve_systemone_model(
     if let Some(upstream) = builtin_jev_model(model) {
         return Ok(format!("openrouter::{upstream}"));
     }
+    if let Some(upstream) = builtin_decision_model(model) {
+        return Ok(format!("alibaba::{upstream}"));
+    }
     Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
         message: format!(
-            "System One model `{model}` is not supported. Use `jev`, `jev-latest`, `jev-1.13`, or `openrouter::typesafe/<model>`."
+            "System One model `{model}` is not supported. Use `jev`, `jev-1.13`, `decision-model-preview`, `openrouter::typesafe/<model>`, or `alibaba::<model>`."
         ),
     }))
 }
 
 fn canonicalize_systemone_target(provider: &str, model: &str) -> String {
-    let model = if provider == "openrouter" {
-        normalize_openrouter_systemone_model(model)
-    } else {
-        model.to_string()
+    let model = match provider {
+        "openrouter" => normalize_openrouter_systemone_model(model),
+        "alibaba" => builtin_decision_model(model).unwrap_or(model).to_string(),
+        _ => model.to_string(),
     };
     format!("{provider}::{model}")
 }
@@ -225,6 +241,15 @@ fn builtin_jev_model(model: &str) -> Option<String> {
 
 fn normalize_openrouter_systemone_model(model: &str) -> String {
     builtin_jev_model(model).unwrap_or_else(|| model.to_string())
+}
+
+/// Bare Bailian decision-model names and their canonical upstream id.
+/// `decision-model-preview` is currently the only published id.
+fn builtin_decision_model(model: &str) -> Option<&'static str> {
+    match model {
+        "decision-model" | "decision-model-preview" => Some("decision-model-preview"),
+        _ => None,
+    }
 }
 
 fn validate_systemone_body(state: &Value, questions: &Map<String, Value>) -> Result<(), Error> {
@@ -268,19 +293,11 @@ async fn dispatch_systemone(
             .unwrap_or_default();
         return dummy_systemone(model, &questions);
     }
-    if provider != "openrouter" {
-        return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-            message: format!(
-                "System One is only configured for OpenRouter (provider `{provider}`)"
-            ),
-        }));
-    }
-
-    let url = openrouter_systemone_url()?;
-    let api_key = std::env::var("OPENROUTER_API_KEY").map_err(|_| {
+    let (url, api_key_env) = systemone_upstream(provider)?;
+    let api_key = std::env::var(api_key_env).map_err(|_| {
         Error::new(ErrorDetails::ApiKeyMissing {
-            provider_name: "openrouter".to_string(),
-            message: "OPENROUTER_API_KEY is not set".to_string(),
+            provider_name: provider.to_string(),
+            message: format!("{api_key_env} is not set"),
         })
     })?;
     let response = http_client
@@ -294,7 +311,7 @@ async fn dispatch_systemone(
             Error::new(ErrorDetails::InferenceClient {
                 message: format!("Error sending System One request: {e}"),
                 status_code: None,
-                provider_type: "openrouter".to_string(),
+                provider_type: provider.to_string(),
                 api_type: crate::inference::types::ApiType::ChatCompletions,
                 raw_request: None,
                 raw_response: None,
@@ -306,7 +323,7 @@ async fn dispatch_systemone(
             message: format!("Error reading System One response: {e}"),
             raw_request: None,
             raw_response: None,
-            provider_type: "openrouter".to_string(),
+            provider_type: provider.to_string(),
             api_type: crate::inference::types::ApiType::ChatCompletions,
         })
     })?;
@@ -318,10 +335,39 @@ async fn dispatch_systemone(
     ))
 }
 
+/// Upstream URL and API-key env var for a supported System One provider.
+fn systemone_upstream(provider: &str) -> Result<(Url, &'static str), Error> {
+    match provider {
+        "openrouter" => Ok((openrouter_systemone_url()?, "OPENROUTER_API_KEY")),
+        "alibaba" => Ok((alibaba_systemone_url()?, "ALIBABA_API_KEY")),
+        other => Err(systemone_unsupported_provider(other)),
+    }
+}
+
+fn systemone_unsupported_provider(provider: &str) -> Error {
+    Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
+        message: format!(
+            "System One is only configured for OpenRouter and Aliyun (provider `{provider}`)"
+        ),
+    })
+}
+
 fn openrouter_systemone_url() -> Result<Url, Error> {
     let base = openai_compatible_shorthand_api_base(
         "OPENROUTER_BASE_URL",
         "https://openrouter.ai/api",
+        true,
+    )?;
+    join_path(&base, "systemone")
+}
+
+/// `ALIBABA_SYSTEMONE_BASE_URL` (a workspace MaaS root such as
+/// `https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1`)
+/// or the public `compatible-mode` fallback root, plus `/systemone`.
+fn alibaba_systemone_url() -> Result<Url, Error> {
+    let base = openai_compatible_shorthand_api_base(
+        "ALIBABA_SYSTEMONE_BASE_URL",
+        ALIBABA_SYSTEMONE_DEFAULT_API_ROOT,
         true,
     )?;
     join_path(&base, "systemone")
@@ -362,13 +408,13 @@ fn split_provider_model(model: &str) -> Result<(&str, &str), Error> {
     model.split_once("::").ok_or_else(|| {
         Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
             message: format!(
-                "System One model `{model}` is not a provider shorthand. Use `jev` or `openrouter::typesafe/jev-1.13`."
+                "System One model `{model}` is not a provider shorthand. Use `jev`, `decision-model-preview`, or `alibaba::decision-model-preview`."
             ),
         })
     })
 }
 
-pub(crate) fn usage_from_systemone(body: &Value) -> Usage {
+pub(crate) fn usage_from_systemone(provider: &str, body: &Value) -> Usage {
     let Some(usage) = body.get("usage") else {
         return Usage::default();
     };
@@ -376,8 +422,14 @@ pub(crate) fn usage_from_systemone(body: &Value) -> Usage {
     let input_tokens = as_u32("input_tokens").or_else(|| as_u32("prompt_tokens"));
     let output_tokens = as_u32("output_tokens").or_else(|| as_u32("completion_tokens"));
     let reported_cost = usage.get("cost").and_then(json_decimal);
-    let cost = reported_cost
-        .or_else(|| input_tokens.map(|tokens| Decimal::from(tokens) * JEV_INPUT_USD_PER_TOKEN));
+    // OpenRouter does not report a cost for Jev, so the published list price
+    // is applied. Aliyun's decision model is a preview with no published
+    // price — usage is recorded without a cost.
+    let cost = reported_cost.or_else(|| {
+        (provider == "openrouter")
+            .then(|| input_tokens.map(|tokens| Decimal::from(tokens) * JEV_INPUT_USD_PER_TOKEN))
+            .flatten()
+    });
     Usage {
         input_tokens,
         output_tokens,
@@ -545,6 +597,42 @@ mod tests {
     }
 
     #[gtest]
+    fn bare_decision_model_names_route_to_alibaba() {
+        let aliases = ModelAliasTable::default();
+        expect_eq!(
+            resolve_systemone_model("decision-model-preview", None, &aliases).unwrap(),
+            "alibaba::decision-model-preview"
+        );
+        expect_eq!(
+            resolve_systemone_model("decision-model", None, &aliases).unwrap(),
+            "alibaba::decision-model-preview"
+        );
+        expect_eq!(
+            resolve_systemone_model("decision-model-preview", Some("alibaba"), &aliases).unwrap(),
+            "alibaba::decision-model-preview"
+        );
+        expect_eq!(
+            resolve_systemone_model("tensorzero::model_name::decision-model", None, &aliases)
+                .unwrap(),
+            "alibaba::decision-model-preview"
+        );
+    }
+
+    #[gtest]
+    fn explicit_alibaba_shorthand_keeps_unknown_future_ids() {
+        let aliases = ModelAliasTable::default();
+        expect_eq!(
+            resolve_systemone_model("alibaba::decision-model-pro", None, &aliases).unwrap(),
+            "alibaba::decision-model-pro"
+        );
+        // An alibaba shorthand canonicalizes bare decision-model names.
+        expect_eq!(
+            resolve_systemone_model("alibaba::decision-model", None, &aliases).unwrap(),
+            "alibaba::decision-model-preview"
+        );
+    }
+
+    #[gtest]
     fn explicit_openrouter_shorthand_keeps_unknown_future_ids() {
         let aliases = ModelAliasTable::default();
         expect_eq!(
@@ -594,13 +682,17 @@ mod tests {
         expect_eq!(body["answers"]["refund"]["noul"], 0.5);
         expect_eq!(body["answers"]["team"]["choice"], "billing");
         expect_eq!(body["answers"]["urgency"]["score"], 0.0);
-        let usage = usage_from_systemone(&body);
+        let usage = usage_from_systemone("openrouter", &body);
         expect_eq!(usage.input_tokens, Some(12));
         expect_eq!(usage.output_tokens, Some(3));
         expect_eq!(
             usage.cost,
             Some(Decimal::from(12) * JEV_INPUT_USD_PER_TOKEN)
         );
+        // Aliyun's decision model has no published price — usage only.
+        let alibaba_usage = usage_from_systemone("alibaba", &body);
+        expect_eq!(alibaba_usage.input_tokens, Some(12));
+        expect_eq!(alibaba_usage.cost, None);
     }
 
     #[gtest]
@@ -608,7 +700,7 @@ mod tests {
         let body = json!({
             "usage": { "input_tokens": 1_000_000, "output_tokens": 20, "cost": 0.03 }
         });
-        let usage = usage_from_systemone(&body);
+        let usage = usage_from_systemone("openrouter", &body);
         expect_eq!(usage.cost, Some(Decimal::from_str_exact("0.03").unwrap()));
         expect_eq!(usage.currency, Some(tensorzero_types::Currency::USD));
     }
@@ -618,5 +710,37 @@ mod tests {
         let base = Url::parse("https://openrouter.ai/api/v1").unwrap();
         let url = join_path(&base, "systemone").unwrap();
         expect_eq!(url.as_str(), "https://openrouter.ai/api/v1/systemone");
+    }
+
+    #[test]
+    fn alibaba_systemone_url_uses_compatible_mode_default() {
+        let (url, key_env) = systemone_upstream("alibaba").unwrap();
+        assert_eq!(key_env, "ALIBABA_API_KEY");
+        assert!(
+            url.as_str().ends_with("/compatible-mode/v1/systemone"),
+            "unexpected systemone url {url}"
+        );
+        let openrouter = systemone_upstream("openrouter").unwrap();
+        assert_eq!(openrouter.1, "OPENROUTER_API_KEY");
+        assert!(
+            systemone_upstream("openai").is_err(),
+            "chat-only providers must be rejected"
+        );
+    }
+
+    #[test]
+    fn workspace_systemone_url_keeps_versioned_path() {
+        // A workspace MaaS root set via `ALIBABA_SYSTEMONE_BASE_URL` must keep
+        // its versioned path (no extra `/v1` appended).
+        let base = crate::model::openai_compatible_shorthand_api_base_from_raw(
+            "https://llm-49okomxitx4c6fhx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+            true,
+        )
+        .unwrap();
+        let url = join_path(&base, "systemone").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://llm-49okomxitx4c6fhx.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/systemone"
+        );
     }
 }
