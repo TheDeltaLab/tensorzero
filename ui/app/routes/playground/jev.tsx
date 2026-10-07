@@ -33,7 +33,7 @@ import {
 } from "./jev";
 
 export const handle: RouteHandle = {
-  crumb: () => ["Playground", "Jev"],
+  crumb: () => ["Playground", "System One"],
 };
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -107,7 +107,7 @@ export default function JevPlayground() {
         <div className="flex flex-col gap-2">
           <Label>Model</Label>
           <Select value={model} onValueChange={setModel}>
-            <SelectTrigger aria-label="Jev model">
+            <SelectTrigger aria-label="System One model">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -119,8 +119,8 @@ export default function JevPlayground() {
             </SelectContent>
           </Select>
           <p className="text-muted-foreground text-xs">
-            Jev answers typed questions about a state. It does not generate chat
-            text. Ctrl/Cmd+Enter to run.
+            System One models answer typed questions about a state. They do not
+            generate chat text. Ctrl/Cmd+Enter to run.
           </p>
         </div>
         <div className="flex flex-col gap-2">
@@ -170,7 +170,7 @@ export default function JevPlayground() {
           ))}
         </div>
         <Button type="submit" disabled={busy}>
-          {busy ? "Running…" : "Run Jev"}
+          {busy ? "Running…" : "Run"}
         </Button>
       </Form>
       {actionData?.ok === true ? (

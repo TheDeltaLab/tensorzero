@@ -1,6 +1,11 @@
 // Modified by Delta-AI under Apache 2.0
 
-export const JEV_MODELS = ["jev-latest", "jev-1.13", "jev"] as const;
+export const JEV_MODELS = [
+  "decision-model-preview",
+  "jev-latest",
+  "jev-1.13",
+  "jev",
+] as const;
 
 export type JevQuestionType = "noul" | "choice" | "score";
 
