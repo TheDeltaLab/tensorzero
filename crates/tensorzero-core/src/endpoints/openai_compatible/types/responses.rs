@@ -338,6 +338,7 @@ fn parse_responses_input_item(item: Value) -> Result<OpenAICompatibleMessage, Er
             OpenAICompatibleAssistantMessage {
                 content: Some(content),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             },
         )),
@@ -376,6 +377,7 @@ fn parse_responses_function_call(
                     arguments: arguments.to_string(),
                 },
             }]),
+            reasoning_content: None,
             tensorzero_extra_content: None,
         },
     ))
@@ -444,6 +446,7 @@ fn parse_responses_reasoning(obj: &serde_json::Map<String, Value>) -> OpenAIComp
     OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
         content: None,
         tool_calls: None,
+        reasoning_content: None,
         tensorzero_extra_content: Some(vec![ExtraContentBlock::Thought {
             insert_index: None,
             thought,
@@ -578,29 +581,44 @@ pub fn responses_output_items(
         let ExtraContentBlock::Thought { thought, .. } = block else {
             continue;
         };
-        let summary_text = thought
-            .summary
-            .as_ref()
-            .map(|summary| {
-                summary
-                    .iter()
-                    .map(|block| match block {
-                        ThoughtSummaryBlock::SummaryText { text } => text.clone(),
-                    })
-                    .collect::<Vec<_>>()
-                    .join("")
-            })
+        let summary_from_blocks = thought.summary.as_ref().map(|summary| {
+            summary
+                .iter()
+                .map(|block| match block {
+                    ThoughtSummaryBlock::SummaryText { text } => text.as_str(),
+                })
+                .collect::<Vec<_>>()
+                .join("")
+        });
+        let summary_text = summary_from_blocks
+            .clone()
+            .filter(|text| !text.is_empty())
             .or_else(|| thought.text.clone())
             .unwrap_or_default();
+        // Prefer the full reasoning text. Clients such as pi-ai replay this
+        // item unchanged; DeepSeek rejects the next tool-call turn unless
+        // `content` carries `reasoning_text`, so a summary-only item is not
+        // enough. Fall back to the summary text when that is all we have.
+        let reasoning_text = thought
+            .text
+            .clone()
+            .filter(|text| !text.is_empty())
+            .or_else(|| summary_from_blocks.filter(|text| !text.is_empty()));
         let mut reasoning = json!({
             "id": format!("rs_{message_id}_{index}"),
             "type": "reasoning",
             "summary": [{"type": "summary_text", "text": summary_text}],
         });
-        if let Some(signature) = &thought.signature
-            && let Some(object) = reasoning.as_object_mut()
-        {
-            object.insert("encrypted_content".to_string(), json!(signature));
+        if let Some(object) = reasoning.as_object_mut() {
+            if let Some(reasoning_text) = reasoning_text {
+                object.insert(
+                    "content".to_string(),
+                    json!([{"type": "reasoning_text", "text": reasoning_text}]),
+                );
+            }
+            if let Some(signature) = &thought.signature {
+                object.insert("encrypted_content".to_string(), json!(signature));
+            }
         }
         output.push(reasoning);
     }
@@ -810,6 +828,49 @@ mod tests {
                 "id": "rs_msg_test_0",
                 "type": "reasoning",
                 "summary": [{"type": "summary_text", "text": "thinking step"}],
+                "content": [{"type": "reasoning_text", "text": "thinking step"}],
+                "encrypted_content": "enc-payload",
+            })
+        );
+    }
+
+    #[gtest]
+    fn test_responses_output_items_emits_reasoning_text_from_summary() {
+        // A Thought that only has a summary (the shape produced when a client
+        // replays a summary-only reasoning item) must still leave
+        // `content[].reasoning_text` on the wire. DeepSeek rejects the next
+        // tool-call turn without it.
+        let items = responses_output_items(
+            "msg_test",
+            None,
+            &[],
+            &[ExtraContentBlock::Thought {
+                insert_index: None,
+                thought: Thought {
+                    text: None,
+                    signature: Some("enc-payload".to_string()),
+                    summary: Some(vec![
+                        ThoughtSummaryBlock::SummaryText {
+                            text: "plan ".to_string(),
+                        },
+                        ThoughtSummaryBlock::SummaryText {
+                            text: "the call".to_string(),
+                        },
+                    ]),
+                    provider_type: None,
+                    extra_data: None,
+                },
+            }],
+        );
+
+        assert_eq!(items.len(), 1, "expected a reasoning item");
+        assert_eq!(
+            items[0],
+            json!({
+                "id": "rs_msg_test_0",
+                "type": "reasoning",
+                "summary": [{"type": "summary_text", "text": "plan the call"}],
+                "content": [{"type": "reasoning_text", "text": "plan the call"}],
                 "encrypted_content": "enc-payload",
             })
         );

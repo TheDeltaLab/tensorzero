@@ -60,6 +60,11 @@ pub struct OpenAICompatibleUserMessage {
 pub struct OpenAICompatibleAssistantMessage {
     pub content: Option<Value>,
     pub tool_calls: Option<Vec<OpenAICompatibleToolCall>>,
+    /// Thinking text replayed by the client (DeepSeek `reasoning_content`,
+    /// also used by other OpenAI-compatible providers). Mapped to a `Thought`
+    /// so a later tool-call turn is not forwarded without it.
+    #[serde(default)]
+    pub reasoning_content: Option<String>,
     pub tensorzero_extra_content: Option<Vec<ExtraContentBlock>>,
 }
 
@@ -611,6 +616,21 @@ pub fn openai_messages_to_input(
             }
             OpenAICompatibleMessage::Assistant(msg) => {
                 let mut message_content = Vec::new();
+                // DeepSeek rejects a tool-call continuation unless the
+                // assistant turn carries `reasoning_content`. Clients send
+                // that field on the message; keep it as a Thought so the
+                // provider request can write it back.
+                if let Some(reasoning_content) =
+                    msg.reasoning_content.filter(|text| !text.is_empty())
+                {
+                    message_content.push(InputMessageContent::Thought(Thought {
+                        text: Some(reasoning_content),
+                        signature: None,
+                        summary: None,
+                        provider_type: None,
+                        extra_data: None,
+                    }));
+                }
                 if let Some(content) = msg.content {
                     message_content.extend(convert_openai_message_content(
                         "assistant".to_string(),
@@ -1102,6 +1122,7 @@ mod tests {
                         arguments: "{}".to_string(),
                     },
                 }]),
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             }),
             OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
@@ -1114,6 +1135,7 @@ mod tests {
                         arguments: "{}".to_string(),
                     },
                 }]),
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             }),
             OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
@@ -1126,6 +1148,7 @@ mod tests {
                         arguments: "{}".to_string(),
                     },
                 }]),
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             }),
             OpenAICompatibleMessage::Tool(OpenAICompatibleToolMessage {
@@ -1310,6 +1333,7 @@ mod tests {
                     "city": "Tokyo",
                 }])),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             },
         )];
@@ -1344,6 +1368,7 @@ mod tests {
                         arguments: "{}".to_string(),
                     },
                 }]),
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             },
         )];
@@ -1378,6 +1403,7 @@ mod tests {
             OpenAICompatibleMessage::Assistant(OpenAICompatibleAssistantMessage {
                 content: Some(Value::String("Assistant message".to_string())),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: None,
             }),
             OpenAICompatibleMessage::System(OpenAICompatibleSystemMessage {
@@ -1962,6 +1988,7 @@ mod tests {
             OpenAICompatibleAssistantMessage {
                 content: Some(Value::String("Response text".to_string())),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![
                     // Unindexed thought - should be appended
                     ExtraContentBlock::Thought {
@@ -2395,6 +2422,7 @@ mod tests {
             OpenAICompatibleAssistantMessage {
                 content: Some(Value::String("Hello".to_string())),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![ExtraContentBlock::Thought {
                     insert_index: Some(999), // Way out of bounds
                     thought: Thought {
@@ -2429,6 +2457,7 @@ mod tests {
             OpenAICompatibleAssistantMessage {
                 content: None,
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![
                     ExtraContentBlock::Thought {
                         insert_index: Some(0),
@@ -2481,6 +2510,7 @@ mod tests {
             OpenAICompatibleAssistantMessage {
                 content: Some(Value::String("Hello".to_string())),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![
                     ExtraContentBlock::Thought {
                         insert_index: Some(0),
@@ -2531,6 +2561,7 @@ mod tests {
             OpenAICompatibleAssistantMessage {
                 content: Some(Value::String("Hello".to_string())),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![
                     ExtraContentBlock::Thought {
                         insert_index: None,
@@ -2585,6 +2616,7 @@ mod tests {
                         arguments: "{}".to_string(),
                     },
                 }]),
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![ExtraContentBlock::Thought {
                     insert_index: Some(0),
                     thought: Thought {
@@ -2636,6 +2668,7 @@ mod tests {
                     json!({"type": "text", "text": "text5"}),
                 ])),
                 tool_calls: None,
+                reasoning_content: None,
                 tensorzero_extra_content: Some(vec![
                     ExtraContentBlock::Thought {
                         insert_index: Some(3),
@@ -2907,6 +2940,42 @@ mod tests {
                 "role": eq("assistant"),
                 "content": eq("plain answer"),
             })
+        );
+    }
+
+    #[googletest::gtest]
+    fn assistant_reasoning_content_maps_to_thought() {
+        use googletest::prelude::*;
+
+        let message: OpenAICompatibleMessage = serde_json::from_value(json!({
+            "role": "assistant",
+            "content": "I'll check.",
+            "reasoning_content": "Need the weather first.",
+            "tool_calls": [{
+                "id": "call_1",
+                "type": "function",
+                "function": {"name": "get_weather", "arguments": "{}"}
+            }]
+        }))
+        .expect("assistant message with reasoning_content should deserialize");
+
+        let input = openai_messages_to_input(vec![message]).expect("message should convert");
+        assert_that!(input.messages.len(), eq(1));
+        let content = &input.messages[0].content;
+        assert_that!(content.len(), eq(3));
+        match &content[0] {
+            InputMessageContent::Thought(thought) => {
+                expect_that!(thought.text.as_deref(), some(eq("Need the weather first.")));
+            }
+            other => panic!("expected a Thought from reasoning_content, got {other:?}"),
+        }
+        assert!(
+            matches!(content[1], InputMessageContent::Text(_)),
+            "text should follow the thought"
+        );
+        assert!(
+            matches!(content[2], InputMessageContent::ToolCall(_)),
+            "tool call should follow the text"
         );
     }
 }

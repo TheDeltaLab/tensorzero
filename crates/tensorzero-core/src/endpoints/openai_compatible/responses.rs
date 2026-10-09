@@ -355,10 +355,19 @@ impl ResponsesStreamState {
                     "summary": [part],
                     "encrypted_content": item.signature,
                 });
-                if item.signature.is_none()
-                    && let Some(object) = reasoning.as_object_mut()
-                {
-                    object.remove("encrypted_content");
+                if let Some(object) = reasoning.as_object_mut() {
+                    // Same text as the summary: DeepSeek thinking mode
+                    // requires `content[].reasoning_text` on replay, and
+                    // clients store this completed item as-is.
+                    if !item.text.is_empty() {
+                        object.insert(
+                            "content".to_string(),
+                            json!([{"type": "reasoning_text", "text": item.text}]),
+                        );
+                    }
+                    if item.signature.is_none() {
+                        object.remove("encrypted_content");
+                    }
                 }
                 frames.push((
                     Some("response.output_item.done"),
@@ -906,6 +915,14 @@ mod tests {
             output[0]["summary"][0]["text"].as_str(),
             eq(Some("thinking hard"))
         );
+        expect_that!(
+            output[0]["content"][0]["type"].as_str(),
+            eq(Some("reasoning_text"))
+        );
+        expect_that!(
+            output[0]["content"][0]["text"].as_str(),
+            eq(Some("thinking hard"))
+        );
     }
 
     #[gtest]
@@ -990,6 +1007,14 @@ mod tests {
         );
         expect_that!(
             reasoning["summary"][0]["text"].as_str(),
+            eq(Some("thinking hard"))
+        );
+        expect_that!(
+            reasoning["content"][0]["type"].as_str(),
+            eq(Some("reasoning_text"))
+        );
+        expect_that!(
+            reasoning["content"][0]["text"].as_str(),
             eq(Some("thinking hard"))
         );
     }
