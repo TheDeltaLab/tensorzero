@@ -935,30 +935,101 @@ pub async fn prepare_openai_responses_messages<'a>(
     Ok(openai_messages)
 }
 
+/// Plaintext DeepSeek accepts in place of a missing `reasoning_text`.
+const SYNTHESIZED_REASONING_TEXT: &str = "Planning next steps.";
+
+fn joined_thought_summary(summary: Option<&[ThoughtSummaryBlock]>) -> Option<String> {
+    let summary = summary?;
+    let joined = summary
+        .iter()
+        .map(|block| match block {
+            ThoughtSummaryBlock::SummaryText { text } => text.as_str(),
+        })
+        .collect::<Vec<_>>()
+        .join("");
+    if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
+}
+
+/// A reasoning item only satisfies DeepSeek's thinking-mode check when it
+/// carries non-empty `content` (`reasoning_text`). Summary and
+/// `encrypted_content` alone are rejected.
+fn reasoning_item_has_content(reasoning: &OpenAIResponsesReasoning<'_>) -> bool {
+    reasoning.content.as_ref().is_some_and(|parts| {
+        parts.iter().any(|part| match part {
+            OpenAIResponsesReasoningText::ReasoningText { text } => !text.is_empty(),
+        })
+    })
+}
+
+fn should_replay_thought(
+    provider_type: &str,
+    signature: Option<&str>,
+    text: Option<&str>,
+    summary: Option<&[ThoughtSummaryBlock]>,
+) -> bool {
+    signature.is_some()
+        || text.is_some()
+        || (provider_type == DEEPSEEK_PROVIDER_TYPE && joined_thought_summary(summary).is_some())
+}
+
+/// Text to write into a replayed reasoning item's `content`.
+///
+/// DeepSeek rejects a tool-call replay unless that field is present. Clients
+/// often store only `summary` + `encrypted_content` (what this gateway used to
+/// emit), which comes back as a Thought with `text: None`. For DeepSeek, use
+/// the thought text, else the summary, else a placeholder. Other providers
+/// keep `content` unset when there is no thought text: OpenAI rejects
+/// synthesized reasoning items.
+fn replay_reasoning_text<'a>(
+    provider_type: &str,
+    text: Option<&'a str>,
+    summary: Option<&[ThoughtSummaryBlock]>,
+) -> Option<Cow<'a, str>> {
+    if let Some(text) = text.filter(|text| !text.is_empty()) {
+        return Some(Cow::Borrowed(text));
+    }
+    if provider_type != DEEPSEEK_PROVIDER_TYPE {
+        return None;
+    }
+    if let Some(summary) = joined_thought_summary(summary) {
+        return Some(Cow::Owned(summary));
+    }
+    Some(Cow::Owned(SYNTHESIZED_REASONING_TEXT.to_string()))
+}
+
 /// DeepSeek's Responses API (thinking mode) rejects a replayed assistant turn
-/// when a `function_call` item is not preceded by a `reasoning` item (counting
-/// since the previous `function_call_output` or the start of the input),
-/// answering 400 with "The reasoning_text in the thinking mode must be passed
-/// back to the API". The model does not always emit reasoning for a turn
-/// (`reasoning_tokens == 0`), leaving nothing to replay. DeepSeek only checks
-/// structure and position — any plaintext `reasoning_text` is accepted — so
-/// insert a synthesized plaintext reasoning item before each uncovered
-/// `function_call`. Note the reasoning item must precede the whole assistant
-/// turn: verified against `api.deepseek.com`, a reasoning item placed after
-/// the turn's assistant `message` item (but still before the `function_call`)
-/// is still rejected, so the insert walks back over the assistant `message`
-/// items that open the turn. This must stay gated to DeepSeek: real OpenAI
-/// requires `rs_*` ids on replayed reasoning items and would reject these.
+/// when a `function_call` item is not preceded by a `reasoning` item that
+/// carries `reasoning_text` (counting since the previous `function_call_output`
+/// or the start of the input), answering 400 with "The reasoning_text in the
+/// thinking mode must be passed back to the API". A reasoning item that only
+/// has `summary` / `encrypted_content` does not count. The model does not
+/// always emit reasoning for a turn (`reasoning_tokens == 0`), leaving nothing
+/// to replay. DeepSeek only checks structure and position — any plaintext
+/// `reasoning_text` is accepted — so insert a synthesized plaintext reasoning
+/// item before each uncovered `function_call`. Note the reasoning item must
+/// precede the whole assistant turn: verified against `api.deepseek.com`, a
+/// reasoning item placed after the turn's assistant `message` item (but still
+/// before the `function_call`) is still rejected, so the insert walks back
+/// over the assistant `message` items that open the turn. This must stay gated
+/// to DeepSeek: real OpenAI requires `rs_*` ids on replayed reasoning items
+/// and would reject these.
 fn synthesize_reasoning_before_function_calls<'a>(
     messages: Vec<OpenAIResponsesInput<'a>>,
 ) -> Vec<OpenAIResponsesInput<'a>> {
-    const SYNTHESIZED_REASONING_TEXT: &str = "Planning next steps.";
     let mut has_reasoning = false;
     let mut output: Vec<OpenAIResponsesInput<'_>> = Vec::with_capacity(messages.len());
     for message in messages {
         match &message {
-            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(_)) => {
-                has_reasoning = true;
+            OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(reasoning)) => {
+                // Summary-only items do not satisfy DeepSeek. Leave the flag
+                // false so a plaintext item is still inserted.
+                if reasoning_item_has_content(reasoning) {
+                    has_reasoning = true;
+                }
             }
             OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCallOutput(_)) => {
                 has_reasoning = false;
@@ -1107,7 +1178,7 @@ async fn tensorzero_to_openai_responses_user_messages<'a>(
 
 pub fn tensorzero_to_openai_responses_assistant_message<'a>(
     content_blocks: Cow<'a, [ContentBlock]>,
-    _provider_type: &str,
+    provider_type: &str,
 ) -> Result<Vec<OpenAIResponsesInput<'a>>, Error> {
     let mut output = Vec::new();
     let content_block_cows: Vec<Cow<'_, ContentBlock>> = match content_blocks {
@@ -1173,17 +1244,23 @@ pub fn tensorzero_to_openai_responses_assistant_message<'a>(
                 // the reasoning text in `content` alongside the encrypted
                 // payload; an encrypted-only item is rejected with
                 // "The `reasoning_text` in the thinking mode must be passed
-                // back to the API." Emit whichever fields the inbound item had
-                // (see `parse_responses_reasoning`).
-                if thought.signature.is_some() || thought.text.is_some() {
+                // back to the API." When the client replayed a summary-only
+                // item, fill `content` from the summary (or a placeholder).
+                if should_replay_thought(
+                    provider_type,
+                    thought.signature.as_deref(),
+                    thought.text.as_deref(),
+                    thought.summary.as_deref(),
+                ) {
                     output.push(OpenAIResponsesInput::Known(
                         OpenAIResponsesInputInner::Reasoning(OpenAIResponsesReasoning {
                             encrypted_content: thought.signature.as_deref().map(Cow::Borrowed),
-                            content: thought.text.as_deref().map(|text| {
-                                vec![OpenAIResponsesReasoningText::ReasoningText {
-                                    text: Cow::Borrowed(text),
-                                }]
-                            }),
+                            content: replay_reasoning_text(
+                                provider_type,
+                                thought.text.as_deref(),
+                                thought.summary.as_deref(),
+                            )
+                            .map(|text| vec![OpenAIResponsesReasoningText::ReasoningText { text }]),
                             summary: thought
                                 .summary
                                 .as_ref()
@@ -1206,15 +1283,26 @@ pub fn tensorzero_to_openai_responses_assistant_message<'a>(
             }
             Cow::Owned(ContentBlock::Thought(thought)) => {
                 // See the Borrowed arm for why `content` is emitted.
-                if thought.signature.is_some() || thought.text.is_some() {
+                if should_replay_thought(
+                    provider_type,
+                    thought.signature.as_deref(),
+                    thought.text.as_deref(),
+                    thought.summary.as_deref(),
+                ) {
+                    let content = replay_reasoning_text(
+                        provider_type,
+                        thought.text.as_deref(),
+                        thought.summary.as_deref(),
+                    )
+                    .map(|text| {
+                        vec![OpenAIResponsesReasoningText::ReasoningText {
+                            text: Cow::Owned(text.into_owned()),
+                        }]
+                    });
                     output.push(OpenAIResponsesInput::Known(
                         OpenAIResponsesInputInner::Reasoning(OpenAIResponsesReasoning {
                             encrypted_content: thought.signature.map(Cow::Owned),
-                            content: thought.text.map(|text| {
-                                vec![OpenAIResponsesReasoningText::ReasoningText {
-                                    text: Cow::Owned(text),
-                                }]
-                            }),
+                            content,
                             summary: thought
                                 .summary
                                 .map(|summary| {
@@ -2020,6 +2108,70 @@ mod tests {
         );
     }
 
+    #[gtest]
+    fn test_deepseek_summary_only_thought_emits_reasoning_text() {
+        // Clients replay the reasoning item this gateway previously emitted:
+        // summary + encrypted_content, no `content`. That lands as a Thought
+        // with text: None. DeepSeek still needs reasoning_text, taken from the
+        // summary parts joined in order.
+        let blocks = vec![ContentBlock::Thought(Thought {
+            text: None,
+            signature: Some("enc-payload".to_string()),
+            summary: Some(vec![
+                ThoughtSummaryBlock::SummaryText {
+                    text: "plan ".to_string(),
+                },
+                ThoughtSummaryBlock::SummaryText {
+                    text: "the call".to_string(),
+                },
+            ]),
+            provider_type: None,
+            extra_data: None,
+        })];
+        let items = tensorzero_to_openai_responses_assistant_message(
+            Cow::Borrowed(&blocks),
+            DEEPSEEK_PROVIDER_TYPE,
+        )
+        .expect("summary-only thought should serialize");
+
+        let wire = serde_json::to_value(&items).expect("items should serialize");
+        assert_eq!(
+            wire,
+            serde_json::json!([{
+                "type": "reasoning",
+                "encrypted_content": "enc-payload",
+                "content": [{ "type": "reasoning_text", "text": "plan the call" }],
+                "summary": [
+                    { "type": "summary_text", "text": "plan " },
+                    { "type": "summary_text", "text": "the call" }
+                ]
+            }]),
+            "summary-only reasoning must still carry content.reasoning_text"
+        );
+    }
+
+    #[gtest]
+    fn test_openai_summary_only_thought_does_not_invent_reasoning_text() {
+        let blocks = vec![ContentBlock::Thought(Thought {
+            text: None,
+            signature: Some("enc-payload".to_string()),
+            summary: Some(vec![ThoughtSummaryBlock::SummaryText {
+                text: "thinking...".to_string(),
+            }]),
+            provider_type: None,
+            extra_data: None,
+        })];
+        let items =
+            tensorzero_to_openai_responses_assistant_message(Cow::Borrowed(&blocks), PROVIDER_TYPE)
+                .expect("thought block should serialize");
+        let wire = serde_json::to_value(&items).expect("items should serialize");
+        expect_that!(
+            wire[0].get("content"),
+            none(),
+            "OpenAI replay must not invent reasoning_text from a summary"
+        );
+    }
+
     #[tokio::test]
     async fn test_deepseek_synthesizes_reasoning_before_function_call() {
         // A replayed assistant turn with text + tool call but no Thought
@@ -2127,6 +2279,79 @@ mod tests {
             wire["encrypted_content"],
             serde_json::json!("sig"),
             "an existing reasoning item must be kept as-is instead of duplicated"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_deepseek_summary_only_thought_is_not_treated_as_missing() {
+        // After the summary is copied into reasoning_text, the item counts as
+        // reasoning. A second placeholder must not be inserted in front of it.
+        let messages = vec![RequestMessage {
+            role: Role::Assistant,
+            content: vec![
+                ContentBlock::Thought(Thought {
+                    text: None,
+                    signature: Some("sig".to_string()),
+                    summary: Some(vec![ThoughtSummaryBlock::SummaryText {
+                        text: "from summary".to_string(),
+                    }]),
+                    provider_type: None,
+                    extra_data: None,
+                }),
+                tool_call_block("call_1"),
+            ],
+        }];
+        let items = prepare_openai_responses_messages(
+            None,
+            &messages,
+            responses_messages_config(DEEPSEEK_PROVIDER_TYPE),
+        )
+        .await
+        .expect("messages should prepare");
+
+        assert_that!(
+            input_type_names(&items),
+            container_eq(vec!["reasoning", "function_call"]),
+            "a summary-only thought already carries reasoning_text, so no extra item is inserted"
+        );
+        let wire = serde_json::to_value(&items[0]).expect("reasoning item should serialize");
+        assert_eq!(
+            wire["content"][0]["text"].as_str(),
+            Some("from summary"),
+            "summary text must be copied into reasoning_text"
+        );
+    }
+
+    #[gtest]
+    fn test_contentless_reasoning_still_synthesizes_before_function_call() {
+        // A reasoning item with only summary / encrypted_content does not
+        // satisfy DeepSeek. The placeholder must still be inserted.
+        let reasoning = OpenAIResponsesInput::Known(OpenAIResponsesInputInner::Reasoning(
+            OpenAIResponsesReasoning {
+                encrypted_content: Some(Cow::Owned("enc".to_string())),
+                content: None,
+                summary: vec![OpenAIResponsesReasoningSummary::SummaryText {
+                    text: Cow::Owned("summary only".to_string()),
+                }],
+            },
+        ));
+        let function_call = OpenAIResponsesInput::Known(OpenAIResponsesInputInner::FunctionCall(
+            OpenAIResponsesFunctionCall {
+                call_id: Cow::Owned("call_1".to_string()),
+                name: Cow::Owned("get_weather".to_string()),
+                arguments: Cow::Owned("{}".to_string()),
+            },
+        ));
+        let result = synthesize_reasoning_before_function_calls(vec![reasoning, function_call]);
+        assert_that!(
+            input_type_names(&result),
+            container_eq(vec!["reasoning", "reasoning", "function_call"]),
+            "a content-less reasoning item must not suppress the synthesized one"
+        );
+        let wire = serde_json::to_value(&result[1]).expect("synthesized item should serialize");
+        expect_that!(
+            wire["content"][0]["text"].as_str(),
+            some(eq("Planning next steps."))
         );
     }
 
