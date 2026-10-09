@@ -467,6 +467,25 @@ fn normalize_responses_content(content: Value) -> Value {
                             "type": "text",
                             "text": part.get("text").cloned().unwrap_or(Value::String(String::new())),
                         })
+                    } else if part_type == "input_image" {
+                        // The OpenAI Responses spelling carries the image as a
+                        // bare `image_url` string (an https or data URL) with an
+                        // optional sibling `detail`. The content-block parser
+                        // only knows the chat-completions spelling, where
+                        // `image_url` is an object — rewrite one into the other.
+                        // An object `image_url` is already in parser vocabulary
+                        // and passes through untouched, as does anything
+                        // malformed (the parser reports it).
+                        match part.get("image_url") {
+                            Some(Value::String(url)) => {
+                                let mut image_url = json!({ "url": url });
+                                if let Some(detail) = part.get("detail") {
+                                    image_url["detail"] = detail.clone();
+                                }
+                                json!({ "type": "image_url", "image_url": image_url })
+                            }
+                            _ => part,
+                        }
                     } else {
                         part
                     }
@@ -688,6 +707,97 @@ mod tests {
         match &messages[0] {
             OpenAICompatibleMessage::User(msg) => {
                 assert_eq!(msg.content, json!([{"type": "text", "text": "Hi"}]));
+            }
+            _ => panic!("expected user"),
+        }
+    }
+
+    #[test]
+    fn test_input_image_string_url_becomes_image_url_block() {
+        // The OpenAI Responses spelling: `image_url` is a bare string with an
+        // optional sibling `detail`. Must land in parser vocabulary as the
+        // chat-completions object spelling before the content-block parse.
+        let messages = responses_input_to_messages(
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_text", "text": "What is in this image?"},
+                        {"type": "input_image", "image_url": "https://example.com/cat.png", "detail": "low"}
+                    ]
+                }
+            ]),
+            None,
+        )
+        .unwrap();
+        match &messages[0] {
+            OpenAICompatibleMessage::User(msg) => {
+                assert_eq!(
+                    msg.content,
+                    json!([
+                        {"type": "text", "text": "What is in this image?"},
+                        {"type": "image_url", "image_url": {"url": "https://example.com/cat.png", "detail": "low"}}
+                    ])
+                );
+            }
+            _ => panic!("expected user"),
+        }
+    }
+
+    #[test]
+    fn test_input_image_data_url_without_detail() {
+        let messages = responses_input_to_messages(
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_image", "image_url": "data:image/png;base64,aGVsbG8="}
+                    ]
+                }
+            ]),
+            None,
+        )
+        .unwrap();
+        match &messages[0] {
+            OpenAICompatibleMessage::User(msg) => {
+                assert_eq!(
+                    msg.content,
+                    json!([
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}}
+                    ])
+                );
+            }
+            _ => panic!("expected user"),
+        }
+    }
+
+    #[test]
+    fn test_input_image_object_url_passes_through() {
+        // An object `image_url` is already the chat-completions spelling —
+        // the rewrite must leave it untouched.
+        let messages = responses_input_to_messages(
+            json!([
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [
+                        {"type": "input_image", "image_url": {"url": "https://example.com/cat.png", "detail": "high"}}
+                    ]
+                }
+            ]),
+            None,
+        )
+        .unwrap();
+        match &messages[0] {
+            OpenAICompatibleMessage::User(msg) => {
+                assert_eq!(
+                    msg.content,
+                    json!([
+                        {"type": "input_image", "image_url": {"url": "https://example.com/cat.png", "detail": "high"}}
+                    ])
+                );
             }
             _ => panic!("expected user"),
         }
