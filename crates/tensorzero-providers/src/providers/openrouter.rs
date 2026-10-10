@@ -53,6 +53,9 @@ use tensorzero_types_providers::openrouter::{
 };
 use uuid::Uuid;
 
+use rust_decimal::Decimal;
+use tensorzero_types::cost::Currency;
+
 use crate::providers::chat_completions::prepare_chat_completion_tools;
 use crate::providers::helpers::{
     convert_stream_error, inject_extra_request_data_and_send,
@@ -1583,6 +1586,11 @@ pub(super) struct OpenRouterUsage {
     pub completion_tokens: Option<u32>,
     #[serde(default)]
     pub prompt_tokens_details: Option<OpenAIPromptTokensDetails>,
+    /// OpenRouter-reported per-request cost in USD (`usage.cost`), present in
+    /// both non-streaming responses and the final streaming usage chunk. Null
+    /// on BYOK requests where the upstream provider does not report cost.
+    #[serde(default)]
+    pub cost: Option<Decimal>,
 }
 
 impl OpenRouterUsage {
@@ -1594,8 +1602,8 @@ impl OpenRouterUsage {
                 .prompt_tokens_details
                 .and_then(|d| d.cached_tokens),
             provider_cache_write_input_tokens: None,
-            cost: None,
-            currency: None,
+            cost: self.cost,
+            currency: self.cost.map(|_| Currency::USD),
         }
     }
 }
@@ -2542,6 +2550,7 @@ mod tests {
                 prompt_tokens: Some(10),
                 completion_tokens: Some(20),
                 prompt_tokens_details: None,
+                cost: Some(Decimal::new(4, 6)),
             },
         };
         let generic_request = ModelInferenceRequest {
@@ -2605,6 +2614,8 @@ mod tests {
         );
         assert_eq!(inference_response.usage.input_tokens, Some(10));
         assert_eq!(inference_response.usage.output_tokens, Some(20));
+        assert_eq!(inference_response.usage.cost, Some(Decimal::new(4, 6)));
+        assert_eq!(inference_response.usage.currency, Some(Currency::USD));
         assert_eq!(inference_response.finish_reason, Some(FinishReason::Stop));
         assert_eq!(
             inference_response.provider_latency,
@@ -2644,6 +2655,7 @@ mod tests {
                 prompt_tokens: Some(15),
                 completion_tokens: Some(25),
                 prompt_tokens_details: None,
+                cost: None,
             },
         };
         let generic_request = ModelInferenceRequest {
@@ -2737,6 +2749,7 @@ mod tests {
                 prompt_tokens: Some(5),
                 completion_tokens: Some(0),
                 prompt_tokens_details: None,
+                cost: None,
             },
         };
         let request_body = OpenRouterRequest {
@@ -2799,6 +2812,7 @@ mod tests {
                 prompt_tokens: Some(10),
                 completion_tokens: Some(10),
                 prompt_tokens_details: None,
+                cost: None,
             },
         };
 
@@ -3141,6 +3155,7 @@ mod tests {
             prompt_tokens: Some(10),
             completion_tokens: Some(20),
             prompt_tokens_details: None,
+            cost: Some(Decimal::new(5, 5)),
         };
         let chunk = OpenRouterChatChunk {
             choices: vec![],
@@ -3194,8 +3209,8 @@ mod tests {
                 output_tokens: Some(20),
                 provider_cache_read_input_tokens: None,
                 provider_cache_write_input_tokens: None,
-                cost: None,
-                currency: None,
+                cost: Some(Decimal::new(5, 5)),
+                currency: Some(Currency::USD),
             }),
             "expected usage to include provider raw_usage entries"
         );
