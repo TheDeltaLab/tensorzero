@@ -1799,6 +1799,38 @@ fn tags_for_observability_write(base: &HashMap<String, String>) -> HashMap<Strin
     tags
 }
 
+// Delta-AI fork: log-warehouse tagging. The downstream OTLP logs router
+// matches on the `event.type` attribute and forwards tagged records to Kafka,
+// so every inference completion (success or failure) emits exactly one record
+// with this event type. All fields are best-effort and fail-open.
+const WAREHOUSE_EVENT_TYPE: &str = "llm.inference";
+
+/// Best-effort `ErrorDetails` variant name for log-warehouse tagging.
+/// `ErrorDetails` serializes as an externally-tagged enum, so the variant
+/// name is the single top-level key; falls back to "unknown".
+fn error_class_for_log(error: &Error) -> String {
+    serde_json::to_value(error.get_details())
+        .ok()
+        .and_then(|value| value.as_object().and_then(|obj| obj.keys().next().cloned()))
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+/// Best-effort name of the last provider that failed inside an error tree
+/// (log-warehouse tagging). Returns `None` when the error doesn't carry
+/// provider names.
+fn last_failed_provider(error: &Error) -> Option<String> {
+    match error.get_details() {
+        ErrorDetails::AllVariantsFailed { errors } => {
+            errors.values().last().and_then(last_failed_provider)
+        }
+        ErrorDetails::AllRetriesFailed { errors } => errors.last().and_then(last_failed_provider),
+        ErrorDetails::AllModelProvidersFailed { provider_errors } => {
+            provider_errors.keys().last().cloned()
+        }
+        _ => None,
+    }
+}
+
 /// Returns the output schema to store on a failed JSON inference row: the
 /// request's dynamic schema when present, otherwise the function's static schema.
 fn failed_output_schema(
@@ -1872,6 +1904,23 @@ async fn record_failed_inference(args: RecordFailedInferenceArgs<'_>) {
     {
         return;
     }
+
+    // Delta-AI fork: emit the inference-completion log record for the
+    // log-warehouse pipeline (routed downstream by `event.type`). The model is
+    // not known when every variant/provider failed, so it is left empty; the
+    // provider is the last failed provider when extractable from the error
+    // tree. All fields are best-effort (fail-open).
+    tracing::info!(
+        event.type = WAREHOUSE_EVENT_TYPE,
+        inference_id = %inference_id,
+        model = "",
+        provider = last_failed_provider(error).unwrap_or_default(),
+        latency_ms = start_time.elapsed().as_millis() as u64,
+        status = "error",
+        error_class = error_class_for_log(error),
+        function_name = function_name,
+        variant_name = variant_name,
+    );
 
     let mut tags = tags_for_observability_write(tags);
     // The UI list page consumes `tensorzero::status_code` and
@@ -1993,6 +2042,33 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
                 row.currency.as_deref(),
             )
         }),
+    );
+    // Delta-AI fork: emit the inference-completion log record for the
+    // log-warehouse pipeline (routed downstream by `event.type`). Model and
+    // provider come from the last model-inference attempt (the one that
+    // produced the response); empty when no attempt was recorded. All fields
+    // are best-effort (fail-open).
+    let inference_id = match &result {
+        InferenceResult::Chat(result) => result.inference_id,
+        InferenceResult::Json(result) => result.inference_id,
+    };
+    let last_attempt = result.model_inference_results().last();
+    tracing::info!(
+        event.type = WAREHOUSE_EVENT_TYPE,
+        inference_id = %inference_id,
+        model = last_attempt
+            .map(|attempt| attempt.model_name.as_ref())
+            .unwrap_or(""),
+        provider = last_attempt
+            .map(|attempt| attempt.model_provider_name.as_ref())
+            .unwrap_or(""),
+        latency_ms = metadata
+            .processing_time
+            .map(|duration| duration.as_millis() as u64)
+            .unwrap_or(0),
+        status = "success",
+        function_name = metadata.function_name.as_str(),
+        variant_name = metadata.variant_name.as_str(),
     );
     let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> =
         input.clone().write_all_files(config);
@@ -3938,6 +4014,61 @@ mod tests {
         assert!(
             stream.next().await.is_none(),
             "Stream should be exhausted after the error chunk"
+        );
+    }
+
+    // Delta-AI fork: tests for the log-warehouse tagging helpers.
+    #[googletest::gtest]
+    fn test_error_class_for_log() {
+        use googletest::prelude::{eq, expect_that};
+
+        let all_variants_failed = Error::new(ErrorDetails::AllVariantsFailed {
+            errors: IndexMap::from([(
+                "variant_a".to_string(),
+                Error::new(ErrorDetails::InvalidRequest {
+                    message: "bad request".to_string(),
+                }),
+            )]),
+        });
+        expect_that!(
+            error_class_for_log(&all_variants_failed),
+            eq("AllVariantsFailed")
+        );
+
+        let plain = Error::new(ErrorDetails::InvalidRequest {
+            message: "bad request".to_string(),
+        });
+        expect_that!(error_class_for_log(&plain), eq("InvalidRequest"));
+    }
+
+    #[googletest::gtest]
+    fn test_last_failed_provider() {
+        let nested = Error::new(ErrorDetails::AllVariantsFailed {
+            errors: IndexMap::from([(
+                "variant_a".to_string(),
+                Error::new(ErrorDetails::AllModelProvidersFailed {
+                    provider_errors: IndexMap::from([(
+                        "openai".to_string(),
+                        Error::new(ErrorDetails::Inference {
+                            message: "boom".to_string(),
+                        }),
+                    )]),
+                }),
+            )]),
+        });
+        assert_eq!(
+            last_failed_provider(&nested),
+            Some("openai".to_string()),
+            "should extract the last failed provider from the error tree"
+        );
+
+        let no_provider = Error::new(ErrorDetails::InvalidRequest {
+            message: "bad request".to_string(),
+        });
+        assert_eq!(
+            last_failed_provider(&no_provider),
+            None,
+            "errors without provider names should return None"
         );
     }
 }
