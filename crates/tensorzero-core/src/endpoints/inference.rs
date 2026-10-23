@@ -1815,6 +1815,32 @@ fn error_class_for_log(error: &Error) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
+/// Most specific (leaf) `ErrorDetails` variant name in the error tree, for
+/// log-warehouse tagging. `AllVariantsFailed` / `AllRetriesFailed` /
+/// `AllModelProvidersFailed` wrap the real failure, so the top-level name
+/// alone would lump most failures into one uninformative value; the warehouse
+/// wants the root cause. Falls back to the wrapper name when the tree is
+/// empty at some level.
+fn root_error_class_for_log(error: &Error) -> String {
+    match error.get_details() {
+        ErrorDetails::AllVariantsFailed { errors } => errors
+            .values()
+            .last()
+            .map(root_error_class_for_log)
+            .unwrap_or_else(|| "AllVariantsFailed".to_string()),
+        ErrorDetails::AllRetriesFailed { errors } => errors
+            .last()
+            .map(root_error_class_for_log)
+            .unwrap_or_else(|| "AllRetriesFailed".to_string()),
+        ErrorDetails::AllModelProvidersFailed { provider_errors } => provider_errors
+            .values()
+            .last()
+            .map(root_error_class_for_log)
+            .unwrap_or_else(|| "AllModelProvidersFailed".to_string()),
+        _ => error_class_for_log(error),
+    }
+}
+
 /// Best-effort name of the last provider that failed inside an error tree
 /// (log-warehouse tagging). Returns `None` when the error doesn't carry
 /// provider names.
@@ -1898,29 +1924,55 @@ async fn record_failed_inference(args: RecordFailedInferenceArgs<'_>) {
         primary_datastore,
         deferred_tasks,
     } = args;
-    if dryrun
-        || !config.gateway.observability.writes_enabled()
-        || !config.gateway.observability.failed_writes_enabled()
-    {
+    if dryrun {
         return;
     }
 
     // Delta-AI fork: emit the inference-completion log record for the
-    // log-warehouse pipeline (routed downstream by `event.type`). The model is
-    // not known when every variant/provider failed, so it is left empty; the
-    // provider is the last failed provider when extractable from the error
-    // tree. All fields are best-effort (fail-open).
-    tracing::info!(
-        event.type = WAREHOUSE_EVENT_TYPE,
-        inference_id = %inference_id,
-        model = "",
-        provider = last_failed_provider(error).unwrap_or_default(),
-        latency_ms = start_time.elapsed().as_millis() as u64,
-        status = "error",
-        error_class = error_class_for_log(error),
-        function_name = function_name,
-        variant_name = variant_name,
-    );
+    // log-warehouse pipeline (routed downstream by `event.type`). Emitted
+    // BEFORE the persistence gate on purpose: writes_enabled /
+    // failed_writes_enabled toggle ClickHouse/Postgres rows, but the warehouse
+    // feed must still observe the failure — a disabled failed-writes flag
+    // must not skew the failure rate. `model` is omitted (unknown when every
+    // variant/provider failed); `provider` is the last failed provider when
+    // extractable from the error tree, omitted otherwise. `error_class` is
+    // the leaf (root-cause) variant name; `error_wrapper` is the top-level
+    // variant, so AllVariantsFailed no longer lumps every fallback exhaustion
+    // into one value. All fields are best-effort (fail-open).
+    {
+        let provider = last_failed_provider(error);
+        let wrapper = error_class_for_log(error);
+        let root = root_error_class_for_log(error);
+        match provider {
+            Some(provider) => tracing::info!(
+                event.type = WAREHOUSE_EVENT_TYPE,
+                inference_id = %inference_id,
+                provider = provider,
+                latency_ms = start_time.elapsed().as_millis() as u64,
+                status = "error",
+                error_class = root,
+                error_wrapper = wrapper,
+                function_name = function_name,
+                variant_name = variant_name,
+            ),
+            None => tracing::info!(
+                event.type = WAREHOUSE_EVENT_TYPE,
+                inference_id = %inference_id,
+                latency_ms = start_time.elapsed().as_millis() as u64,
+                status = "error",
+                error_class = root,
+                error_wrapper = wrapper,
+                function_name = function_name,
+                variant_name = variant_name,
+            ),
+        }
+    }
+
+    if !config.gateway.observability.writes_enabled()
+        || !config.gateway.observability.failed_writes_enabled()
+    {
+        return;
+    }
 
     let mut tags = tags_for_observability_write(tags);
     // The UI list page consumes `tensorzero::status_code` and
@@ -2043,33 +2095,25 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
             )
         }),
     );
-    // Delta-AI fork: emit the inference-completion log record for the
-    // log-warehouse pipeline (routed downstream by `event.type`). Model and
-    // provider come from the last model-inference attempt (the one that
-    // produced the response); empty when no attempt was recorded. All fields
-    // are best-effort (fail-open).
-    let inference_id = match &result {
+    // Delta-AI fork: capture the log-warehouse tag fields before `result` and
+    // `metadata` move into the persistence futures; the record itself is
+    // emitted after `join_all` below. Model and provider come from the last
+    // model-inference attempt (the one that produced the response); both are
+    // omitted when no attempt was recorded. All fields are best-effort
+    // (fail-open).
+    let warehouse_inference_id = match &result {
         InferenceResult::Chat(result) => result.inference_id,
         InferenceResult::Json(result) => result.inference_id,
     };
     let last_attempt = result.model_inference_results().last();
-    tracing::info!(
-        event.type = WAREHOUSE_EVENT_TYPE,
-        inference_id = %inference_id,
-        model = last_attempt
-            .map(|attempt| attempt.model_name.as_ref())
-            .unwrap_or(""),
-        provider = last_attempt
-            .map(|attempt| attempt.model_provider_name.as_ref())
-            .unwrap_or(""),
-        latency_ms = metadata
-            .processing_time
-            .map(|duration| duration.as_millis() as u64)
-            .unwrap_or(0),
-        status = "success",
-        function_name = metadata.function_name.as_str(),
-        variant_name = metadata.variant_name.as_str(),
-    );
+    let warehouse_model = last_attempt.map(|attempt| attempt.model_name.to_string());
+    let warehouse_provider = last_attempt.map(|attempt| attempt.model_provider_name.to_string());
+    let warehouse_latency_ms = metadata
+        .processing_time
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0);
+    let warehouse_function_name = metadata.function_name.clone();
+    let warehouse_variant_name = metadata.variant_name.clone();
     let mut futures: Vec<Pin<Box<dyn Future<Output = ()> + Send>>> =
         input.clone().write_all_files(config);
     // Write the model inferences to the database (dual-write via ModelInferenceQueries trait)
@@ -2103,6 +2147,32 @@ async fn write_inference<T: InferenceQueries + ModelInferenceQueries + Send + Sy
         }
     }));
     futures::future::join_all(futures).await;
+    // Delta-AI fork: emit the inference-completion log record for the
+    // log-warehouse pipeline (routed downstream by `event.type`) only after
+    // the persistence futures resolved, so the tag never precedes the row it
+    // describes. Persistence failures are warn-only upstream, so
+    // status="success" means "inference completed and persistence attempted";
+    // observability gating (writes_enabled) is inherited from the caller.
+    match (warehouse_model, warehouse_provider) {
+        (Some(model), Some(provider)) => tracing::info!(
+            event.type = WAREHOUSE_EVENT_TYPE,
+            inference_id = %warehouse_inference_id,
+            model = model,
+            provider = provider,
+            latency_ms = warehouse_latency_ms,
+            status = "success",
+            function_name = warehouse_function_name,
+            variant_name = warehouse_variant_name,
+        ),
+        _ => tracing::info!(
+            event.type = WAREHOUSE_EVENT_TYPE,
+            inference_id = %warehouse_inference_id,
+            latency_ms = warehouse_latency_ms,
+            status = "success",
+            function_name = warehouse_function_name,
+            variant_name = warehouse_variant_name,
+        ),
+    }
 }
 
 /// Construct an `InferenceResponse` from core-internal `InferenceResult`.
@@ -4039,6 +4109,41 @@ mod tests {
             message: "bad request".to_string(),
         });
         expect_that!(error_class_for_log(&plain), eq("InvalidRequest"));
+    }
+
+    #[googletest::gtest]
+    fn test_root_error_class_for_log() {
+        use googletest::prelude::{eq, expect_that};
+
+        // Wrapped: the root cause, not the wrapper, must surface so
+        // AllVariantsFailed no longer lumps every fallback exhaustion into
+        // one uninformative error_class.
+        let nested = Error::new(ErrorDetails::AllVariantsFailed {
+            errors: IndexMap::from([(
+                "variant_a".to_string(),
+                Error::new(ErrorDetails::AllModelProvidersFailed {
+                    provider_errors: IndexMap::from([(
+                        "openai".to_string(),
+                        Error::new(ErrorDetails::Inference {
+                            message: "boom".to_string(),
+                        }),
+                    )]),
+                }),
+            )]),
+        });
+        expect_that!(root_error_class_for_log(&nested), eq("Inference"));
+
+        // Direct error: root == wrapper.
+        let plain = Error::new(ErrorDetails::InvalidRequest {
+            message: "bad request".to_string(),
+        });
+        expect_that!(root_error_class_for_log(&plain), eq("InvalidRequest"));
+
+        // Empty wrapper tree: fall back to the wrapper name.
+        let empty = Error::new(ErrorDetails::AllVariantsFailed {
+            errors: IndexMap::new(),
+        });
+        expect_that!(root_error_class_for_log(&empty), eq("AllVariantsFailed"));
     }
 
     #[googletest::gtest]
