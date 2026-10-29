@@ -50,7 +50,11 @@ env:
 jobs:
   gateway:
     name: Build gateway
-    if: github.repository == 'TheDeltaLab/tensorzero' && github.event_name != 'schedule'
+    # main-push builds dropped: nightly (deployed) is built by
+    # TheDeltaLab/tensorzero-internal with the internal-observability feature;
+    # this job keeps only release (`latest`/version tags) + manual dispatch
+    # (including the fat-LTO backfill dispatch from ensure-release-fat).
+    if: github.repository == 'TheDeltaLab/tensorzero' && github.event_name != 'schedule' && github.event_name != 'push'
     # Self-hosted runner (CI builder VM, data disk on /mnt/runner) with host-disk build cache.
     runs-on: tensorzero-ci
     timeout-minutes: 90
