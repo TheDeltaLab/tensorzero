@@ -652,14 +652,20 @@ async fn run() -> Result<(), ExitCode> {
     let listener = match tokio::net::TcpListener::bind(bind_address).await {
         Ok(listener) => listener,
         Err(e) if e.kind() == ErrorKind::AddrInUse => {
-            tracing::error!(
-                "Failed to bind to socket address {bind_address}: {e}. Tip: Ensure no other process is using port {} or try a different port.",
-                bind_address.port()
+            log_error_with_exception_attrs(
+                &format!(
+                    "Failed to bind to socket address {bind_address}. Tip: Ensure no other process is using port {} or try a different port.",
+                    bind_address.port()
+                ),
+                &e,
             );
             return Err(ExitCode::FAILURE);
         }
         Err(e) => {
-            tracing::error!("Failed to bind to socket address {bind_address}: {e}");
+            log_error_with_exception_attrs(
+                &format!("Failed to bind to socket address {bind_address}"),
+                &e,
+            );
             return Err(ExitCode::FAILURE);
         }
     };
@@ -1104,6 +1110,36 @@ impl<T> LogErrPretty<T> for Option<T> {
             }
         }
     }
+}
+
+/// Delta 观测规范错误拆分示范：ERROR 日志不把 error 对象直接落在消息里，改用
+/// `delta_observability::exception_attrs` 产出 `error.type`（低基数枚举）+
+/// `exception.type` / `exception.message` 三件套作为事件字段（经 OTLP logs
+/// 管线导出时即为独立的 log 属性）。目前只接入了 bind 失败两处作为模式示范，
+/// 批量迁移另行处理。
+///
+/// crate 保证输出顺序：error.type、exception.type、exception.message（见
+/// `delta_observability::errors::exception_attrs` 的文档测试）。
+#[cfg(feature = "internal-observability")]
+fn log_error_with_exception_attrs<E: std::error::Error + 'static>(message: &str, error: &E) {
+    let attrs = observability::delta_observability::exception_attrs(error);
+    if let [error_type, exception_type, exception_message] = attrs.as_slice() {
+        tracing::error!(
+            error.type = error_type.1.as_str(),
+            exception.type = exception_type.1.as_str(),
+            exception.message = exception_message.1.as_str(),
+            "{message}",
+        );
+    } else {
+        // 顺序契约被破坏时的兜底：至少保住 exception.message。
+        tracing::error!(exception.message = %error, "{message}");
+    }
+}
+
+/// 公开构建（feature 关闭）的等价实现：保持上游原行为——错误进消息文本。
+#[cfg(not(feature = "internal-observability"))]
+fn log_error_with_exception_attrs<E: std::error::Error + 'static>(message: &str, error: &E) {
+    tracing::error!("{message}: {error}");
 }
 
 /// Trait for configuration glob information, so that we can create a mocked version in tests

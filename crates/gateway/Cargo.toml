@@ -35,6 +35,8 @@ workspace = true
 
 [features]
 e2e_tests = ["tensorzero-core/e2e_tests"]
+# 内部观测规范（转发到 tensorzero-otel，启用私有 delta-observability 依赖）
+internal-observability = ["tensorzero-core/internal-observability"]
 # Provider integration features, on by default. Build with
 # `cargo build -p gateway --no-default-features` for a lean gateway
 # without the AWS SDK stack and GCP ADC support.

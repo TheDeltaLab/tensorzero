@@ -8,6 +8,8 @@ exclude = ["tests/", "fixtures/"]
 
 
 [features]
+# 内部观测规范：转发到 tensorzero-otel（启用私有 delta-observability 依赖）
+internal-observability = ["tensorzero-otel/internal-observability"]
 # Forward this feature to the Rust client, so that the embedded gateway
 # has the `e2e_tests` feature enabled when we run our e2e tests
 e2e_tests = ["tensorzero-types/e2e_tests", "tensorzero-error/e2e_tests", "tensorzero-inference-types/e2e_tests", "tensorzero-stored-config/e2e_tests", "tensorzero-http/e2e_tests", "tensorzero-otel/e2e_tests", "tensorzero-providers/e2e_tests"]

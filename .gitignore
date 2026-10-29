@@ -73,3 +73,7 @@ scripts/dev.py
 scripts/test-cache-tokens.sh
 .workbench-objective
 output
+
+# 本地构建产物（tensorzero python 绑定 / provider TS bindings），不入库
+crates/tensorzero-python/
+crates/tensorzero-providers/bindings/

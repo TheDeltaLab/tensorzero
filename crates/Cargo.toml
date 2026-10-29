@@ -38,6 +38,13 @@ license = "Apache-2.0"
 edition = "2024"
 
 [workspace.dependencies]
+# TODO: 发版后切 tag（rust-v*）
+# 包在仓库 rust/ 子目录；`subdirectory` 键在 [workspace.dependencies] 不被
+# cargo 识别（会告警 unused manifest key），cargo 会在 pin 的 rev 内按包名
+# `delta-observability` 自动定位到 rust/。
+# 仅经 `internal-observability` feature 激活（optional）：公开构建不解析
+# 本条目，开源代码可正常构建。
+delta-observability = { git = "https://github.com/TheDeltaLab/observability", rev = "cb9433ff5a1d1bdce4963871cb378044bc443f09" }
 deno_core = "0.398.0"
 reqwest = { version = "0.13", features = ["multipart", "json", "query", "http2"] }
 serde = { version = "1.0.204", features = ["derive", "rc"] }

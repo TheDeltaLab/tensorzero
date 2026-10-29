@@ -1754,6 +1754,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7a1e2f27636f116493b8b860f5546edb47c8d8f8ea73e1d2a20be88e28d1fea"
 
 [[package]]
+name = "delta-observability"
+version = "0.1.0"
+source = "git+https://github.com/TheDeltaLab/observability?rev=cb9433ff5a1d1bdce4963871cb378044bc443f09#cb9433ff5a1d1bdce4963871cb378044bc443f09"
+dependencies = [
+ "getrandom 0.3.4",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "der-parser"
 version = "10.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6690,6 +6700,7 @@ version = "2026.6.0"
 dependencies = [
  "axum",
  "clap",
+ "delta-observability",
  "futures",
  "gag",
  "googletest",
