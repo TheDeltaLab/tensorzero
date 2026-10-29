@@ -44,7 +44,9 @@ use opentelemetry_otlp::WithHttpConfig;
 use opentelemetry_otlp::WithTonicConfig;
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::logs::SdkLoggerProvider;
+use opentelemetry::logs::LogRecord as _;
+use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::{BatchLogProcessor, LogProcessor, SdkLoggerProvider, SdkLogRecord};
 use opentelemetry_sdk::trace::SdkTracer;
 use opentelemetry_sdk::trace::{SdkTracerProvider, SpanExporter};
 use tensorzero_overhead::OverheadTimingLayer;
@@ -494,6 +496,62 @@ fn metadata_to_http_headers(metadata: &MetadataMap) -> Result<HashMap<String, St
     Ok(out)
 }
 
+/// tracing 无显式 name 时 `Metadata::name()` 的默认形态：`event 文件:行`。
+const TRACING_AUTO_EVENT_NAME_PREFIX: &str = "event ";
+
+/// Delta 规范：[`opentelemetry_appender_tracing`] 会把 tracing 默认事件名写进
+/// LogRecord **原生 event_name**（appender 0.32 的
+/// `log_record.set_event_name(metadata.name())`）。event_name 是《日志规范》
+/// 的机器键（数仓保留列 `event_name`、gateway 按其做 DEBUG 路由、事件登记
+/// 表校验），源码位置垃圾值会污染整套事件体系。本 processor 在导出前清除
+/// tracing 自动生成的名字；`event!(name: "...")` 显式命名的事件保留，供
+/// 后续按规范登记使用。
+struct EventNameSanitizingProcessor {
+    inner: BatchLogProcessor,
+}
+
+impl std::fmt::Debug for EventNameSanitizingProcessor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EventNameSanitizingProcessor")
+            .finish_non_exhaustive()
+    }
+}
+
+impl LogProcessor for EventNameSanitizingProcessor {
+    fn emit(
+        &self,
+        record: &mut SdkLogRecord,
+        instrumentation: &opentelemetry::InstrumentationScope,
+    ) {
+        if record
+            .event_name()
+            .is_some_and(is_tracing_auto_event_name)
+        {
+            // proto3 空串即缺省值，OTLP 序列化时等同于未设置。
+            record.set_event_name("");
+        }
+        self.inner.emit(record, instrumentation);
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        self.inner.force_flush()
+    }
+
+    fn shutdown_with_timeout(&self, timeout: std::time::Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
+
+    fn set_resource(&mut self, resource: &Resource) {
+        self.inner.set_resource(resource);
+    }
+}
+
+/// tracing 自动生成的事件名（`event 文件:行`）。显式 `event!(name: ...)`
+/// 命名的事件不会以此前缀开头，予以保留。
+fn is_tracing_auto_event_name(name: &str) -> bool {
+    name.starts_with(TRACING_AUTO_EVENT_NAME_PREFIX)
+}
+
 /// Builds a new `SdkLoggerProvider` for OTLP log export, using the same gRPC
 /// (tonic) transport as trace export. The endpoint is read by the exporter from
 /// the standard `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` (or `OTEL_EXPORTER_OTLP_ENDPOINT`)
@@ -524,7 +582,11 @@ fn build_logger_provider(settings: &ObservabilitySettings) -> Result<SdkLoggerPr
                 .with_attributes(resource_attributes_for(service_name))
                 .build(),
         )
-        .with_batch_exporter(exporter)
+        // 详见 `EventNameSanitizingProcessor`：清除 tracing 桥写入原生
+        // event_name 的源码位置垃圾值（规范机器键不得被污染）。
+        .with_log_processor(EventNameSanitizingProcessor {
+            inner: BatchLogProcessor::builder(exporter).build(),
+        })
         .build())
 }
 
@@ -1769,6 +1831,7 @@ mod tests {
         TENSORZERO_OTLP_RESOURCE_PREFIX,
     };
     use googletest::prelude::*;
+    use super::is_tracing_auto_event_name;
     #[cfg(feature = "internal-observability")]
     use super::{ensure_boundary_request_id, request_id_invalid_total, spec_resource_attributes};
     #[cfg(feature = "internal-observability")]
@@ -1793,6 +1856,18 @@ mod tests {
             TENSORZERO_DEFAULTS.otlp_header_prefix,
             eq(DEFAULT_OTLP_HEADER_PREFIX)
         );
+    }
+
+    #[gtest]
+    fn tracing_auto_event_names_are_detected() {
+        assert!(is_tracing_auto_event_name(
+            "event tensorzero-error/src/lib.rs:1323"
+        ));
+        assert!(is_tracing_auto_event_name("event src/foo.rs:1"));
+        // 显式命名 / 规范事件名：保留。
+        assert!(!is_tracing_auto_event_name("stt.finalized"));
+        assert!(!is_tracing_auto_event_name("http.request"));
+        assert!(!is_tracing_auto_event_name("event")); // 无空格，非自动形态
     }
 
     /// A custom base prefix is reflected in all three derived header families, with the
