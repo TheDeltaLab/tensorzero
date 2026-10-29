@@ -6,6 +6,15 @@ pub mod tracing_bug;
 
 pub use error::ObservabilityError;
 
+/// Re-export of the [`delta_observability`] conformance crate (《日志规范》薄
+/// crate，见 TheDeltaLab/observability `rust/`）。业务侧（gateway /
+/// tensorzero-core）可经 `tensorzero_core::observability::delta_observability`
+/// 渐进使用 `schema::validate_key`、`errors::exception_attrs` 等，无需各自
+/// 声明 git 依赖。tensorzero 的 OTel 管线（exporter_wrapper /
+/// span_leak_detector 等 workaround）仍留在本仓，不进该 crate。
+#[cfg(feature = "internal-observability")]
+pub use delta_observability;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
@@ -323,6 +332,77 @@ impl TracerWrapper {
     }
 }
 
+// ── Delta 观测规范：OTel resource 对齐（delta-observability 薄 crate）──
+// 本节全部由 `internal-observability` feature 门控（默认关闭）：公开构建
+// 保持上游原行为（仅 service.name 单属性），不解析私有 git 依赖。
+
+#[cfg(feature = "internal-observability")]
+/// 环境变量：`deployment.environment.name`（如 `prod` / `staging`）。
+/// 未设置则不附加该属性。
+pub const DEPLOYMENT_ENVIRONMENT_NAME_ENV: &str = "DEPLOYMENT_ENVIRONMENT_NAME";
+#[cfg(feature = "internal-observability")]
+/// 环境变量：`data.region`（闭集 `cn` / `global` / `eu`）。
+/// 设置了但不在闭集内时告警并忽略（不阻断启动）。
+pub const DATA_REGION_ENV: &str = "DATA_REGION";
+
+#[cfg(feature = "internal-observability")]
+/// 进程级 `service.instance.id`：custom tracer 会被 moka 驱逐后重建，
+/// 默认每进程必须复用同一 instance id（规范：instance id 标识进程运行）。
+static PROCESS_INSTANCE_ID: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(delta_observability::request_id::new_request_id);
+
+#[cfg(feature = "internal-observability")]
+/// 规范 resource 属性（service.name / service.instance.id / service.version /
+/// `deployment.environment.name` / data.region）→ OTel `KeyValue`。
+///
+/// * `service.name` 完全沿用调用方现有取值（含 `OTEL_SERVICE_NAME` 覆盖
+///   逻辑），**不改名**——改名影响存量面板；
+/// * `service.version` 取 workspace 版本（本 crate 版本号）；
+/// * environment / data.region 从专用环境变量读取（见
+///   [`DEPLOYMENT_ENVIRONMENT_NAME_ENV`] / [`DATA_REGION_ENV`]），未设置则省略；
+/// * SDK `Resource::builder()` 自带的 `EnvResourceDetector`
+///   （`OTEL_RESOURCE_ATTRIBUTES`）仍然生效，但本函数的属性在其后合并，
+///   同 key 冲突时以本函数为准。
+fn spec_resource_attributes(service_name: String) -> Vec<KeyValue> {
+    let mut attrs = delta_observability::resource::ResourceAttributes::new(service_name)
+        .version(env!("CARGO_PKG_VERSION"))
+        .instance_id(PROCESS_INSTANCE_ID.to_string());
+    if let Some(environment) = std::env::var(DEPLOYMENT_ENVIRONMENT_NAME_ENV)
+        .ok()
+        .filter(|value| !value.is_empty())
+    {
+        attrs = attrs.environment(environment);
+    }
+    if let Ok(region) = std::env::var(DATA_REGION_ENV)
+        && !region.is_empty()
+    {
+        // `data_region` 消费 self 且闭集校验失败时报错——告警并忽略（不阻断启动）。
+        match attrs.clone().data_region(&region) {
+            Ok(with_region) => attrs = with_region,
+            Err(e) => tracing::warn!("Ignoring invalid {DATA_REGION_ENV}: {e}"),
+        }
+    }
+    attrs
+        .build()
+        .into_iter()
+        .map(|(key, value)| KeyValue::new(key, value))
+        .collect()
+}
+
+#[cfg(feature = "internal-observability")]
+fn resource_attributes_for(service_name: String) -> Vec<KeyValue> {
+    spec_resource_attributes(service_name)
+}
+
+#[cfg(not(feature = "internal-observability"))]
+fn resource_attributes_for(service_name: String) -> Vec<KeyValue> {
+    // 公开构建：与上游原行为一致——仅 service.name 单属性。
+    vec![KeyValue::new(
+        opentelemetry_semantic_conventions::resource::SERVICE_NAME,
+        service_name,
+    )]
+}
+
 /// Builds a new `SdkTracerProvider`, which will attach the extra headers from `metadata`
 /// to outgoing OTLP export requests.
 fn build_tracer<T: SpanExporter + 'static>(
@@ -345,10 +425,10 @@ fn build_tracer<T: SpanExporter + 'static>(
         .unwrap_or_else(|| settings.service_name.to_owned());
     let mut builder = SdkTracerProvider::builder().with_resource(
         Resource::builder()
-            .with_attribute(KeyValue::new(
-                opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                service_name,
-            ))
+            // Delta 观测规范 resource 属性（service.name 取值不变，见
+            // `spec_resource_attributes`）；request 侧 extra_resources 在后，
+            // 同 key 时保持原有的「请求可覆盖」语义。
+            .with_attributes(resource_attributes_for(service_name))
             .with_attributes(extra_resources)
             .build(),
     );
@@ -439,10 +519,9 @@ fn build_logger_provider(settings: &ObservabilitySettings) -> Result<SdkLoggerPr
     Ok(SdkLoggerProvider::builder()
         .with_resource(
             Resource::builder()
-                .with_attribute(KeyValue::new(
-                    opentelemetry_semantic_conventions::resource::SERVICE_NAME,
-                    service_name,
-                ))
+                // Delta 观测规范 resource 层（service.name 取值不变，见
+                // `spec_resource_attributes`）。
+                .with_attributes(resource_attributes_for(service_name))
                 .build(),
         )
         .with_batch_exporter(exporter)
@@ -716,6 +795,67 @@ fn build_opentelemetry_layer<T: SpanExporter + 'static>(
     ))
 }
 
+// ── Delta 观测规范：request.id 边界（x-request-id 校验 / 重建 / 回写）──
+
+#[cfg(feature = "internal-observability")]
+/// `x-request-id`（规范 §1 统一载体）的 `HeaderName` 常量。
+static REQUEST_ID_HEADER_NAME: http::HeaderName =
+    http::HeaderName::from_static(delta_observability::REQUEST_ID_HEADER);
+
+#[cfg(feature = "internal-observability")]
+/// 入站 `x-request-id` 存在但不合法（非小写 UUID）而被重建的进程累计次数。
+/// 规范要求重建必须计数（禁止静默降级）；同时经 `metrics` facade 记
+/// `request_id_invalid_total`（安装了 recorder 时生效，未安装则只累计本计数）。
+static REQUEST_ID_INVALID_TOTAL: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
+#[cfg(feature = "internal-observability")]
+/// 进程累计的 invalid inbound `x-request-id` 计数（排障 / 测试用；
+/// 指标侧走 `request_id_invalid_total` counter）。
+pub fn request_id_invalid_total() -> u64 {
+    REQUEST_ID_INVALID_TOTAL.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[cfg(feature = "internal-observability")]
+/// 边界 request.id 解析：合法 inbound 采纳；存在但不合法则计数并重建；
+/// 缺失则生成（计数责任在钩子，见 `delta_observability::ensure_request_id`）。
+fn ensure_boundary_request_id(headers: &HeaderMap) -> String {
+    let inbound = headers
+        .get(delta_observability::REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok());
+    let hook = |_inbound: &str| {
+        REQUEST_ID_INVALID_TOTAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        metrics::counter!("request_id_invalid_total").increment(1);
+    };
+    delta_observability::ensure_request_id(inbound, Some(&hook)).request_id
+}
+
+#[cfg(feature = "internal-observability")]
+/// 规范 §1 边界 request.id 中间件：
+/// 1. 读入站 `x-request-id` → 校验（小写 UUID）/ 重建（计数）/ 缺失生成；
+/// 2. 覆写请求头向下游传播——后续 handler 及兼容链（`x-tensorzero-request-id` /
+///    `x-synapse-request-id`，优先级更高、不受影响）读到的都是合法 id；
+/// 3. 把 `request.id` 记入顶层 HTTP span（`make_otel_http_span` 声明的字段）；
+/// 4. 回写响应头 `x-request-id`。
+///
+/// 需置于 `apply_top_level_otel_http_trace_layer` **之内**（先调
+/// `apply_request_id_layer` 再加 otel 层）才能记入顶层 span。
+async fn request_id_middleware(mut req: axum::extract::Request, next: Next) -> Response {
+    let request_id = ensure_boundary_request_id(req.headers());
+    if let Ok(header_value) = http::HeaderValue::from_str(&request_id) {
+        req.headers_mut()
+            .insert(REQUEST_ID_HEADER_NAME.clone(), header_value);
+    }
+    tracing::Span::current().record("request.id", request_id.as_str());
+    let mut response = next.run(req).await;
+    if let Ok(header_value) = http::HeaderValue::from_str(&request_id) {
+        response
+            .headers_mut()
+            .insert(REQUEST_ID_HEADER_NAME.clone(), header_value);
+    }
+    response
+}
+
 /// A helper trait to apply layers to a `Router`.
 /// Without this trait, we would need to write something like:
 /// ```rust
@@ -740,6 +880,14 @@ pub trait RouterExt<S> {
         otel_enabled_routes: OtelEnabledRoutes,
         error_extractor: ResponseErrorExtractor,
     ) -> Self;
+
+    #[cfg(feature = "internal-observability")]
+    /// Applies the spec §1 boundary `request.id` middleware
+    /// (`x-request-id` 校验 / 重建 / 回写，见 `request_id_middleware`）。
+    /// Call this **before** `apply_top_level_otel_http_trace_layer` so the
+    /// middleware runs inside the top-level OTel HTTP span and can record
+    /// `request.id` on it.
+    fn apply_request_id_layer(self) -> Self;
 }
 
 /// A special header prefix used to attach an additional header to the OTLP export for this trace.
@@ -1029,7 +1177,9 @@ fn make_otel_http_span<B>(
         otel.kind = ?opentelemetry::trace::SpanKind::Server,
         otel.status_code = Empty, // to set on response
         trace_id = Empty, // to set on response
-        request_id = Empty, // to set
+        // 规范保留键 `request.id`；由 `request_id_middleware` 在边界记入
+        // （此前声明为 `request_id` 但从未被设置，改名无存量影响）。
+        request.id = Empty, // set by request_id_middleware
         exception.message = Empty, // to set on response
         "span.type" = "web", // non-official open-telemetry key, only supported by Datadog
         otel.name = format!("{} {}", req.method(), route.unwrap_or_default()).trim(),
@@ -1181,6 +1331,11 @@ impl<S: Clone + Send + Sync + 'static> RouterExt<S> for Router<S> {
         } else {
             self
         }
+    }
+
+    #[cfg(feature = "internal-observability")]
+    fn apply_request_id_layer(self) -> Self {
+        self.layer(middleware::from_fn(request_id_middleware))
     }
 }
 
@@ -1586,6 +1741,15 @@ pub fn setup_metrics(
         "Output tokens consumed by TensorZero inferences",
     );
 
+    // Delta 观测规范 §1：inbound x-request-id 存在但不合法（非小写 UUID）而在
+    // 边界被重建的次数（禁止静默降级）。计数点在 `request_id_middleware`。
+    #[cfg(feature = "internal-observability")]
+    describe_counter!(
+        "request_id_invalid_total",
+        Unit::Count,
+        "Inbound x-request-id values that were present but invalid (not lowercase UUIDs) and were regenerated at the gateway boundary.",
+    );
+
     if !inference_latency_overhead_buckets.is_empty() {
         describe_histogram!(
             "tensorzero_inference_latency_overhead_seconds",
@@ -1605,6 +1769,10 @@ mod tests {
         TENSORZERO_OTLP_RESOURCE_PREFIX,
     };
     use googletest::prelude::*;
+    #[cfg(feature = "internal-observability")]
+    use super::{ensure_boundary_request_id, request_id_invalid_total, spec_resource_attributes};
+    #[cfg(feature = "internal-observability")]
+    use http::HeaderMap;
 
     /// The public `TENSORZERO_OTLP_*_PREFIX` constants are used by clients targeting a
     /// default gateway. Ensure they stay in sync with the prefixes derived from
@@ -1635,5 +1803,99 @@ mod tests {
         expect_that!(prefixes.header, eq("acme-otlp-traces-extra-header-"));
         expect_that!(prefixes.resource, eq("acme-otlp-traces-extra-resource-"));
         expect_that!(prefixes.attribute, eq("acme-otlp-traces-extra-attribute-"));
+    }
+
+    #[cfg(feature = "internal-observability")]
+    /// 规范 resource 属性：service.name 原样透传（不改名）、service.version 取
+    /// workspace 版本、service.instance.id 进程内稳定（多次构建同值）。
+    /// environment / data.region 依赖环境变量，测试只断言不依赖环境的键。
+    #[gtest]
+    fn spec_resource_attributes_align_spec_keys() {
+        let to_pairs = |kvs: &Vec<opentelemetry::KeyValue>| {
+            kvs.iter()
+                .map(|kv| (kv.key.as_str().to_string(), kv.value.as_str().to_string()))
+                .collect::<Vec<(String, String)>>()
+        };
+        let attrs = to_pairs(&spec_resource_attributes("test-gateway".to_string()));
+        expect_that!(
+            attrs,
+            contains(eq(&(
+                "service.name".to_string(),
+                "test-gateway".to_string()
+            )))
+        );
+        expect_that!(
+            attrs,
+            contains(eq(&(
+                "service.version".to_string(),
+                env!("CARGO_PKG_VERSION").to_string()
+            )))
+        );
+        // 所有键都应是规范 resource 键（无旧键 deployment.environment）。
+        for (key, _) in &attrs {
+            expect_that!(
+                [
+                    "service.name",
+                    "service.instance.id",
+                    "service.version",
+                    "deployment.environment.name",
+                    "data.region"
+                ]
+                .contains(&key.as_str()),
+                eq(true)
+            );
+        }
+        // instance id 进程内稳定：两次构建（如 custom tracer 重建）同值。
+        let again = to_pairs(&spec_resource_attributes("test-gateway".to_string()));
+        let instance_of = |pairs: &Vec<(String, String)>| {
+            pairs
+                .iter()
+                .find(|(key, _)| key == "service.instance.id")
+                .map(|(_, value)| value.clone())
+        };
+        let (Some(first), Some(second)) = (instance_of(&attrs), instance_of(&again)) else {
+            panic!("service.instance.id must always be present");
+        };
+        expect_that!(first.as_str(), eq(second.as_str()));
+    }
+
+    #[cfg(feature = "internal-observability")]
+    /// 边界 request.id：合法 inbound 采纳。
+    #[gtest]
+    fn boundary_request_id_adopts_valid_inbound() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-request-id",
+            "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d".parse().unwrap(),
+        );
+        let baseline = request_id_invalid_total();
+        expect_that!(
+            ensure_boundary_request_id(&headers),
+            eq("1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d")
+        );
+        expect_that!(request_id_invalid_total(), eq(baseline));
+    }
+
+    #[cfg(feature = "internal-observability")]
+    /// 边界 request.id：存在但不合法（非小写 UUID）→ 重建并计数；
+    /// 缺失 → 生成且不计 invalid（规范：只有「存在但不合法」才计）。
+    #[gtest]
+    fn boundary_request_id_rebuilds_and_counts_invalid() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-request-id", "not-a-uuid".parse().unwrap());
+        let baseline = request_id_invalid_total();
+        let ensured = ensure_boundary_request_id(&headers);
+        expect_that!(ensured == "not-a-uuid", eq(false));
+        expect_that!(delta_observability::is_valid_request_id(&ensured), eq(true));
+        expect_that!(request_id_invalid_total() > baseline, eq(true));
+
+        // 缺失：生成新 id，但不计入 invalid。
+        let before_missing = request_id_invalid_total();
+        let generated = ensure_boundary_request_id(&HeaderMap::new());
+        expect_that!(
+            delta_observability::is_valid_request_id(&generated),
+            eq(true)
+        );
+        expect_that!(request_id_invalid_total(), eq(before_missing));
     }
 }

@@ -7,10 +7,15 @@ license.workspace = true
 
 [features]
 e2e_tests = []
+# 内部观测规范集成（《日志规范》delta-observability 薄 crate，私有 git 依赖）。
+# 默认关闭：公开构建不解析/不下载私有依赖、行为与上游一致；内部构建用
+# `--features internal-observability` 启用（需 TheDeltaLab 仓库读取凭据）。
+internal-observability = ["dep:delta-observability"]
 
 [dependencies]
 axum = { workspace = true }
 clap = { workspace = true }
+delta-observability = { workspace = true, optional = true }
 futures = { workspace = true }
 http = { workspace = true }
 init-tracing-opentelemetry = { workspace = true }

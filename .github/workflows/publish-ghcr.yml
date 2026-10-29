@@ -108,7 +108,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/thedeltalab/tensorzero/gateway
           tags: |
-            type=raw,value=nightly,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            # `nightly` is built by TheDeltaLab/tensorzero-internal (with the
+            # internal-observability feature); this public job keeps only
+            # version/sha/branch tags (vanilla builds).
+            type=raw,value=nightly,enable=false
             type=raw,value=latest,enable=${{ github.event_name == 'release' }}
             type=sha,prefix=sha-,format=short,suffix=${{ steps.gw.outputs.suffix }}
             type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}

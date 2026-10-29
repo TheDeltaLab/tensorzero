@@ -24,7 +24,18 @@ ARG CARGO_BUILD_JOBS=4
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
 WORKDIR /tensorzero
 ENV CARGO_INCREMENTAL=0
+# Git deps fetched via CLI git so credential rewrite (below) applies
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
 RUN apt-get update && apt-get install -y clang libc++-dev && rm -rf /var/lib/apt/lists/*
+# Optional private git dependency credentials (Delta-AI fork): passed at build
+# time via `--secret id=git_token` (BuildKit tmpfs — never persisted in image
+# layers). Public builds pass no secret and this step is a no-op. Credentials
+# live only in the builder stage's ~/.gitconfig; the final image contains no
+# builder-stage layers.
+RUN --mount=type=secret,id=git_token,required=false \
+    if [ -f /run/secrets/git_token ]; then \
+      git config --global url."https://x-access-token:$(cat /run/secrets/git_token)@github.com/".insteadOf "https://github.com/"; \
+    fi
 COPY --from=planner /app/crates/recipe.json /tensorzero/crates/recipe.json
 COPY crates/rust-toolchain.toml /tensorzero/crates/rust-toolchain.toml
 WORKDIR /tensorzero/crates
