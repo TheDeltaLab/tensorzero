@@ -39,6 +39,16 @@ ARG DEBUG_BUILD
 # image builds, and uncapped parallel rustc exhausted it (Delta-AI fork).
 ARG CARGO_BUILD_JOBS=4
 ENV CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS}
+# Git deps fetched via CLI git so credential rewrite (below) applies
+ENV CARGO_NET_GIT_FETCH_WITH_CLI=true
+# Optional private git dependency credentials (Delta-AI fork): passed at build
+# time via `--secret id=git_token` (BuildKit tmpfs — never persisted in image
+# layers). Public builds pass no secret and this step is a no-op; see the
+# matching block in crates/gateway/Dockerfile.
+RUN --mount=type=secret,id=git_token,required=false \
+    if [ -f /run/secrets/git_token ]; then \
+      git config --global url."https://x-access-token:$(cat /run/secrets/git_token)@github.com/".insteadOf "https://github.com/"; \
+    fi
 
 # Install Node.js 24 (required by @napi-rs/cli v3)
 RUN curl -fsSL https://deb.nodesource.com/setup_24.x | bash - && \
