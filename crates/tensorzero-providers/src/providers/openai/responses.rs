@@ -1653,10 +1653,22 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
         ))),
 
         // Function call arguments delta
-        OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta { delta, .. } => {
+        OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta { delta, item_id, .. } => {
+            // Attribute by the event's own `item_id` — `current_tool_id` goes
+            // stale whenever a provider groups the per-call lifecycle events
+            // of parallel tool calls (e.g. Volcengine Ark emits both `added`
+            // items before either call's deltas, and the `done` events after
+            // both), which would silently merge one call's arguments into
+            // another. Fall back to the tracked id for providers that leave
+            // `item_id` empty.
+            let tool_id = if item_id.is_empty() {
+                current_tool_id.clone()
+            } else {
+                Some(item_id)
+            };
             Ok(Some(ProviderInferenceResponseChunk::new(
                 vec![ContentBlockChunk::ToolCall(ToolCallChunk {
-                    id: current_tool_id.clone().ok_or_else(|| {
+                    id: tool_id.ok_or_else(|| {
                         Error::new(ErrorDetails::InferenceServer {
                             message: "Got function_call_arguments.delta without current tool id"
                                 .to_string(),
@@ -1666,7 +1678,7 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
                             raw_response: Some(raw_message.clone()),
                         })
                     })?,
-                    raw_name: None, // Name already sent in the 'done' event
+                    raw_name: None, // Name already sent in the 'added' event
                     raw_arguments: delta,
                 })],
                 None,
@@ -2712,6 +2724,75 @@ mod tests {
     }
 
     #[test]
+    fn test_function_call_arguments_delta_attributed_by_item_id() {
+        // Regression test: parallel tool calls on Volcengine Ark arrive with
+        // grouped lifecycle events (both `added` items, then both calls'
+        // deltas, then both `done` events). A delta used to be attributed to
+        // the *last* added call via `current_tool_id`, silently merging one
+        // call's arguments into another; it must use its own `item_id`.
+        let mut tool_id = Some("fc_b".to_string());
+        let mut tool_name = Some("search".to_string());
+
+        let event = OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta {
+            delta: "{\"q\":".to_string(),
+            item_id: "fc_a".to_string(),
+            output_index: 0,
+        };
+
+        let result = openai_responses_to_tensorzero_chunk(
+            "raw_json".to_string(),
+            event,
+            Duration::from_millis(100),
+            &mut tool_id,
+            &mut tool_name,
+            false,
+            "test_model",
+            "test_provider",
+            "",
+            Uuid::now_v7(),
+            PROVIDER_TYPE,
+        )
+        .unwrap()
+        .unwrap();
+
+        match &result.content[0] {
+            ContentBlockChunk::ToolCall(tool_call) => {
+                assert_eq!(tool_call.id, "fc_a", "delta must attribute by item_id");
+                assert_eq!(tool_call.raw_arguments, "{\"q\":");
+            }
+            _ => panic!("Expected ToolCall chunk"),
+        }
+
+        // Providers that omit `item_id` fall back to the tracked id.
+        let event = OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta {
+            delta: "1}".to_string(),
+            item_id: String::new(),
+            output_index: 0,
+        };
+        let result = openai_responses_to_tensorzero_chunk(
+            "raw_json".to_string(),
+            event,
+            Duration::from_millis(100),
+            &mut tool_id,
+            &mut tool_name,
+            false,
+            "test_model",
+            "test_provider",
+            "",
+            Uuid::now_v7(),
+            PROVIDER_TYPE,
+        )
+        .unwrap()
+        .unwrap();
+        match &result.content[0] {
+            ContentBlockChunk::ToolCall(tool_call) => {
+                assert_eq!(tool_call.id, "fc_b", "empty item_id falls back to tracked id");
+            }
+            _ => panic!("Expected ToolCall chunk"),
+        }
+    }
+
+    #[test]
     fn test_reasoning_delta_conversion() {
         let event = OpenAIResponsesStreamEvent::ResponseReasoningSummaryTextDelta {
             delta: "Let me think...".to_string(),
@@ -3225,9 +3306,12 @@ mod tests {
 
     #[test]
     fn test_function_call_arguments_delta_without_tool_id() {
+        // The delta must error only when it carries NO id at all: events that
+        // provide `item_id` are attributed by it even without a preceding
+        // `output_item.added` chunk (see the attribution regression test).
         let event = OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta {
             delta: "delta".to_string(),
-            item_id: "fc_123".to_string(),
+            item_id: String::new(),
             output_index: 0,
         };
 
