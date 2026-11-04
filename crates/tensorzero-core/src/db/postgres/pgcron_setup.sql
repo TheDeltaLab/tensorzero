@@ -20,10 +20,19 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'pg_cron') THEN
         -- Create future partitions daily at 00:05 UTC
         -- Inference metadata tables use monthly partitions; IO tables use daily partitions
+        -- Delta-AI: the job command pins TimeZone='UTC' because the date
+        -- arithmetic in create_partitions / create_monthly_partitions follows
+        -- the session TimeZone, and pg_cron worker sessions inherit the
+        -- server default (Aliyun RDS: Asia/Shanghai). Unpinned, new
+        -- partitions anchor at local midnight and overlap the UTC-anchored
+        -- ones, failing the nightly job with "would overlap partition"
+        -- (2026-11-04 incident: staging inserts then pooled into the default
+        -- partition until batch writes took hours).
         PERFORM cron.schedule(
             'tensorzero_create_inference_partitions',
             '5 0 * * *',
             $$
+            SET TimeZone='UTC';
             SELECT tensorzero.create_monthly_partitions('chat_inferences');
             SELECT tensorzero.create_monthly_partitions('json_inferences');
             SELECT tensorzero.create_monthly_partitions('model_inferences');
@@ -43,6 +52,7 @@ BEGIN
             'tensorzero_drop_old_inference_metadata_partitions',
             '30 0 * * *',
             $$
+            SET TimeZone='UTC';
             SELECT tensorzero.archive_and_drop_old_metadata_partitions();
             SELECT tensorzero.drop_old_monthly_partitions('model_inferences', 'inference_metadata_retention_days');
             SELECT tensorzero.drop_old_monthly_partitions('batch_requests', 'inference_metadata_retention_days');
@@ -56,6 +66,7 @@ BEGIN
             'tensorzero_drop_old_inference_data_partitions',
             '35 0 * * *',
             $$
+            SET TimeZone='UTC';
             SELECT tensorzero.archive_and_drop_old_data_partitions();
             SELECT tensorzero.drop_old_partitions('model_inference_data', 'inference_data_retention_days');
             SELECT tensorzero.drop_old_partitions('batch_request_data', 'inference_data_retention_days');
