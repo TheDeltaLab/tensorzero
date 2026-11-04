@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize, de::Error as _};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 use crate::cache::CacheParamsOptions;
@@ -278,8 +278,65 @@ pub fn responses_input_to_messages(
             messages.push(user_message(Value::String(text)));
         }
         Value::Array(items) => {
-            for item in items {
-                messages.push(parse_responses_input_item(item)?);
+            // Correlate calls and outputs by call_id before parsing, so that
+            // dropping an invalid `function_call` (empty `name`) also drops its
+            // now-orphaned output instead of leaving it to fail later with
+            // `tool call id not found` (chat-completions conversion) or a
+            // provider-side rejection. Call ids that keep at least one named
+            // call survive; duplicate outputs for the same call keep only the
+            // last occurrence (agent loops record synchronous tool errors
+            // before the real async result, so last-wins keeps the result).
+            let mut named_call_ids: HashSet<String> = HashSet::new();
+            let mut last_output_index: HashMap<String, usize> = HashMap::new();
+            for (index, item) in items.iter().enumerate() {
+                let Some(obj) = item.as_object() else {
+                    continue;
+                };
+                match obj.get("type").and_then(Value::as_str).unwrap_or("") {
+                    "function_call" => {
+                        let Some(call_id) = obj
+                            .get("call_id")
+                            .or_else(|| obj.get("id"))
+                            .and_then(Value::as_str)
+                        else {
+                            continue;
+                        };
+                        let name = obj.get("name").and_then(Value::as_str).unwrap_or("");
+                        if !name.is_empty() {
+                            named_call_ids.insert(call_id.to_string());
+                        }
+                    }
+                    "function_call_output" => {
+                        if let Some(call_id) = obj.get("call_id").and_then(Value::as_str) {
+                            last_output_index.insert(call_id.to_string(), index);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for (index, item) in items.into_iter().enumerate() {
+                if let Some(obj) = item.as_object()
+                    && obj.get("type").and_then(Value::as_str) == Some("function_call_output")
+                    && let Some(call_id) = obj.get("call_id").and_then(Value::as_str)
+                {
+                    if !named_call_ids.contains(call_id) {
+                        tracing::warn!(
+                            call_id,
+                            "Dropping orphaned `function_call_output` input item: its call has no valid named `function_call` (dropped as invalid)"
+                        );
+                        continue;
+                    }
+                    if last_output_index.get(call_id) != Some(&index) {
+                        tracing::warn!(
+                            call_id,
+                            "Dropping duplicate `function_call_output` input item: keeping only the last output per call_id"
+                        );
+                        continue;
+                    }
+                }
+                if let Some(message) = parse_responses_input_item(item)? {
+                    messages.push(message);
+                }
             }
         }
         other => {
@@ -299,9 +356,9 @@ pub fn responses_input_to_messages(
     Ok(messages)
 }
 
-fn parse_responses_input_item(item: Value) -> Result<OpenAICompatibleMessage, Error> {
+fn parse_responses_input_item(item: Value) -> Result<Option<OpenAICompatibleMessage>, Error> {
     if let Some(text) = item.as_str() {
-        return Ok(user_message(Value::String(text.to_string())));
+        return Ok(Some(user_message(Value::String(text.to_string()))));
     }
     let obj = item.as_object().ok_or_else(|| {
         Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
@@ -314,8 +371,10 @@ fn parse_responses_input_item(item: Value) -> Result<OpenAICompatibleMessage, Er
     // messages, silently discarding tool calls and results from agent loops.
     match obj.get("type").and_then(Value::as_str).unwrap_or("") {
         "function_call" => return parse_responses_function_call(obj),
-        "function_call_output" => return parse_responses_function_call_output(obj),
-        "reasoning" => return Ok(parse_responses_reasoning(obj)),
+        "function_call_output" => {
+            return Ok(Some(parse_responses_function_call_output(obj)?));
+        }
+        "reasoning" => return Ok(Some(parse_responses_reasoning(obj))),
         "item_reference" => {
             return Err(Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
                 message: "`item_reference` input items point at server-side state that this gateway does not keep. Re-send the full item contents instead (OpenAI clients: set `store: false` so items are inlined)".to_string(),
@@ -331,26 +390,33 @@ fn parse_responses_input_item(item: Value) -> Result<OpenAICompatibleMessage, Er
         .to_string();
     let content = normalize_responses_content(obj.get("content").cloned().unwrap_or(Value::Null));
     match role.as_str() {
-        "system" | "developer" => Ok(OpenAICompatibleMessage::System(
+        "system" | "developer" => Ok(Some(OpenAICompatibleMessage::System(
             OpenAICompatibleSystemMessage { content },
-        )),
-        "assistant" => Ok(OpenAICompatibleMessage::Assistant(
+        ))),
+        "assistant" => Ok(Some(OpenAICompatibleMessage::Assistant(
             OpenAICompatibleAssistantMessage {
                 content: Some(content),
                 tool_calls: None,
                 reasoning_content: None,
                 tensorzero_extra_content: None,
             },
-        )),
-        _ => Ok(user_message(content)),
+        ))),
+        _ => Ok(Some(user_message(content))),
     }
 }
 
 /// `{"type": "function_call", "call_id": ..., "name": ..., "arguments": ...}` —
 /// an assistant tool call from a previous turn.
+///
+/// Items with a missing or empty `name` are dropped (with a warning) instead
+/// of forwarded: no OpenAI-compatible Responses provider accepts them —
+/// Volcengine Ark answers `400 MissingParameter: input.name` — so replaying
+/// one poisons every subsequent agent-loop step of that conversation. This
+/// also heals histories that were already poisoned before the gateway stopped
+/// synthesizing such items.
 fn parse_responses_function_call(
     obj: &serde_json::Map<String, Value>,
-) -> Result<OpenAICompatibleMessage, Error> {
+) -> Result<Option<OpenAICompatibleMessage>, Error> {
     let call_id = obj
         .get("call_id")
         .or_else(|| obj.get("id"))
@@ -360,13 +426,22 @@ fn parse_responses_function_call(
                 message: "`function_call` input item is missing `call_id`".to_string(),
             })
         })?;
-    let name = obj.get("name").and_then(Value::as_str).ok_or_else(|| {
-        Error::new(ErrorDetails::InvalidOpenAICompatibleRequest {
-            message: "`function_call` input item is missing `name`".to_string(),
-        })
-    })?;
+    let Some(name) = obj.get("name").and_then(Value::as_str) else {
+        tracing::warn!(
+            call_id,
+            "Dropping replayed `function_call` input item with missing `name`; forwarding it would be rejected by Responses providers"
+        );
+        return Ok(None);
+    };
+    if name.is_empty() {
+        tracing::warn!(
+            call_id,
+            "Dropping replayed `function_call` input item with empty `name`; forwarding it would be rejected by Responses providers"
+        );
+        return Ok(None);
+    }
     let arguments = obj.get("arguments").and_then(Value::as_str).unwrap_or("{}");
-    Ok(OpenAICompatibleMessage::Assistant(
+    Ok(Some(OpenAICompatibleMessage::Assistant(
         OpenAICompatibleAssistantMessage {
             content: None,
             tool_calls: Some(vec![OpenAICompatibleToolCall {
@@ -380,7 +455,7 @@ fn parse_responses_function_call(
             reasoning_content: None,
             tensorzero_extra_content: None,
         },
-    ))
+    )))
 }
 
 /// `{"type": "function_call_output", "call_id": ..., "output": ...}` — a tool
@@ -854,6 +929,124 @@ mod tests {
         };
         assert_eq!(tool_message.tool_call_id, "call_00");
         assert_eq!(tool_message.content, Some(json!("result text")));
+    }
+
+    #[gtest]
+    fn test_empty_name_function_call_items_are_dropped() {
+        // Regression test: a `function_call` item with an empty (or missing)
+        // `name` is invalid for every OpenAI-compatible Responses provider —
+        // Volcengine Ark rejects the whole request with
+        // `400 MissingParameter: input.name`. Agent histories poisoned by a
+        // duplicate name-less call (same call_id as the real call) must have
+        // the broken item dropped while the named call and its outputs are
+        // kept, so the conversation can continue instead of failing forever.
+        let messages = responses_input_to_messages(
+            json!([
+                {"type": "message", "role": "user", "content": "What happened today?"},
+                {"type": "function_call", "call_id": "call_00", "name": "sourceSearch", "arguments": "{\"q\":\"today\"}"},
+                {"type": "function_call", "call_id": "call_00", "name": "", "arguments": "{}"},
+                {"type": "function_call", "call_id": "call_01"},
+                {"type": "function_call_output", "call_id": "call_00", "output": "[]"},
+            ]),
+            None,
+        )
+        .expect("poisoned replay input should parse");
+
+        let tool_call_messages: Vec<&OpenAICompatibleToolCall> = messages
+            .iter()
+            .filter_map(|message| match message {
+                OpenAICompatibleMessage::Assistant(assistant) => {
+                    assistant.tool_calls.as_deref().map(|calls| &calls[0])
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            tool_call_messages.len(),
+            1,
+            "empty-name and name-less function_call items must be dropped"
+        );
+        assert_eq!(tool_call_messages[0].id, "call_00");
+        assert_eq!(tool_call_messages[0].function.name, "sourceSearch");
+        // The paired output survives.
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, OpenAICompatibleMessage::Tool(tool)
+                    if tool.tool_call_id == "call_00")),
+            "function_call_output for the named call must survive"
+        );
+    }
+
+    #[gtest]
+    fn test_orphaned_function_call_output_is_dropped() {
+        // When EVERY call for a call_id is invalid (empty/missing name), the
+        // outputs must go too: an output without a surviving call used to fail
+        // the later conversion with `tool call id not found` (still a 400),
+        // defeating the self-healing purpose of dropping invalid calls.
+        let messages = responses_input_to_messages(
+            json!([
+                {"type": "message", "role": "user", "content": "Hi"},
+                {"type": "function_call", "call_id": "call_bad", "name": "", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call_bad", "output": "error text"},
+            ]),
+            None,
+        )
+        .expect("input with only invalid calls should parse, not 400");
+
+        assert_eq!(
+            messages.len(),
+            1,
+            "only the user message survives; orphaned call and output are dropped"
+        );
+        assert!(matches!(messages[0], OpenAICompatibleMessage::User(_)));
+    }
+
+    #[gtest]
+    fn test_duplicate_outputs_keep_last_for_named_call() {
+        // The incident shape: a named call, its name-less duplicate, and TWO
+        // outputs for the same call_id — the synchronous client error result
+        // (recorded first) and the real tool result (recorded last). The
+        // replay must keep the named call and only the last output, so the
+        // stale error result stops polluting the conversation context.
+        let messages = responses_input_to_messages(
+            json!([
+                {"type": "message", "role": "user", "content": "What happened today?"},
+                {"type": "function_call", "call_id": "call_00", "name": "sourceSearch", "arguments": "{\"q\":\"today\"}"},
+                {"type": "function_call", "call_id": "call_00", "name": "", "arguments": "{}"},
+                {"type": "function_call_output", "call_id": "call_00", "output": "\"AI_NoSuchToolError: Model tried to call unavailable tool ''\""},
+                {"type": "function_call_output", "call_id": "call_00", "output": "{\"found_count\":2}"},
+            ]),
+            None,
+        )
+        .expect("poisoned duplicate-output history should parse");
+
+        assert_eq!(
+            messages.len(),
+            3,
+            "expected user message, one named call, one output"
+        );
+        let OpenAICompatibleMessage::Assistant(assistant) = &messages[1] else {
+            panic!("named function_call must map to an assistant message");
+        };
+        let tool_calls = assistant.tool_calls.as_deref().unwrap_or_default();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].function.name, "sourceSearch");
+
+        let tool_outputs: Vec<&OpenAICompatibleToolMessage> = messages
+            .iter()
+            .filter_map(|message| match message {
+                OpenAICompatibleMessage::Tool(tool) => Some(tool),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_outputs.len(), 1, "duplicate outputs keep only one");
+        assert_eq!(tool_outputs[0].tool_call_id, "call_00");
+        assert_eq!(
+            tool_outputs[0].content,
+            Some(json!("{\"found_count\":2}")),
+            "the last (real) result wins over the stale client error"
+        );
     }
 
     #[gtest]

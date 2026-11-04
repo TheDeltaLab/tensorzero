@@ -87,7 +87,6 @@ type ResponsesEventFrame = (Option<&'static str>, Value);
 enum OutputItemKind {
     Message,
     Reasoning,
-    FunctionCall,
 }
 
 /// The output item currently being streamed, if any.
@@ -95,15 +94,33 @@ struct OpenOutputItem {
     kind: OutputItemKind,
     item_id: String,
     output_index: usize,
-    /// Accumulated message text, reasoning summary text, or function arguments.
+    /// Accumulated message text or reasoning summary text.
     text: String,
     /// Reasoning items only: the provider's `encrypted_content`, replayed back
     /// by clients (e.g. the Vercel AI SDK) on subsequent agent-loop steps.
     signature: Option<String>,
-    /// Function name (FunctionCall only).
-    name: String,
-    /// Provider call id (FunctionCall only).
+}
+
+/// A function call accumulated across the whole stream, keyed on its call id.
+///
+/// Providers emitting parallel tool calls (e.g. Volcengine Ark's Responses API
+/// for DeepSeek models) do not guarantee that every lifecycle chunk for a call
+/// arrives while that call is the "current" one: per-call `*.done` events can
+/// be grouped after the following call's chunks already opened another item,
+/// and argument deltas can interleave. Tracking calls by call id — the same
+/// merge semantics the inference accumulator already applies when storing the
+/// final output — keeps each call's name and arguments whole instead of
+/// re-opening a name-less duplicate item for every out-of-order chunk.
+struct FunctionCallAccumulator {
+    output_index: usize,
+    item_id: String,
     call_id: String,
+    /// First non-empty name seen for this call id; argument-only chunks
+    /// (deltas, `function_call_arguments.done`) carry none.
+    name: String,
+    arguments: String,
+    /// Whether the `response.output_item.added` frame was emitted yet.
+    added_emitted: bool,
 }
 
 /// Streaming state machine for the OpenAI Responses SSE lifecycle.
@@ -121,7 +138,12 @@ struct ResponsesStreamState {
     created_at: u64,
     next_output_index: usize,
     current: Option<OpenOutputItem>,
-    completed_items: Vec<Value>,
+    /// Function calls, in first-seen call-id order; `function_call_index`
+    /// maps call id → position so out-of-order chunks merge into the entry
+    /// they belong to.
+    function_calls: Vec<FunctionCallAccumulator>,
+    function_call_index: std::collections::HashMap<String, usize>,
+    completed_items: Vec<(usize, Value)>,
     last_usage: Option<Usage>,
     /// `encrypted_content` seen on a provider reasoning item before its text
     /// deltas open the synthesized item; applied when the item opens.
@@ -138,6 +160,8 @@ impl ResponsesStreamState {
             created_at: current_timestamp(),
             next_output_index: 0,
             current: None,
+            function_calls: Vec::new(),
+            function_call_index: std::collections::HashMap::new(),
             completed_items: Vec::new(),
             last_usage: None,
             pending_reasoning_signature: None,
@@ -165,22 +189,19 @@ impl ResponsesStreamState {
         ]
     }
 
-    /// Open a new output item of `kind` unless one is already open (for
-    /// function calls, keyed on `call_id`). Closes any previous item first.
+    /// Open a new output item of `kind` unless one is already open. Closes any
+    /// previous item first. Function calls do not flow through here — they
+    /// accumulate in [`Self::function_calls`] for the whole stream.
     fn ensure_item(
         &mut self,
         kind: OutputItemKind,
-        call_id: &str,
-        name: &str,
         frames: &mut Vec<ResponsesEventFrame>,
     ) {
-        let already_open = matches!(&self.current, Some(item) if item.kind == kind
-            && (kind != OutputItemKind::FunctionCall || item.call_id == call_id));
-        if already_open {
+        if matches!(&self.current, Some(item) if item.kind == kind) {
             return;
         }
         // Consumed by the Reasoning arm below and the OpenOutputItem at the
-        // end of this function; None for the other item kinds.
+        // end of this function; None for message items.
         let signature = (kind == OutputItemKind::Reasoning)
             .then(|| self.pending_reasoning_signature.take())
             .flatten();
@@ -190,7 +211,6 @@ impl ResponsesStreamState {
         let item_id = match kind {
             OutputItemKind::Message => format!("msg_{}_{output_index}", self.inference_key),
             OutputItemKind::Reasoning => format!("rs_{}_{output_index}", self.inference_key),
-            OutputItemKind::FunctionCall => format!("fc_{call_id}"),
         };
         match kind {
             OutputItemKind::Message => {
@@ -250,23 +270,6 @@ impl ResponsesStreamState {
                     }),
                 ));
             }
-            OutputItemKind::FunctionCall => {
-                frames.push((
-                    Some("response.output_item.added"),
-                    json!({
-                        "type": "response.output_item.added",
-                        "output_index": output_index,
-                        "item": {
-                            "id": item_id,
-                            "type": "function_call",
-                            "call_id": call_id,
-                            "name": name,
-                            "arguments": "",
-                            "status": "in_progress",
-                        },
-                    }),
-                ));
-            }
         }
         self.current = Some(OpenOutputItem {
             kind,
@@ -274,8 +277,6 @@ impl ResponsesStreamState {
             output_index,
             text: String::new(),
             signature,
-            name: name.to_string(),
-            call_id: call_id.to_string(),
         });
     }
 
@@ -325,7 +326,7 @@ impl ResponsesStreamState {
                         "item": message,
                     }),
                 ));
-                self.completed_items.push(message);
+                self.completed_items.push((item.output_index, message));
             }
             OutputItemKind::Reasoning => {
                 let part = json!({"type": "summary_text", "text": item.text});
@@ -377,35 +378,7 @@ impl ResponsesStreamState {
                         "item": reasoning,
                     }),
                 ));
-                self.completed_items.push(reasoning);
-            }
-            OutputItemKind::FunctionCall => {
-                frames.push((
-                    Some("response.function_call_arguments.done"),
-                    json!({
-                        "type": "response.function_call_arguments.done",
-                        "item_id": item.item_id,
-                        "output_index": item.output_index,
-                        "arguments": item.text,
-                    }),
-                ));
-                let function_call = json!({
-                    "id": item.item_id,
-                    "type": "function_call",
-                    "call_id": item.call_id,
-                    "name": item.name,
-                    "arguments": item.text,
-                    "status": "completed",
-                });
-                frames.push((
-                    Some("response.output_item.done"),
-                    json!({
-                        "type": "response.output_item.done",
-                        "output_index": item.output_index,
-                        "item": function_call,
-                    }),
-                ));
-                self.completed_items.push(function_call);
+                self.completed_items.push((item.output_index, reasoning));
             }
         }
     }
@@ -423,7 +396,7 @@ impl ResponsesStreamState {
                             if text.text.is_empty() {
                                 continue;
                             }
-                            self.ensure_item(OutputItemKind::Message, "", "", &mut frames);
+                            self.ensure_item(OutputItemKind::Message, &mut frames);
                             let Some(item) = self.current.as_mut() else {
                                 continue;
                             };
@@ -447,7 +420,7 @@ impl ResponsesStreamState {
                             let Some(text) = text else {
                                 continue;
                             };
-                            self.ensure_item(OutputItemKind::Reasoning, "", "", &mut frames);
+                            self.ensure_item(OutputItemKind::Reasoning, &mut frames);
                             let Some(item) = self.current.as_mut() else {
                                 continue;
                             };
@@ -465,28 +438,43 @@ impl ResponsesStreamState {
                         }
                         ContentBlockChunk::ToolCall(tool_call) => {
                             let name = tool_call.raw_name.unwrap_or_default();
-                            self.ensure_item(
-                                OutputItemKind::FunctionCall,
-                                &tool_call.id,
-                                &name,
-                                &mut frames,
-                            );
-                            let Some(item) = self.current.as_mut() else {
-                                continue;
-                            };
-                            if item.name.is_empty() {
-                                item.name = name;
+                            // Close any open message/reasoning item; function
+                            // calls accumulate by call id and are closed only
+                            // in `finish`, so a chunk for a different call
+                            // never re-opens a duplicate item here.
+                            self.close_current(&mut frames);
+                            let call = self.function_call_entry(&tool_call.id);
+                            if !name.is_empty() && call.name.is_empty() {
+                                call.name = name;
+                            }
+                            if !call.added_emitted {
+                                call.added_emitted = true;
+                                frames.push((
+                                    Some("response.output_item.added"),
+                                    json!({
+                                        "type": "response.output_item.added",
+                                        "output_index": call.output_index,
+                                        "item": {
+                                            "id": call.item_id,
+                                            "type": "function_call",
+                                            "call_id": call.call_id,
+                                            "name": call.name,
+                                            "arguments": "",
+                                            "status": "in_progress",
+                                        },
+                                    }),
+                                ));
                             }
                             if tool_call.raw_arguments.is_empty() {
                                 continue;
                             }
-                            item.text.push_str(&tool_call.raw_arguments);
+                            call.arguments.push_str(&tool_call.raw_arguments);
                             frames.push((
                                 Some("response.function_call_arguments.delta"),
                                 json!({
                                     "type": "response.function_call_arguments.delta",
-                                    "item_id": item.item_id,
-                                    "output_index": item.output_index,
+                                    "item_id": call.item_id,
+                                    "output_index": call.output_index,
                                     "delta": tool_call.raw_arguments,
                                 }),
                             ));
@@ -525,7 +513,7 @@ impl ResponsesStreamState {
                     self.last_usage = Some(usage);
                 }
                 if !c.raw.is_empty() {
-                    self.ensure_item(OutputItemKind::Message, "", "", &mut frames);
+                    self.ensure_item(OutputItemKind::Message, &mut frames);
                     let Some(item) = self.current.as_mut() else {
                         return frames;
                     };
@@ -546,10 +534,73 @@ impl ResponsesStreamState {
         frames
     }
 
+    /// Look up (or open) the accumulator for a call id. The `added` frame is
+    /// emitted lazily by the caller on first sight so the item carries a name
+    /// whenever the opening chunk provided one.
+    fn function_call_entry(&mut self, call_id: &str) -> &mut FunctionCallAccumulator {
+        let index = *self
+            .function_call_index
+            .entry(call_id.to_string())
+            .or_insert_with(|| {
+                let output_index = self.next_output_index;
+                self.next_output_index += 1;
+                self.function_calls.push(FunctionCallAccumulator {
+                    output_index,
+                    item_id: format!("fc_{call_id}"),
+                    call_id: call_id.to_string(),
+                    name: String::new(),
+                    arguments: String::new(),
+                    added_emitted: false,
+                });
+                self.function_calls.len() - 1
+            });
+        &mut self.function_calls[index]
+    }
+
     fn finish(&mut self) -> Vec<ResponsesEventFrame> {
         let mut frames = Vec::new();
+        // Function calls close only here, in first-seen order, each with the
+        // name and arguments accumulated across the whole stream.
+        for call in &self.function_calls {
+            frames.push((
+                Some("response.function_call_arguments.done"),
+                json!({
+                    "type": "response.function_call_arguments.done",
+                    "item_id": call.item_id,
+                    "output_index": call.output_index,
+                    "arguments": call.arguments,
+                }),
+            ));
+            let function_call = json!({
+                "id": call.item_id,
+                "type": "function_call",
+                "call_id": call.call_id,
+                "name": call.name,
+                "arguments": call.arguments,
+                "status": "completed",
+            });
+            frames.push((
+                Some("response.output_item.done"),
+                json!({
+                    "type": "response.output_item.done",
+                    "output_index": call.output_index,
+                    "item": function_call,
+                }),
+            ));
+            self.completed_items.push((call.output_index, function_call));
+        }
+        self.function_calls.clear();
+        self.function_call_index.clear();
         self.close_current(&mut frames);
+        // `current` closes mid-stream while function calls only close here, so
+        // restore output-index order for the terminal `output` array.
+        self.completed_items.sort_by_key(|(output_index, _)| *output_index);
         let usage = self.last_usage.take().unwrap_or_default();
+        let output_items: Vec<Value> = self
+            .completed_items
+            .iter()
+            .map(|(_, item)| item.clone())
+            .collect();
         frames.push((
             Some("response.completed"),
             json!({
@@ -560,7 +611,7 @@ impl ResponsesStreamState {
                     "created_at": self.created_at,
                     "status": "completed",
                     "model": self.model,
-                    "output": self.completed_items,
+                    "output": output_items,
                     "usage": {
                         "input_tokens": usage.input_tokens,
                         "output_tokens": usage.output_tokens,
@@ -860,6 +911,141 @@ mod tests {
         );
         expect_that!(completed["usage"]["input_tokens"].as_u64(), eq(Some(10)));
         expect_that!(completed["usage"]["output_tokens"].as_u64(), eq(Some(5)));
+    }
+
+    /// Parallel tool calls whose per-call lifecycle chunks arrive grouped
+    /// instead of nested: both `added` chunks first, then both calls'
+    /// argument deltas, then both name-less `done` chunks (the shape Volcengine
+    /// Ark's Responses API produces for DeepSeek parallel tool calls). The
+    /// stream must still carry exactly one item per call, each with its name
+    /// and full arguments — previously every out-of-order chunk re-opened a
+    /// duplicate `function_call` item with an empty name, which clients
+    /// replayed back and providers rejected with `400 MissingParameter:
+    /// input.name`.
+    #[gtest]
+    #[tokio::test]
+    async fn test_streaming_grouped_parallel_tool_call_chunks() {
+        let inference_id = Uuid::now_v7();
+        let frames = collect_frames(
+            vec![
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_a", Some("search"), "{\"q\":")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_b", Some("search"), "{\"q\":")],
+                    None,
+                ),
+                chat_chunk(inference_id, vec![tool_call_block("call_a", None, "\"a\"}")], None),
+                chat_chunk(inference_id, vec![tool_call_block("call_b", None, "\"b\"}")], None),
+                // Late name-less done chunks for both calls, after the other
+                // call's item already opened.
+                chat_chunk(inference_id, vec![tool_call_block("call_a", None, "")], None),
+                chat_chunk(inference_id, vec![tool_call_block("call_b", None, "")], None),
+                chat_chunk(inference_id, vec![], Some(test_usage())),
+            ],
+            None,
+        )
+        .await;
+
+        let added: Vec<&Value> = frames
+            .iter()
+            .filter(|(event, value)| {
+                event.as_deref() == Some("response.output_item.added")
+                    && value["item"]["type"] == "function_call"
+            })
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(added.len(), 2, "one item per call, no duplicates");
+        expect_that!(added[0]["item"]["name"].as_str(), eq(Some("search")));
+        expect_that!(added[0]["item"]["call_id"].as_str(), eq(Some("call_a")));
+        expect_that!(added[1]["item"]["name"].as_str(), eq(Some("search")));
+        expect_that!(added[1]["item"]["call_id"].as_str(), eq(Some("call_b")));
+
+        let done: Vec<&Value> = frames
+            .iter()
+            .filter(|(event, value)| {
+                event.as_deref() == Some("response.output_item.done")
+                    && value["item"]["type"] == "function_call"
+            })
+            .map(|(_, value)| value)
+            .collect();
+        assert_eq!(done.len(), 2);
+        expect_that!(done[0]["item"]["call_id"].as_str(), eq(Some("call_a")));
+        expect_that!(
+            done[0]["item"]["arguments"].as_str(),
+            eq(Some("{\"q\":\"a\"}"))
+        );
+        expect_that!(done[1]["item"]["call_id"].as_str(), eq(Some("call_b")));
+        expect_that!(
+            done[1]["item"]["arguments"].as_str(),
+            eq(Some("{\"q\":\"b\"}"))
+        );
+        assert!(
+            done.iter().all(|frame| frame["item"]["name"] == "search"),
+            "no name-less duplicate items may be synthesized"
+        );
+
+        let completed = frames
+            .iter()
+            .find(|(event, _)| event.as_deref() == Some("response.completed"))
+            .expect("completed frame");
+        let output = completed.1["response"]["output"].as_array().expect("output");
+        assert_that!(output.len(), eq(2));
+        expect_that!(output[0]["call_id"].as_str(), eq(Some("call_a")));
+        expect_that!(output[0]["name"].as_str(), eq(Some("search")));
+        expect_that!(output[1]["call_id"].as_str(), eq(Some("call_b")));
+        expect_that!(output[1]["name"].as_str(), eq(Some("search")));
+    }
+
+    /// Argument deltas interleaved across two open calls must each accumulate
+    /// onto their own call, in arrival order.
+    #[gtest]
+    #[tokio::test]
+    async fn test_streaming_interleaved_parallel_tool_call_deltas() {
+        let inference_id = Uuid::now_v7();
+        let frames = collect_frames(
+            vec![
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_a", Some("search"), "")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_b", Some("fetch"), "")],
+                    None,
+                ),
+                chat_chunk(inference_id, vec![tool_call_block("call_b", None, "{\"b\"")], None),
+                chat_chunk(inference_id, vec![tool_call_block("call_a", None, "{\"a\"")], None),
+                chat_chunk(inference_id, vec![tool_call_block("call_b", None, ":1}")], None),
+                chat_chunk(inference_id, vec![tool_call_block("call_a", None, ":2}")], None),
+                chat_chunk(inference_id, vec![], Some(test_usage())),
+            ],
+            None,
+        )
+        .await;
+
+        let completed = frames
+            .iter()
+            .find(|(event, _)| event.as_deref() == Some("response.completed"))
+            .expect("completed frame");
+        let output = completed.1["response"]["output"].as_array().expect("output");
+        assert_that!(output.len(), eq(2));
+        expect_that!(output[0]["call_id"].as_str(), eq(Some("call_a")));
+        expect_that!(output[0]["name"].as_str(), eq(Some("search")));
+        expect_that!(
+            output[0]["arguments"].as_str(),
+            eq(Some("{\"a\":2}"))
+        );
+        expect_that!(output[1]["call_id"].as_str(), eq(Some("call_b")));
+        expect_that!(output[1]["name"].as_str(), eq(Some("fetch")));
+        expect_that!(
+            output[1]["arguments"].as_str(),
+            eq(Some("{\"b\":1}"))
+        );
     }
 
     #[gtest]
