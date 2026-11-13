@@ -184,3 +184,10 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `sdk/typescript/README.md` — Apply the repository-pinned oxfmt formatter without changing behavior.
 - `sdk/typescript/packages/ai-sdk-provider/package.json` — Apply the repository-pinned oxfmt formatter without changing behavior.
 - `sdk/typescript/packages/tensorzero-sdk/package.json` — Apply the repository-pinned oxfmt formatter without changing behavior.
+
+## Optional RDS IAM authentication
+
+- `crates/tensorzero-core/Cargo.toml` — Add the independent optional AWS RDS IAM signer feature and test clock support.
+- `crates/gateway/Cargo.toml` — Forward the optional `aws-rds-iam` feature without enabling model-provider SDKs.
+- `crates/Cargo.lock` — Lock the direct IAM signer dependencies already present in the workspace.
+- `docs/deployment/postgres.mdx` — Document IAM prerequisites, SQLx token rotation, migration ownership, validation, and rollback.
