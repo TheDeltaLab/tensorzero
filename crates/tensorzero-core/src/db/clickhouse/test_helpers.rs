@@ -7,7 +7,6 @@
 )]
 use std::collections::HashMap;
 
-
 use crate::config::BatchWritesConfig;
 #[cfg(feature = "e2e_tests")]
 use crate::db::test_helpers::TestDatabaseHelpers;

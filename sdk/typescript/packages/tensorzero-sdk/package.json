@@ -2,7 +2,16 @@
   "name": "@delta-ai/tensorzero-sdk",
   "version": "0.2.1",
   "description": "TypeScript client for the TensorZero gateway async inference API",
+  "homepage": "https://github.com/TheDeltaLab/tensorzero/tree/main/sdk/typescript/packages/tensorzero-sdk",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/TheDeltaLab/tensorzero",
+    "directory": "sdk/typescript/packages/tensorzero-sdk"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -14,12 +23,9 @@
       "require": "./dist/index.cjs"
     }
   },
-  "files": [
-    "dist"
-  ],
   "publishConfig": {
-    "registry": "https://registry.npmjs.org",
-    "access": "public"
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
   },
   "scripts": {
     "build": "tsup",
@@ -30,11 +36,5 @@
     "tsup": "^8.3.5",
     "typescript": "^5.8.3",
     "vitest": "^3.1.4"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/TheDeltaLab/tensorzero",
-    "directory": "sdk/typescript/packages/tensorzero-sdk"
-  },
-  "homepage": "https://github.com/TheDeltaLab/tensorzero/tree/main/sdk/typescript/packages/tensorzero-sdk"
+  }
 }

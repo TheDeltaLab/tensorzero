@@ -177,3 +177,10 @@ _To add an entry: append a bullet item above. The CI workflow (`modification-not
 - `crates/.sqlx/query-e8ebf72e6d2e89cc5da56da8674955561077770ff199dbf173f92cd9b510d96a.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
 - `crates/.sqlx/query-ef3776cb7fe99915301e863b3cc591938f8f459b424c1c0e7ac3380e95eab1ad.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
 - `crates/.sqlx/query-f7224d415441d3018000525d3f6d319463a71f8e8a3b92649c168f7f9771cfa1.json` — New sqlx offline cache entry for tag-based cleanup queries (Delta-AI fork).
+
+## Formatter baseline for RDS IAM work
+
+- `sdk/go/README.md` — Apply the repository-pinned oxfmt formatter without changing behavior.
+- `sdk/typescript/README.md` — Apply the repository-pinned oxfmt formatter without changing behavior.
+- `sdk/typescript/packages/ai-sdk-provider/package.json` — Apply the repository-pinned oxfmt formatter without changing behavior.
+- `sdk/typescript/packages/tensorzero-sdk/package.json` — Apply the repository-pinned oxfmt formatter without changing behavior.

@@ -1653,7 +1653,9 @@ pub(super) fn openai_responses_to_tensorzero_chunk(
         ))),
 
         // Function call arguments delta
-        OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta { delta, item_id, .. } => {
+        OpenAIResponsesStreamEvent::ResponseFunctionCallArgumentsDelta {
+            delta, item_id, ..
+        } => {
             // Attribute by the event's own `item_id` — `current_tool_id` goes
             // stale whenever a provider groups the per-call lifecycle events
             // of parallel tool calls (e.g. Volcengine Ark emits both `added`
@@ -2786,7 +2788,10 @@ mod tests {
         .unwrap();
         match &result.content[0] {
             ContentBlockChunk::ToolCall(tool_call) => {
-                assert_eq!(tool_call.id, "fc_b", "empty item_id falls back to tracked id");
+                assert_eq!(
+                    tool_call.id, "fc_b",
+                    "empty item_id falls back to tracked id"
+                );
             }
             _ => panic!("Expected ToolCall chunk"),
         }

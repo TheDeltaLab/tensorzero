@@ -36,6 +36,7 @@ use moka::sync::Cache;
 use once_cell::sync::OnceCell;
 #[cfg(feature = "e2e_tests")]
 use opentelemetry::ContextGuard;
+use opentelemetry::logs::LogRecord as _;
 use opentelemetry::trace::Status;
 use opentelemetry::trace::{Tracer, TracerProvider as _};
 use opentelemetry::{Context, KeyValue};
@@ -44,9 +45,8 @@ use opentelemetry_otlp::WithHttpConfig;
 use opentelemetry_otlp::WithTonicConfig;
 use opentelemetry_otlp::tonic_types::metadata::MetadataMap;
 use opentelemetry_sdk::Resource;
-use opentelemetry::logs::LogRecord as _;
 use opentelemetry_sdk::error::OTelSdkResult;
-use opentelemetry_sdk::logs::{BatchLogProcessor, LogProcessor, SdkLoggerProvider, SdkLogRecord};
+use opentelemetry_sdk::logs::{BatchLogProcessor, LogProcessor, SdkLogRecord, SdkLoggerProvider};
 use opentelemetry_sdk::trace::SdkTracer;
 use opentelemetry_sdk::trace::{SdkTracerProvider, SpanExporter};
 use tensorzero_overhead::OverheadTimingLayer;
@@ -523,10 +523,7 @@ impl LogProcessor for EventNameSanitizingProcessor {
         record: &mut SdkLogRecord,
         instrumentation: &opentelemetry::InstrumentationScope,
     ) {
-        if record
-            .event_name()
-            .is_some_and(is_tracing_auto_event_name)
-        {
+        if record.event_name().is_some_and(is_tracing_auto_event_name) {
             // proto3 空串即缺省值，OTLP 序列化时等同于未设置。
             record.set_event_name("");
         }
@@ -1825,15 +1822,15 @@ pub fn setup_metrics(
 
 #[cfg(test)]
 mod tests {
+    use super::is_tracing_auto_event_name;
     use super::{
         DEFAULT_OTLP_HEADER_PREFIX, OtlpHeaderPrefixes, TENSORZERO_DEFAULTS,
         TENSORZERO_OTLP_ATTRIBUTE_PREFIX, TENSORZERO_OTLP_HEADERS_PREFIX,
         TENSORZERO_OTLP_RESOURCE_PREFIX,
     };
-    use googletest::prelude::*;
-    use super::is_tracing_auto_event_name;
     #[cfg(feature = "internal-observability")]
     use super::{ensure_boundary_request_id, request_id_invalid_total, spec_resource_attributes};
+    use googletest::prelude::*;
     #[cfg(feature = "internal-observability")]
     use http::HeaderMap;
 

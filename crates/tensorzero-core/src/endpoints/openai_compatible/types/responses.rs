@@ -970,10 +970,10 @@ mod tests {
         assert_eq!(tool_call_messages[0].function.name, "sourceSearch");
         // The paired output survives.
         assert!(
-            messages
-                .iter()
-                .any(|message| matches!(message, OpenAICompatibleMessage::Tool(tool)
-                    if tool.tool_call_id == "call_00")),
+            messages.iter().any(
+                |message| matches!(message, OpenAICompatibleMessage::Tool(tool)
+                    if tool.tool_call_id == "call_00")
+            ),
             "function_call_output for the named call must survive"
         );
     }

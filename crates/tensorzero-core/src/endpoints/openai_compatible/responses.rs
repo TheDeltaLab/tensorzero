@@ -192,11 +192,7 @@ impl ResponsesStreamState {
     /// Open a new output item of `kind` unless one is already open. Closes any
     /// previous item first. Function calls do not flow through here — they
     /// accumulate in [`Self::function_calls`] for the whole stream.
-    fn ensure_item(
-        &mut self,
-        kind: OutputItemKind,
-        frames: &mut Vec<ResponsesEventFrame>,
-    ) {
+    fn ensure_item(&mut self, kind: OutputItemKind, frames: &mut Vec<ResponsesEventFrame>) {
         if matches!(&self.current, Some(item) if item.kind == kind) {
             return;
         }
@@ -587,14 +583,16 @@ impl ResponsesStreamState {
                     "item": function_call,
                 }),
             ));
-            self.completed_items.push((call.output_index, function_call));
+            self.completed_items
+                .push((call.output_index, function_call));
         }
         self.function_calls.clear();
         self.function_call_index.clear();
         self.close_current(&mut frames);
         // `current` closes mid-stream while function calls only close here, so
         // restore output-index order for the terminal `output` array.
-        self.completed_items.sort_by_key(|(output_index, _)| *output_index);
+        self.completed_items
+            .sort_by_key(|(output_index, _)| *output_index);
         let usage = self.last_usage.take().unwrap_or_default();
         let output_items: Vec<Value> = self
             .completed_items
@@ -938,12 +936,28 @@ mod tests {
                     vec![tool_call_block("call_b", Some("search"), "{\"q\":")],
                     None,
                 ),
-                chat_chunk(inference_id, vec![tool_call_block("call_a", None, "\"a\"}")], None),
-                chat_chunk(inference_id, vec![tool_call_block("call_b", None, "\"b\"}")], None),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_a", None, "\"a\"}")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_b", None, "\"b\"}")],
+                    None,
+                ),
                 // Late name-less done chunks for both calls, after the other
                 // call's item already opened.
-                chat_chunk(inference_id, vec![tool_call_block("call_a", None, "")], None),
-                chat_chunk(inference_id, vec![tool_call_block("call_b", None, "")], None),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_a", None, "")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_b", None, "")],
+                    None,
+                ),
                 chat_chunk(inference_id, vec![], Some(test_usage())),
             ],
             None,
@@ -992,7 +1006,9 @@ mod tests {
             .iter()
             .find(|(event, _)| event.as_deref() == Some("response.completed"))
             .expect("completed frame");
-        let output = completed.1["response"]["output"].as_array().expect("output");
+        let output = completed.1["response"]["output"]
+            .as_array()
+            .expect("output");
         assert_that!(output.len(), eq(2));
         expect_that!(output[0]["call_id"].as_str(), eq(Some("call_a")));
         expect_that!(output[0]["name"].as_str(), eq(Some("search")));
@@ -1018,10 +1034,26 @@ mod tests {
                     vec![tool_call_block("call_b", Some("fetch"), "")],
                     None,
                 ),
-                chat_chunk(inference_id, vec![tool_call_block("call_b", None, "{\"b\"")], None),
-                chat_chunk(inference_id, vec![tool_call_block("call_a", None, "{\"a\"")], None),
-                chat_chunk(inference_id, vec![tool_call_block("call_b", None, ":1}")], None),
-                chat_chunk(inference_id, vec![tool_call_block("call_a", None, ":2}")], None),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_b", None, "{\"b\"")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_a", None, "{\"a\"")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_b", None, ":1}")],
+                    None,
+                ),
+                chat_chunk(
+                    inference_id,
+                    vec![tool_call_block("call_a", None, ":2}")],
+                    None,
+                ),
                 chat_chunk(inference_id, vec![], Some(test_usage())),
             ],
             None,
@@ -1032,20 +1064,16 @@ mod tests {
             .iter()
             .find(|(event, _)| event.as_deref() == Some("response.completed"))
             .expect("completed frame");
-        let output = completed.1["response"]["output"].as_array().expect("output");
+        let output = completed.1["response"]["output"]
+            .as_array()
+            .expect("output");
         assert_that!(output.len(), eq(2));
         expect_that!(output[0]["call_id"].as_str(), eq(Some("call_a")));
         expect_that!(output[0]["name"].as_str(), eq(Some("search")));
-        expect_that!(
-            output[0]["arguments"].as_str(),
-            eq(Some("{\"a\":2}"))
-        );
+        expect_that!(output[0]["arguments"].as_str(), eq(Some("{\"a\":2}")));
         expect_that!(output[1]["call_id"].as_str(), eq(Some("call_b")));
         expect_that!(output[1]["name"].as_str(), eq(Some("fetch")));
-        expect_that!(
-            output[1]["arguments"].as_str(),
-            eq(Some("{\"b\":1}"))
-        );
+        expect_that!(output[1]["arguments"].as_str(), eq(Some("{\"b\":1}")));
     }
 
     #[gtest]
