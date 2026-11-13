@@ -844,6 +844,7 @@ mod tests {
         },
     };
 
+    use axum::middleware::{self, Next};
     use axum::{
         Router,
         extract::Request,
@@ -852,11 +853,18 @@ mod tests {
     };
     use futures::StreamExt;
     use reqwest::Proxy;
+    use tokio::sync::mpsc;
     use tokio::task::{JoinHandle, JoinSet};
+    use tokio::time::{Duration, timeout};
 
     use crate::{CONCURRENCY_LIMIT, LimitedClient, TensorZeroEventSource};
 
-    async fn start_target_server() -> (SocketAddr, JoinHandle<Result<(), std::io::Error>>) {
+    async fn start_target_server() -> (
+        SocketAddr,
+        JoinHandle<Result<(), std::io::Error>>,
+        mpsc::UnboundedReceiver<()>,
+    ) {
+        let (arrived, arrivals) = mpsc::unbounded_channel();
         let app = Router::new()
             .route(
                 "/hello",
@@ -885,12 +893,19 @@ mod tests {
                     Sse::new(stream)
                 }),
             );
+        let app = app.layer(middleware::from_fn(move |request: Request, next: Next| {
+            let arrived = arrived.clone();
+            async move {
+                let _ = arrived.send(());
+                next.run(request).await
+            }
+        }));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         // TODO(https://github.com/tensorzero/tensorzero/issues/3983): Audit this callsite
         #[expect(clippy::disallowed_methods)]
         let handle = tokio::spawn(axum::serve(listener, app).into_future());
-        (addr, handle)
+        (addr, handle, arrivals)
     }
 
     async fn process_stream(stream: &mut TensorZeroEventSource) {
@@ -908,7 +923,7 @@ mod tests {
     /// rather than waiting on the much larger total `timeout`.
     #[tokio::test(flavor = "multi_thread")]
     async fn test_read_timeout_fires_on_stalled_stream() {
-        let (addr, _handle) = start_target_server().await;
+        let (addr, _handle, _arrivals) = start_target_server().await;
 
         let total_timeout = chrono::Duration::seconds(60);
         let read_timeout = chrono::Duration::milliseconds(150);
@@ -956,9 +971,19 @@ mod tests {
         );
     }
 
+    async fn wait_for_arrivals(arrivals: &mut mpsc::UnboundedReceiver<()>, count: usize) {
+        timeout(Duration::from_secs(5), async {
+            for _ in 0..count {
+                arrivals.recv().await.expect("test server is still running");
+            }
+        })
+        .await
+        .expect("request batch must reach the test server within five seconds");
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn test_concurrent_requests_helper() {
-        let (addr, _handle) = start_target_server().await;
+        let (addr, _handle, mut arrivals) = start_target_server().await;
         let mut client = super::TensorzeroHttpClient::new_testing().unwrap();
 
         // Send one non-stream request, and check that it didn't require using a new client
@@ -1026,9 +1051,17 @@ mod tests {
             }
         }
 
+        // Drain the two warm-up requests before accounting for the stress workload.
+        wait_for_arrivals(&mut arrivals, 2).await;
         let mut tasks = JoinSet::new();
         let num_tasks: usize = 1000;
         for i in 0..num_tasks {
+            // Wait only for arrival, never for responses: all 1000 tasks and the
+            // 1s overlapping requests remain. This keeps the local listener from
+            // being overwhelmed by connections that have not been accepted yet.
+            if i > 0 && i.is_multiple_of(32) {
+                wait_for_arrivals(&mut arrivals, 32).await;
+            }
             let client = client.clone();
             if i % 2 == 0 {
                 tasks.spawn(async move {
