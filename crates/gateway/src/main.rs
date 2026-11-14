@@ -29,7 +29,9 @@ use tensorzero_core::db::delegating_connection::PrimaryDatastore;
 use tensorzero_core::db::postgres::postgres_setup::{
     check_pgcron_configured_correctly, check_trigram_indexes_configured_correctly,
 };
-use tensorzero_core::db::postgres::{PostgresConnectionInfo, manual_run_postgres_migrations};
+use tensorzero_core::db::postgres::{
+    PostgresConnectionInfo, connection, manual_run_postgres_migrations,
+};
 use tensorzero_core::db::valkey::ValkeyConnectionInfo;
 use tensorzero_core::endpoints::status::TENSORZERO_VERSION;
 use tensorzero_core::error::{self, Error, ErrorDetails, IMPOSSIBLE_ERROR_MESSAGE};
@@ -162,15 +164,16 @@ async fn load_startup_config_from_database(
     // leader transaction, so the pool must allow at least 15 simultaneous
     // connections. We add a small margin to absorb transient slowness without
     // hitting the default 30s acquire timeout during gateway startup.
-    let pool = PgPoolOptions::new()
-        .max_connections(STARTUP_CONFIG_DB_POOL_MAX_CONNECTIONS)
-        .connect(postgres_url)
-        .await
-        .map_err(|error| {
-            Error::new(ErrorDetails::PostgresConnectionInitialization {
-                message: error.to_string(),
-            })
-        })?;
+    let (pool, _token_refresh) = connection::connect(
+        postgres_url,
+        PgPoolOptions::new().max_connections(STARTUP_CONFIG_DB_POOL_MAX_CONNECTIONS),
+    )
+    .await
+    .map_err(|error| {
+        Error::new(ErrorDetails::PostgresConnectionInitialization {
+            message: error.to_string(),
+        })
+    })?;
     Config::load_from_db(&pool, true)
         .await
         .map_err(merge_db_config_load_errors)
@@ -215,8 +218,7 @@ async fn store_config_in_database(
         })
     })?;
 
-    let pool = PgPoolOptions::new()
-        .connect(&postgres_url)
+    let (pool, _token_refresh) = connection::connect(&postgres_url, PgPoolOptions::new())
         .await
         .map_err(|e| {
             Error::new(ErrorDetails::AppState {
@@ -260,7 +262,7 @@ async fn handle_create_api_key(
     }
 
     // Create connection pool (alpha version for tensorzero-auth)
-    let pool = sqlx::PgPool::connect(&postgres_url).await?;
+    let (pool, _token_refresh) = connection::connect(&postgres_url, PgPoolOptions::new()).await?;
 
     // Create the key with default organization and workspace
     let key = tensorzero_auth::postgres::create_key(
@@ -290,7 +292,7 @@ async fn handle_import_synapse_api_key(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let postgres_url = std::env::var("TENSORZERO_POSTGRES_URL")
         .map_err(|_| "TENSORZERO_POSTGRES_URL environment variable not set")?;
-    let pool = sqlx::PgPool::connect(&postgres_url).await?;
+    let (pool, _token_refresh) = connection::connect(&postgres_url, PgPoolOptions::new()).await?;
     let public_id = tensorzero_auth::postgres::import_synapse_key_or_plaintext(
         DEFAULT_ORGANIZATION,
         DEFAULT_WORKSPACE,
@@ -307,7 +309,7 @@ async fn handle_import_synapse_api_key(
 async fn handle_disable_api_key(public_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let postgres_url = std::env::var("TENSORZERO_POSTGRES_URL")
         .map_err(|_| "TENSORZERO_POSTGRES_URL environment variable not set")?;
-    let pool = sqlx::PgPool::connect(&postgres_url).await?;
+    let (pool, _token_refresh) = connection::connect(&postgres_url, PgPoolOptions::new()).await?;
 
     let disabled_time = tensorzero_auth::postgres::disable_key(public_id, &pool).await?;
 

@@ -1915,7 +1915,6 @@ impl Config {
             model.validate(model_name, &self.gateway.global_outbound_http_timeout)?;
         }
 
-
         for embedding_model_name in self.embedding_models.table.keys() {
             if embedding_model_name.starts_with("tensorzero::") {
                 return Err(ErrorDetails::Config {
@@ -2043,7 +2042,6 @@ impl Config {
         }
         Ok(templates)
     }
-
 }
 
 pub enum ConfigInput {

@@ -254,3 +254,49 @@ You should re-run this command when upgrading TensorZero from an earlier version
 </Step>
 
 </Steps>
+
+## AWS RDS IAM authentication (Delta-AI builds)
+
+Password authentication remains the default. To use IAM, build the gateway with
+`--features aws-rds-iam` and set the following on both the gateway and the migration
+command (including API-key management and configuration migration):
+
+```bash
+TENSORZERO_POSTGRES_AUTH_MODE=iam
+TENSORZERO_POSTGRES_ROLE=tensorzero_owner
+AWS_REGION=us-west-2
+TENSORZERO_POSTGRES_URL='postgres://tensorzero_iam@actual-instance.us-west-2.rds.amazonaws.com:5432/tensorzero?sslmode=verify-full&sslrootcert=/etc/aws-rds/us-west-2-bundle.pem'
+```
+
+Mount the matching RDS CA bundle at `sslrootcert`. Use the actual RDS endpoint,
+region, and a dedicated IAM database login. Enable IAM authentication on the RDS
+instance and grant that login `rds_iam` plus the existing application's database
+role. Grant the workload's AWS identity `rds-db:connect` on the database resource
+ID and this exact login. The AWS SDK default credential chain supports EKS Pod
+Identity; its agent endpoint must be reachable. Tokens are generated in memory
+and are never stored in the database URL or Kubernetes Secrets.
+
+Do not grant `rds_iam` to a shared password login or master user: IAM takes
+precedence over its password authentication. Keep the original login available
+for rollback. `TENSORZERO_POSTGRES_ROLE` is required in IAM mode and must name the
+existing owner/application role, distinct from the IAM login. It accepts letters,
+digits and underscores (not starting with a digit; at most 63 bytes). The client
+sets this role in Postgres startup options before any SQL, preserving object and
+`pg_cron` ownership for migrations and all gateway commands. The IAM login must
+have permission to assume that role. Verify its extension and schema privileges
+before cutover.
+
+SQLx 0.9 has no per-connection signing hook. The gateway signs before connecting
+and refreshes the pool's shared connection options every five minutes, before the
+15-minute token expires. New physical connections, including through pool clones,
+use the refreshed password; existing sessions remain open. Credential failures
+retry every five seconds without falling back to password authentication. If the
+outage exceeds the token lifetime, new connections fail until refresh recovers.
+Closing the pool or dropping its owning connection state stops the refresh task.
+
+An unknown auth mode, missing `AWS_REGION` or owner role, unsupported build, or
+TLS mode other than `verify-full` fails startup. Before rollout, run migrations with the same
+image and identity, then verify fresh connections after at least 16 minutes. The
+offline tests exercise signing, refresh recovery, and new SQLx connections; they
+do not replace validation against your RDS instance. To roll back, restore
+`TENSORZERO_POSTGRES_AUTH_MODE=password` and the original password URL together.

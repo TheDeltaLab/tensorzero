@@ -17,8 +17,7 @@ use axum::extract::{
 };
 use moka::sync::Cache;
 use serde::de::DeserializeOwned;
-use sqlx::ConnectOptions;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
 use tensorzero_auth::postgres::AuthResult;
 use tokio::runtime::Handle;
 use tokio::sync::Notify;
@@ -40,8 +39,8 @@ use crate::db::clickhouse::ClickHouseConnectionInfo;
 use crate::db::clickhouse::clickhouse_client::ClickHouseClientType;
 use crate::db::clickhouse::migration_manager::{self, RunMigrationManagerArgs};
 use crate::db::delegating_connection::{DelegatingDatabaseConnection, PrimaryDatastore};
-use crate::db::postgres::PostgresConnectionInfo;
 use crate::db::postgres::batching::PostgresBatchSender;
+use crate::db::postgres::{PostgresConnectionInfo, connection};
 use crate::db::rate_limiting::DisabledRateLimitQueries;
 use crate::db::valkey::ValkeyConnectionInfo;
 use crate::endpoints;
@@ -1021,25 +1020,16 @@ async fn create_postgres_connection(
     connection_pool_size: u32,
     batch_writes: &BatchWritesConfig,
 ) -> Result<PostgresConnectionInfo, DelayedError> {
-    let connect_options: PgConnectOptions = postgres_url.parse().map_err(|err: sqlx::Error| {
+    let (pool, token_refresh) = connection::connect(
+        postgres_url,
+        PgPoolOptions::new().max_connections(connection_pool_size),
+    )
+    .await
+    .map_err(|err| {
         DelayedError::new(ErrorDetails::PostgresConnectionInitialization {
             message: err.to_string(),
         })
     })?;
-    // Demote sqlx's built-in statement logging from INFO to TRACE.
-    // This avoids flooding logs with full SQL (including thousands of bind params)
-    // during bulk INSERT operations.
-    let connect_options = connect_options.log_statements(tracing::log::LevelFilter::Trace);
-
-    let pool = PgPoolOptions::new()
-        .max_connections(connection_pool_size)
-        .connect_with(connect_options)
-        .await
-        .map_err(|err| {
-            DelayedError::new(ErrorDetails::PostgresConnectionInitialization {
-                message: err.to_string(),
-            })
-        })?;
 
     let connection_info = if batch_writes.enabled {
         let batch_sender = Arc::new(PostgresBatchSender::new(
@@ -1054,6 +1044,7 @@ async fn create_postgres_connection(
     } else {
         PostgresConnectionInfo::new_with_pool(pool)
     };
+    let connection_info = connection_info.with_token_refresh(token_refresh);
     connection_info.check_migrations().await?;
     Ok(connection_info)
 }

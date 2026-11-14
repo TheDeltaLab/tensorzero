@@ -19,6 +19,7 @@ pub mod batch_inference;
 pub mod batching;
 pub mod cleanup;
 pub mod config_queries;
+pub mod connection;
 pub mod dashboard_users;
 pub mod deployment_queries;
 pub mod dicl_queries;
@@ -80,6 +81,7 @@ pub enum PostgresConnectionInfo {
     Enabled {
         pool: PgPool,
         batch_sender: Option<Arc<PostgresBatchSender>>,
+        token_refresh: connection::TokenRefresh,
     },
     #[cfg(test)]
     Mock {
@@ -93,6 +95,7 @@ impl PostgresConnectionInfo {
         Self::Enabled {
             pool,
             batch_sender: None,
+            token_refresh: None,
         }
     }
 
@@ -100,7 +103,15 @@ impl PostgresConnectionInfo {
         Self::Enabled {
             pool,
             batch_sender: Some(batch_sender),
+            token_refresh: None,
         }
+    }
+
+    pub(crate) fn with_token_refresh(mut self, refresh: connection::TokenRefresh) -> Self {
+        if let Self::Enabled { token_refresh, .. } = &mut self {
+            *token_refresh = refresh;
+        }
+        self
     }
 
     #[cfg(test)]
@@ -378,8 +389,7 @@ pub async fn manual_run_postgres_migrations() -> Result<(), Error> {
 }
 
 pub async fn manual_run_postgres_migrations_with_url(postgres_url: &str) -> Result<(), Error> {
-    let pool = PgPoolOptions::new()
-        .connect(postgres_url)
+    let (pool, _token_refresh) = connection::connect(postgres_url, PgPoolOptions::new())
         .await
         .map_err(|err| {
             Error::new(ErrorDetails::PostgresConnectionInitialization {

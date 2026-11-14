@@ -42,6 +42,7 @@ internal-observability = ["tensorzero-core/internal-observability"]
 # without the AWS SDK stack and GCP ADC support.
 default = []
 aws = ["tensorzero-core/aws"]
+aws-rds-iam = ["tensorzero-core/aws-rds-iam"]
 google = ["tensorzero-core/google"]
 
 [dev-dependencies]

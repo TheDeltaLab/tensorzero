@@ -128,7 +128,6 @@ async fn test_config_from_toml_table_valid() {
     let provider = embedding_model.providers.get("openai").unwrap();
     assert!(matches!(provider.inner, EmbeddingProviderConfig::OpenAI(_)));
 
-
     // Check that there are 2 tools and both have name "get_temperature"
     assert_eq!(config.tools.len(), 2);
     assert_eq!(

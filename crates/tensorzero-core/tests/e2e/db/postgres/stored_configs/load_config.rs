@@ -28,9 +28,7 @@ use tensorzero_core::utils::retries::RetryConfig;
 use tensorzero_core::variant::chat_completion::{
     UninitializedChatCompletionConfig, UninitializedChatTemplate, UninitializedChatTemplates,
 };
-use tensorzero_stored_config::{
-    StoredFunctionConfig, StoredJsonFunctionConfig, StoredVariantRef,
-};
+use tensorzero_stored_config::{StoredFunctionConfig, StoredJsonFunctionConfig, StoredVariantRef};
 
 fn empty_config() -> UninitializedConfig {
     // Mirrors what `load_config_from_db` returns for an empty database:
