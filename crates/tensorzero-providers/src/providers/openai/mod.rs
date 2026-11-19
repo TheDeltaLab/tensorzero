@@ -1197,8 +1197,12 @@ fn apply_inference_params(
         verbosity,
     } = inference_params;
 
-    if reasoning_effort.is_some() {
-        request.reasoning_effort.clone_from(reasoning_effort);
+    if let Some(effort) = reasoning_effort {
+        let effort = match lowest_effort_instead_of_none(request.model) {
+            Some(lowest) if effort == "none" => lowest.to_string(),
+            _ => effort.clone(),
+        };
+        request.reasoning_effort = Some(effort);
     }
 
     if service_tier.is_some() {
@@ -1216,6 +1220,22 @@ fn apply_inference_params(
     if verbosity.is_some() {
         request.verbosity.clone_from(verbosity);
     }
+}
+
+/// Delta-AI fork: chat models whose upstream no longer accepts
+/// `reasoning_effort = "none"`, paired with the lowest effort they do accept.
+/// Add a row when another model starts rejecting `none`.
+///
+/// Chat Completions only: the Responses API of these upstreams still takes `none`.
+const LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE: &[(&str, &str)] =
+    &[("deepseek-v4-flash", "low"), ("deepseek-v4-pro", "low")];
+
+/// The effort to send instead of `none`, if `model` rejects `none`.
+fn lowest_effort_instead_of_none(model: &str) -> Option<&'static str> {
+    LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE
+        .iter()
+        .find(|(name, _)| *name == model)
+        .map(|(_, lowest)| *lowest)
 }
 
 impl EmbeddingProvider for OpenAIProvider {
@@ -6115,6 +6135,48 @@ mod tests {
 
         // Test that verbosity is applied correctly
         assert_eq!(openai_request.verbosity, Some("low".to_string()));
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn test_openai_reasoning_effort_none_falls_back_to_lowest_supported() {
+        let effort_sent_upstream = async |model: &str, effort: &str| {
+            let request = ModelInferenceRequest {
+                messages: vec![RequestMessage {
+                    role: Role::User,
+                    content: vec!["Test".to_string().into()],
+                }],
+                inference_params_v2: ChatCompletionInferenceParamsV2 {
+                    reasoning_effort: Some(effort.to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let openai_request = OpenAIRequest::new(model, &request, None)
+                .await
+                .expect("building the OpenAI request should succeed");
+            openai_request.reasoning_effort
+        };
+
+        expect_that!(
+            effort_sent_upstream("deepseek-v4-flash", "none")
+                .await
+                .as_deref(),
+            some(eq("low")),
+            "`none` should become the lowest effort for a model that rejects `none`"
+        );
+        expect_that!(
+            effort_sent_upstream("deepseek-v4-flash", "high")
+                .await
+                .as_deref(),
+            some(eq("high")),
+            "efforts other than `none` should be forwarded unchanged"
+        );
+        expect_that!(
+            effort_sent_upstream("gpt-5.1", "none").await.as_deref(),
+            some(eq("none")),
+            "`none` should be forwarded unchanged for models not in the map"
+        );
     }
 
     #[tokio::test]
