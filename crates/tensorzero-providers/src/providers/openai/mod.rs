@@ -1222,13 +1222,32 @@ fn apply_inference_params(
     }
 }
 
-/// Delta-AI fork: chat models whose upstream no longer accepts
-/// `reasoning_effort = "none"`, paired with the lowest effort they do accept.
-/// Add a row when another model starts rejecting `none`.
+/// Delta-AI fork: chat models whose upstream rejects `reasoning_effort = "none"`,
+/// paired with the lowest effort they do accept. Add a row when another model
+/// starts rejecting `none`.
+///
+/// Matched against the model name sent upstream (the provider's `model_name`),
+/// so each model is listed under both its upstream name and its alias name.
+///
+/// Values come from the Alibaba Bailian docs. Models that still accept `none`
+/// (Volcengine Ark, Xiaomi MiMo, Qwen on Bailian) are deliberately left out:
+/// mapping them would turn thinking back on.
 ///
 /// Chat Completions only: the Responses API of these upstreams still takes `none`.
-const LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE: &[(&str, &str)] =
-    &[("deepseek-v4-flash", "low"), ("deepseek-v4-pro", "low")];
+const LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE: &[(&str, &str)] = &[
+    // DeepSeek V4 on Bailian: only `high` and `max`.
+    ("deepseek-v4-flash", "high"),
+    ("deepseek-v4.1-flash", "high"),
+    ("deepseek-v4-pro", "high"),
+    ("deepseek-v4-pro-0813", "high"),
+    // GLM-5.3 on Bailian: `low`, `high` and `max`; thinking cannot be turned off.
+    ("ZHIPU/GLM-5.3", "low"),
+    ("glm-5.3", "low"),
+    // Kimi K3: `kimi/kimi-k3` on Bailian accepts only `max`; Moonshot's own
+    // `kimi-k3` accepts `low`, `high` and `max`.
+    ("kimi/kimi-k3", "max"),
+    ("kimi-k3", "low"),
+];
 
 /// The effort to send instead of `none`, if `model` rejects `none`.
 fn lowest_effort_instead_of_none(model: &str) -> Option<&'static str> {
@@ -6159,21 +6178,30 @@ mod tests {
         };
 
         expect_that!(
-            effort_sent_upstream("deepseek-v4-flash", "none")
+            effort_sent_upstream("deepseek-v4.1-flash", "none")
                 .await
                 .as_deref(),
-            some(eq("low")),
+            some(eq("high")),
             "`none` should become the lowest effort for a model that rejects `none`"
         );
         expect_that!(
-            effort_sent_upstream("deepseek-v4-flash", "high")
+            effort_sent_upstream("kimi/kimi-k3", "none")
+                .await
+                .as_deref(),
+            some(eq("max")),
+            "each model should use its own lowest effort"
+        );
+        expect_that!(
+            effort_sent_upstream("ZHIPU/GLM-5.3", "high")
                 .await
                 .as_deref(),
             some(eq("high")),
             "efforts other than `none` should be forwarded unchanged"
         );
         expect_that!(
-            effort_sent_upstream("gpt-5.1", "none").await.as_deref(),
+            effort_sent_upstream("mimo-v2.6-pro", "none")
+                .await
+                .as_deref(),
             some(eq("none")),
             "`none` should be forwarded unchanged for models not in the map"
         );
