@@ -1197,8 +1197,12 @@ fn apply_inference_params(
         verbosity,
     } = inference_params;
 
-    if reasoning_effort.is_some() {
-        request.reasoning_effort.clone_from(reasoning_effort);
+    if let Some(effort) = reasoning_effort {
+        let effort = match lowest_effort_instead_of_none(request.model) {
+            Some(lowest) if effort == "none" => lowest.to_string(),
+            _ => effort.clone(),
+        };
+        request.reasoning_effort = Some(effort);
     }
 
     if service_tier.is_some() {
@@ -1216,6 +1220,50 @@ fn apply_inference_params(
     if verbosity.is_some() {
         request.verbosity.clone_from(verbosity);
     }
+}
+
+/// Delta-AI fork: chat models whose upstream rejects `reasoning_effort = "none"`,
+/// paired with the lowest effort they do accept. Add a row when another model
+/// starts rejecting `none`.
+///
+/// Matched against the model name sent upstream (the provider's `model_name`),
+/// so each model is listed under both its upstream name and its alias name.
+///
+/// Values come from the upstream docs. Models that still accept `none`
+/// (Volcengine Ark, Xiaomi MiMo, Qwen on Bailian) are deliberately left out:
+/// mapping them would turn thinking back on.
+///
+/// Chat Completions only: the Responses API of these upstreams still takes `none`.
+const LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE: &[(&str, &str)] = &[
+    // DeepSeek V4 on Bailian: only `high` and `max`.
+    ("deepseek-v4-flash", "high"),
+    ("deepseek-v4.1-flash", "high"),
+    ("deepseek-v4-pro", "high"),
+    ("deepseek-v4-pro-0813", "high"),
+    // GLM-5.3 on Bailian: `low`, `high` and `max`; thinking cannot be turned off.
+    ("ZHIPU/GLM-5.3", "low"),
+    ("glm-5.3", "low"),
+    // Kimi K3: `kimi/kimi-k3` on Bailian accepts only `max`; Moonshot's own
+    // `kimi-k3` accepts `low`, `high` and `max`.
+    ("kimi/kimi-k3", "max"),
+    ("kimi-k3", "low"),
+    // GPT-6 family on Bedrock: `low`, `medium`, `high`, `xhigh` and `max`.
+    ("global.openai.gpt-6-luna", "low"),
+    ("openai/gpt-6-luna", "low"),
+    ("global.openai.gpt-6.1-sol", "low"),
+    ("openai/gpt-6.1-sol", "low"),
+    ("global.openai.gpt-6.2-sol", "low"),
+    ("openai/gpt-6.2-sol", "low"),
+    ("global.openai.gpt-6.1-terra", "low"),
+    ("openai/gpt-6.1-terra", "low"),
+];
+
+/// The effort to send instead of `none`, if `model` rejects `none`.
+fn lowest_effort_instead_of_none(model: &str) -> Option<&'static str> {
+    LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE
+        .iter()
+        .find(|(name, _)| *name == model)
+        .map(|(_, lowest)| *lowest)
 }
 
 impl EmbeddingProvider for OpenAIProvider {
@@ -6115,6 +6163,64 @@ mod tests {
 
         // Test that verbosity is applied correctly
         assert_eq!(openai_request.verbosity, Some("low".to_string()));
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn test_openai_reasoning_effort_none_falls_back_to_lowest_supported() {
+        let effort_sent_upstream = async |model: &str, effort: &str| {
+            let request = ModelInferenceRequest {
+                messages: vec![RequestMessage {
+                    role: Role::User,
+                    content: vec!["Test".to_string().into()],
+                }],
+                inference_params_v2: ChatCompletionInferenceParamsV2 {
+                    reasoning_effort: Some(effort.to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let openai_request = OpenAIRequest::new(model, &request, None)
+                .await
+                .expect("building the OpenAI request should succeed");
+            openai_request.reasoning_effort
+        };
+
+        expect_that!(
+            effort_sent_upstream("deepseek-v4.1-flash", "none")
+                .await
+                .as_deref(),
+            some(eq("high")),
+            "`none` should become the lowest effort for a model that rejects `none`"
+        );
+        expect_that!(
+            effort_sent_upstream("kimi/kimi-k3", "none")
+                .await
+                .as_deref(),
+            some(eq("max")),
+            "each model should use its own lowest effort"
+        );
+        expect_that!(
+            effort_sent_upstream("global.openai.gpt-6.2-sol", "none")
+                .await
+                .as_deref(),
+            some(eq("low")),
+            "Bedrock GPT-6 models should fall back to `low`"
+        );
+        expect_that!(
+            effort_sent_upstream("ZHIPU/GLM-5.3", "high")
+                .await
+                .as_deref(),
+            some(eq("high")),
+            "efforts other than `none` should be forwarded unchanged"
+        );
+        expect_that!(
+            effort_sent_upstream("mimo-v2.6-pro", "none")
+                .await
+                .as_deref(),
+            some(eq("none")),
+            "`none` should be forwarded unchanged for models not in the map"
+        );
     }
 
     #[tokio::test]
