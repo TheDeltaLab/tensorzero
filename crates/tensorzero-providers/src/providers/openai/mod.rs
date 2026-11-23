@@ -1229,7 +1229,7 @@ fn apply_inference_params(
 /// Matched against the model name sent upstream (the provider's `model_name`),
 /// so each model is listed under both its upstream name and its alias name.
 ///
-/// Values come from the Alibaba Bailian docs. Models that still accept `none`
+/// Values come from the upstream docs. Models that still accept `none`
 /// (Volcengine Ark, Xiaomi MiMo, Qwen on Bailian) are deliberately left out:
 /// mapping them would turn thinking back on.
 ///
@@ -1247,6 +1247,15 @@ const LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE: &[(&str, &str)] = &[
     // `kimi-k3` accepts `low`, `high` and `max`.
     ("kimi/kimi-k3", "max"),
     ("kimi-k3", "low"),
+    // GPT-6 family on Bedrock: `low`, `medium`, `high`, `xhigh` and `max`.
+    ("global.openai.gpt-6-luna", "low"),
+    ("openai/gpt-6-luna", "low"),
+    ("global.openai.gpt-6.1-sol", "low"),
+    ("openai/gpt-6.1-sol", "low"),
+    ("global.openai.gpt-6.2-sol", "low"),
+    ("openai/gpt-6.2-sol", "low"),
+    ("global.openai.gpt-6.1-terra", "low"),
+    ("openai/gpt-6.1-terra", "low"),
 ];
 
 /// The effort to send instead of `none`, if `model` rejects `none`.
@@ -6190,6 +6199,13 @@ mod tests {
                 .as_deref(),
             some(eq("max")),
             "each model should use its own lowest effort"
+        );
+        expect_that!(
+            effort_sent_upstream("global.openai.gpt-6.2-sol", "none")
+                .await
+                .as_deref(),
+            some(eq("low")),
+            "Bedrock GPT-6 models should fall back to `low`"
         );
         expect_that!(
             effort_sent_upstream("ZHIPU/GLM-5.3", "high")
