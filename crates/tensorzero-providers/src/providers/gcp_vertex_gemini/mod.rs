@@ -222,6 +222,11 @@ pub async fn make_gcp_object_store(
     let mut builder = GoogleCloudStorageBuilder::default().with_bucket_name(bucket);
 
     match credentials {
+        GCPVertexCredentials::ApiKey(_) => {
+            return Err(Error::new(ErrorDetails::GCPCredentials {
+                message: "Google Cloud Storage requires service account or OAuth credentials for batch inference".to_string(),
+            }));
+        }
         GCPVertexCredentials::Static { raw, parsed: _ } => {
             builder = builder.with_service_account_key(raw.expose_secret());
         }
@@ -725,6 +730,7 @@ impl GCPVertexGeminiProvider {
 
 #[derive(Clone, Debug)]
 pub enum GCPVertexCredentials {
+    ApiKey(SecretString),
     Static {
         parsed: GCPServiceAccountCredentials,
         raw: SecretString,
@@ -744,6 +750,9 @@ pub fn build_gcp_non_sdk_credentials(
     provider_type: &ProviderType,
 ) -> Result<GCPVertexCredentials, Error> {
     match credentials {
+        Credential::Static(key) if matches!(provider_type, ProviderType::GCPVertexGemini) => {
+            Ok(GCPVertexCredentials::ApiKey(key))
+        }
         Credential::FileContents(file_content) => Ok(GCPVertexCredentials::Static {
             parsed: GCPServiceAccountCredentials::from_json_str(file_content.expose_secret())
                 .map_err(|e| {
@@ -898,6 +907,17 @@ impl GCPVertexCredentials {
         dynamic_api_keys: &'a InferenceCredentials,
     ) -> Result<HeaderMap, DelayedError> {
         let bearer_token = match self {
+            GCPVertexCredentials::ApiKey(key) => {
+                let mut value = HeaderValue::from_str(key.expose_secret()).map_err(|_| {
+                    DelayedError::new(ErrorDetails::GCPCredentials {
+                        message: "Invalid Vertex AI API key header value".to_string(),
+                    })
+                })?;
+                value.set_sensitive(true);
+                let mut headers = HeaderMap::new();
+                headers.insert("x-goog-api-key", value);
+                return Ok(headers);
+            }
             GCPVertexCredentials::Static { parsed, raw: _ } => {
                 Cow::Owned(parsed.get_jwt_token(audience)?)
             }
@@ -4703,15 +4723,38 @@ mod tests {
             matches!(err, ErrorDetails::GCPCredentials { message } if message.contains("Failed to load GCP credentials"))
         );
 
-        // Test invalid credential type (Static)
+        // Vertex Anthropic still requires service account or OAuth credentials.
         let generic = Credential::Static(SecretString::from("test"));
-        let result = build_gcp_non_sdk_credentials(generic, &ProviderType::GCPVertexGemini);
+        let result = build_gcp_non_sdk_credentials(generic, &ProviderType::GCPVertexAnthropic);
         assert!(result.is_err());
         let error = result.unwrap_err();
         let err = error.get_details();
         assert!(
             matches!(err, ErrorDetails::GCPCredentials { message } if message.contains("Invalid credential_location"))
         );
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn vertex_gemini_sends_static_api_key_in_sensitive_header() {
+        let credentials = build_gcp_non_sdk_credentials(
+            Credential::Static(SecretString::from("test-key")),
+            &ProviderType::GCPVertexGemini,
+        )
+        .expect("Vertex Gemini accepts an API key");
+        let headers = credentials
+            .get_auth_headers(
+                "https://aiplatform.googleapis.com/",
+                &InferenceCredentials::new(),
+            )
+            .await
+            .expect("the API key produces valid headers");
+        let key = headers
+            .get("x-goog-api-key")
+            .expect("API key header is set");
+        expect_that!(key.as_bytes(), eq(b"test-key".as_slice()));
+        expect_that!(key.is_sensitive(), eq(true));
+        expect_that!(headers.len(), eq(1));
     }
 
     #[tokio::test]

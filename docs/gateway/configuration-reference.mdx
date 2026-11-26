@@ -1594,9 +1594,11 @@ provider_tools = [{type = "web_search_20250305", name = "web_search"}]
 
 Defines the location of the credentials for the GCP Vertex Gemini provider.
 
+For online inference, `env::GCP_VERTEX_API_KEY` reads the API key value from the environment. Google Cloud Storage for batch jobs requires service account or OAuth credentials.
+
 This field can be either a string for a single credential location, or an object with `default` and `fallback` fields for credential fallback support.
 
-The supported locations are `env::PATH_TO_CREDENTIALS_FILE`, `path_from_env::ENVIRONMENT_VARIABLE`, `dynamic::CREDENTIALS_ARGUMENT_NAME`, `path::PATH_TO_CREDENTIALS_FILE`, and `sdk` (use Google Cloud SDK to auto-discover credentials).
+The supported locations are `env::GCP_VERTEX_API_KEY`, `path_from_env::ENVIRONMENT_VARIABLE`, `dynamic::CREDENTIALS_ARGUMENT_NAME`, `path::PATH_TO_CREDENTIALS_FILE`, and `sdk` (use Google Cloud SDK to auto-discover credentials).
 
 See [the API reference](/gateway/api-reference/inference/#credentials) and [Credential Management](/operations/manage-credentials/#configure-credential-fallbacks) for more details.
 
@@ -2786,9 +2788,11 @@ Optional service account email for fine-tuning operations.
 
 Defines the location of the credentials for the GCP Vertex Gemini provider.
 
+For online inference, `env::GCP_VERTEX_API_KEY` reads the API key value from the environment. Google Cloud Storage for batch jobs requires service account or OAuth credentials.
+
 This field can be either a string for a single credential location, or an object with `default` and `fallback` fields for credential fallback support.
 
-The supported locations are `env::PATH_TO_CREDENTIALS_FILE`, `dynamic::CREDENTIALS_ARGUMENT_NAME`, `path::PATH_TO_CREDENTIALS_FILE`, and `path_from_env::ENVIRONMENT_VARIABLE` (see [the API reference](/gateway/api-reference/inference/#credentials) and [Credential Management](/operations/manage-credentials/#configure-credential-fallbacks) for more details).
+The supported locations are `env::GCP_VERTEX_API_KEY`, `dynamic::CREDENTIALS_ARGUMENT_NAME`, `path::PATH_TO_CREDENTIALS_FILE`, and `path_from_env::ENVIRONMENT_VARIABLE` (see [the API reference](/gateway/api-reference/inference/#credentials) and [Credential Management](/operations/manage-credentials/#configure-credential-fallbacks) for more details).
 
 ```toml title="tensorzero.toml"
 [provider_types.gcp_vertex_gemini.defaults]
