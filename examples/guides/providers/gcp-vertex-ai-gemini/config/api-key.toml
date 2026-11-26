@@ -1,0 +1,5 @@
+[gateway.observability]
+enabled = false
+
+[provider_types.gcp_vertex_gemini.defaults]
+credential_location = "env::GCP_VERTEX_API_KEY"

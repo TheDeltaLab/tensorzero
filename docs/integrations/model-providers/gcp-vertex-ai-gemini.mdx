@@ -57,10 +57,11 @@ Alternatively, you can use the short-hand `gcp_vertex_gemini::model_name` to use
 
 By default, TensorZero reads the path to your GCP service account JSON file from the `GCP_VERTEX_CREDENTIALS_PATH` environment variable (using `path_from_env::GCP_VERTEX_CREDENTIALS_PATH`).
 
-You must generate a GCP service account key in JSON format as described [here](https://cloud.google.com/docs/authentication/provide-credentials-adc#service-account).
+For file-based authentication, [generate a service account key in JSON format](https://cloud.google.com/docs/authentication/provide-credentials-adc#service-account).
 
 You can customize the credential location using:
 
+- `env::GCP_VERTEX_API_KEY`: read a Vertex AI API key from the environment for online inference
 - `sdk`: use the Google Cloud SDK to auto-discover credentials
 - `path::/path/to/credentials.json`: use a specific file path
 - `path_from_env::YOUR_ENVIRONMENT_VARIABLE`: read file path from an environment variable (default behavior)
@@ -68,6 +69,26 @@ You can customize the credential location using:
 - `{ default = ..., fallback = ... }`: configure credential fallbacks
 
 See the [Credential Management](/operations/manage-credentials/) guide and [Configuration Reference](/gateway/configuration-reference/) for more information.
+
+### Local inference with a Vertex AI API key
+
+Set `GCP_VERTEX_API_KEY` in the gateway process environment. From the repository root, start a gateway built from this fork with the local example:
+
+```bash
+gateway --config-file examples/guides/providers/gcp-vertex-ai-gemini/config/api-key.toml --bind-address 127.0.0.1:3000
+```
+
+Set `GOOGLE_CLOUD_PROJECT` to the project that owns the key. Select a model available to that project on the global endpoint, such as `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, or `gemini-3.1-pro-preview`:
+
+```bash
+MODEL_ID=gemini-3.8-flash
+curl -sS http://127.0.0.1:3000/openai/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d "{
+    \"model\": \"tensorzero::model_name::gcp_vertex_gemini::projects/${GOOGLE_CLOUD_PROJECT}/locations/global/publishers/google/models/${MODEL_ID}\",
+    \"messages\": [{\"role\": \"user\", \"content\": \"Reply with exactly OK.\"}]
+  }"
+```
 
 ### Deployment (Docker Compose)
 

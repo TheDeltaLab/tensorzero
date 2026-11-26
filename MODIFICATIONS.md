@@ -10,6 +10,8 @@ See `NOTICE` for the overall attribution statement.
 
 ## Modified non-source-code files
 
+- `docs/integrations/model-providers/gcp-vertex-ai-gemini.mdx`, `docs/gateway/configuration-reference.mdx`, `examples/guides/providers/gcp-vertex-ai-gemini/config/api-key.toml` — Document and demonstrate Vertex Gemini API key authentication for online inference.
+
 - `examples/guides/synapse-compat/config/tensorzero.toml` — Alias `qwen3.7-text-rerank` to DashScope rerank (`alibaba` provider), which honors forwarded `instruct` / `return_documents` (Delta-AI fork).
 - `docs/integrations/model-providers/openrouter.mdx` — Document `POST /v1/systemone` for TypeSafe Jev via OpenRouter (Delta-AI fork).
 - `examples/guides/synapse-compat/config/tensorzero.toml` — Alias `jev`, `jev-latest`, and `jev-1.13` to OpenRouter System One models (Delta-AI fork).
