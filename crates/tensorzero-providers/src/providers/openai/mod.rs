@@ -1259,7 +1259,7 @@ const LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE: &[(&str, &str)] = &[
 ];
 
 /// The effort to send instead of `none`, if `model` rejects `none`.
-fn lowest_effort_instead_of_none(model: &str) -> Option<&'static str> {
+pub(crate) fn lowest_effort_instead_of_none(model: &str) -> Option<&'static str> {
     LOWEST_EFFORT_FOR_MODELS_WITHOUT_NONE
         .iter()
         .find(|(name, _)| *name == model)
