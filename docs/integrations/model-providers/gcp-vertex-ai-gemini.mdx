@@ -78,10 +78,10 @@ Set `GCP_VERTEX_API_KEY` in the gateway process environment. From the repository
 gateway --config-file examples/guides/providers/gcp-vertex-ai-gemini/config/api-key.toml --bind-address 127.0.0.1:3000
 ```
 
-Set `GOOGLE_CLOUD_PROJECT` to the project that owns the key. Select a model available to that project on the global endpoint, such as `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, or `gemini-3.1-pro-preview`:
+Set `GOOGLE_CLOUD_PROJECT` to the project that owns the key. The example calls `gemini-4-neon` on the global endpoint. You can also select `gemini-4-hydrogen` or `gemini-4-carbon` if your project has access.
 
 ```bash
-MODEL_ID=gemini-3.8-flash
+MODEL_ID=gemini-4-neon
 curl -sS http://127.0.0.1:3000/openai/v1/chat/completions \
   -H 'Content-Type: application/json' \
   -d "{
