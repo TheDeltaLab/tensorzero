@@ -30,6 +30,7 @@ use crate::providers::openai::OpenAITool;
 use crate::providers::openai::PROVIDER_TYPE;
 use crate::providers::openai::ReasoningFieldName;
 use crate::providers::openai::SystemOrDeveloper;
+use crate::providers::openai::lowest_effort_instead_of_none;
 use crate::providers::openai::prepare_file_message;
 use crate::providers::openai::prepare_system_or_developer_message_helper;
 use tensorzero_error::{Error, ErrorDetails, warn_discarded_thought_block};
@@ -683,9 +684,13 @@ fn apply_inference_params(
         verbosity,
     } = inference_params;
 
-    if reasoning_effort.is_some() {
+    if let Some(effort) = reasoning_effort {
+        let effort = match lowest_effort_instead_of_none(request.model) {
+            Some(lowest) if effort == "none" => lowest.to_string(),
+            _ => effort.clone(),
+        };
         request.reasoning = Some(OpenAIResponsesReasoningConfig {
-            effort: reasoning_effort.clone(),
+            effort: Some(effort),
         });
     }
 
@@ -4152,6 +4157,59 @@ mod tests {
             }
             _ => panic!("Expected ContentBlockOutput::Unknown for another_unknown_type"),
         }
+    }
+
+    #[gtest]
+    #[tokio::test]
+    async fn test_openai_responses_reasoning_effort_none_falls_back_to_lowest_supported() {
+        let effort_sent_upstream = async |model: &str, effort: &str| {
+            let request = ModelInferenceRequest {
+                messages: vec![RequestMessage {
+                    role: Role::User,
+                    content: vec!["Test".to_string().into()],
+                }],
+                inference_params_v2: ChatCompletionInferenceParamsV2 {
+                    reasoning_effort: Some(effort.to_string()),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let responses_request = OpenAIResponsesRequest::new(
+                model,
+                PROVIDER_TYPE,
+                &request,
+                false,
+                &[],
+                "test-model",
+                "test-provider",
+            )
+            .await
+            .expect("building the OpenAI Responses request should succeed");
+            responses_request
+                .reasoning
+                .expect("`reasoning_effort` should set the Responses `reasoning` config")
+                .effort
+        };
+
+        expect_that!(
+            effort_sent_upstream("global.openai.gpt-6.2-sol", "none")
+                .await
+                .as_deref(),
+            some(eq("low")),
+            "`none` should become the lowest effort on the Responses API too"
+        );
+        expect_that!(
+            effort_sent_upstream("global.openai.gpt-6.2-sol", "medium")
+                .await
+                .as_deref(),
+            some(eq("medium")),
+            "efforts other than `none` should pass through unchanged"
+        );
+        expect_that!(
+            effort_sent_upstream("gpt-5-nano", "none").await.as_deref(),
+            some(eq("none")),
+            "models outside the map should keep `none`"
+        );
     }
 
     #[tokio::test]
